@@ -120,8 +120,24 @@ def fraction_arg(value):
         raise argparse.ArgumentTypeError("fraction must be in [0, 1]")
     return fvalue
 
-HYBRID_LAPVAR_WEIGHT = 0.6
-HYBRID_FFT_WEIGHT = 0.4
+
+# Validators
+def non_negative_int(value):
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("value must be >= 0")
+    if ivalue < 0:
+        raise argparse.ArgumentTypeError("value must be >= 0")
+    return ivalue
+
+HYBRID_LAPVAR_WEIGHT = 0.5
+HYBRID_TENENGRAD_WEIGHT = 0.3
+HYBRID_FFT_WEIGHT = 0.2
+HYBRID_MOTION_REFERENCE = 5000.0
+HYBRID_MOTION_PENALTY_WEIGHT = 0.4
+HYBRID_DARK_THRESHOLD = 0.35
+HYBRID_DARK_PENALTY_WEIGHT = 0.5
 PROGRESS_INTERVAL = 5
 
 def update_progress(label, completed, total, last_pct):
@@ -133,6 +149,12 @@ def update_progress(label, completed, total, last_pct):
         sys.stdout.flush()
         return pct
     return last_pct
+
+
+def round_half_up(value):
+    """Return the value rounded to the nearest integer (half up)."""
+    return int(math.floor(value + 0.5))
+
 
 def ensure_dir(p):
     os.makedirs(p, exist_ok=True)
@@ -300,57 +322,94 @@ def score_one_file(
         clip_thresh,
         max_long,
 ):
-    """
-    Compute the sharpness score (and optional exposure statistics) for one file.
-    
-    Args:
-        fp (str): Path to the image file.
-        metric (str): Selected metric name.
-        crop_ratio (float | None): Ratio used for center cropping.
-        use_exposure (bool): Whether to apply exposure penalties.
-        clip_penalty (float): Multiplier applied when exposure is clipped.
-        clip_thresh (float): Exposure clipping threshold.
-        max_long (int): Optional maximum long edge for downscaling.
-    
-    Returns:
-        tuple[float | None, float, float]: (score, black_ratio, white_ratio).
-    """
+    """Compute the sharpness score and ancillary metrics for one frame."""
     try:
         gray = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
         if gray is None:
-            return None, 0.0, 0.0
+            return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0, 1.0
         gray = downscale_gray(gray, max_long)
         gray = crop_by_ratio_gray(gray, crop_ratio)
 
+        brightness_mean = float(np.mean(gray) / 255.0)
+        brightness_weight = 1.0
+        lap_feature = None
+        ten_feature = None
+        fft_feature = None
+        motion_factor = 1.0
+        exposure_factor = 1.0
+
         if metric == "lapvar":
-            sharp = lapvar32(gray)
+            lap_score = lapvar32(gray)
+            sharp = lap_score
+            lap_feature = lap_score * lap_score
         elif metric == "tenengrad":
-            sharp = tenengrad32(gray)
+            ten_score = tenengrad32(gray)
+            sharp = ten_score
+            ten_feature = ten_score
         elif metric == "fft":
-            sharp = fft_energy_fast(gray)
+            fft_score = fft_energy_fast(gray)
+            sharp = fft_score
+            fft_feature = fft_score
         elif metric == "hybrid":
             lap_score = lapvar32(gray)
+            ten_score = tenengrad32(gray)
             fft_score = fft_energy_fast(gray)
-            sharp = (
-                HYBRID_LAPVAR_WEIGHT * lap_score
+            lap_energy = lap_score * lap_score
+            lap_feature = lap_energy
+            ten_feature = ten_score
+            fft_feature = fft_score
+
+            hybrid_raw = (
+                HYBRID_LAPVAR_WEIGHT * lap_energy
+                + HYBRID_TENENGRAD_WEIGHT * ten_score
                 + HYBRID_FFT_WEIGHT * fft_score
             )
+
+            motion_ratio = ten_score / (ten_score + HYBRID_MOTION_REFERENCE)
+            motion_ratio = max(0.0, min(1.0, motion_ratio))
+            motion_factor = 1.0 - HYBRID_MOTION_PENALTY_WEIGHT * (1.0 - motion_ratio)
+            motion_factor = max(0.0, motion_factor)
+
+            if brightness_mean < HYBRID_DARK_THRESHOLD:
+                dark_ratio = brightness_mean / HYBRID_DARK_THRESHOLD
+            else:
+                dark_ratio = 1.0
+            dark_ratio = max(0.0, min(1.0, dark_ratio))
+            brightness_weight = 1.0 - HYBRID_DARK_PENALTY_WEIGHT * (1.0 - dark_ratio)
+            brightness_weight = max(0.0, brightness_weight)
+
+            sharp = hybrid_raw * motion_factor
         else:
-            return None, 0.0, 0.0
+            return None, 0.0, 0.0, brightness_mean, brightness_weight, None, None, None, 1.0, 1.0
 
         if use_exposure:
             p0, p255 = exposure_clip_stats(gray)
             clip = p0 + p255
             if clip > clip_thresh:
-                sharp *= clip_penalty
-            return sharp, p0, p255
+                exposure_factor = clip_penalty
+            sharp *= exposure_factor
         else:
-            return sharp, 0.0, 0.0
+            p0, p255 = 0.0, 0.0
+
+        return (
+            sharp,
+            p0,
+            p255,
+            brightness_mean,
+            brightness_weight,
+            lap_feature,
+            ten_feature,
+            fft_feature,
+            motion_factor,
+            exposure_factor,
+        )
 
     except ValueError:
         raise
     except Exception:
-        return None, 0.0, 0.0
+        return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0, 1.0
+
+
 
 
 
@@ -368,7 +427,7 @@ def _score_or_negative_infinity(scores, index):
     return float(value) if value is not None else float("-inf")
 
 def _pick_even_candidate(
-    existing_indices, initial_selected, scores, used, target_pos
+    existing_indices, initial_selected, scores, used, target_pos, selected, min_diff
 ):
     """Pick the best candidate near the target position for even spacing.
 
@@ -396,6 +455,9 @@ def _pick_even_candidate(
             idx = existing_indices[pos]
             if idx in used:
                 continue
+            if min_diff > 1 and selected:
+                if any(abs(idx - sel) < min_diff for sel in selected):
+                    continue
             key = (
                 1 if idx in initial_selected else 0,
                 _score_or_negative_infinity(scores, idx),
@@ -405,12 +467,78 @@ def _pick_even_candidate(
             if best_key is None or key > best_key:
                 best_key = key
                 best = idx
-        if best is not None:
+        if best_key is not None and best_key[0] == 1:
             return best
         radius += 1
-    return None
+    return best
 
-def evenly_distribute_indices(existing_indices, initial_selected, scores):
+
+def _pick_best_between(existing_indices, scores, used, start_pos, end_pos, target_pos, initial_selected, selected, min_diff):
+    """Pick the best index between two positions prioritizing sharpness and proximity."""
+    best_idx = None
+    best_key = None
+    for pos in range(start_pos + 1, end_pos):
+        idx = existing_indices[pos]
+        if idx in used:
+            continue
+        score = scores[idx]
+        if score is None:
+            continue
+        if min_diff > 1 and selected:
+            if any(abs(idx - sel) < min_diff for sel in selected):
+                continue
+        key = (
+            1 if idx in initial_selected else 0,
+            score,
+            -abs(pos - target_pos),
+            -idx,
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_idx = idx
+    return best_idx
+
+
+
+def augment_spacing(final_selected, existing_indices, scores, initial_selected, max_spacing, min_diff):
+    """Augment the selection by inserting frames when spacing exceeds the limit."""
+    if max_spacing is None or max_spacing <= 0:
+        return set(final_selected)
+    position_map = {idx: pos for pos, idx in enumerate(existing_indices)}
+    augmented = set(final_selected)
+    used = set(final_selected)
+    changed = True
+    while changed:
+        changed = False
+        selected_sorted = sorted(augmented)
+        for left_idx, right_idx in zip(selected_sorted, selected_sorted[1:]):
+            pos_left = position_map.get(left_idx)
+            pos_right = position_map.get(right_idx)
+            if pos_left is None or pos_right is None:
+                continue
+            gap = pos_right - pos_left
+            if gap <= max_spacing:
+                continue
+            target_pos = int(round((pos_left + pos_right) / 2.0))
+            candidate = _pick_best_between(
+                existing_indices,
+                scores,
+                used,
+                pos_left,
+                pos_right,
+                target_pos,
+                initial_selected,
+                selected_sorted,
+                min_diff,
+            )
+            if candidate is None:
+                continue
+            augmented.add(candidate)
+            used.add(candidate)
+            changed = True
+            break
+    return augmented
+def evenly_distribute_indices(existing_indices, initial_selected, scores, min_diff):
     """Return an evenly spaced selection that still prefers sharp frames.
 
     Args:
@@ -443,7 +571,9 @@ def evenly_distribute_indices(existing_indices, initial_selected, scores):
             scores,
             used,
             target_pos,
-        )
+            selected,
+            min_diff,
+            )
         if candidate is None:
             break
         used.add(candidate)
@@ -459,8 +589,13 @@ def evenly_distribute_indices(existing_indices, initial_selected, scores):
             ),
             reverse=True,
         )
-        needed = desired_count - len(selected)
-        selected.extend(remaining[:needed])
+        for idx in remaining:
+            if len(selected) >= desired_count:
+                break
+            if min_diff > 1 and selected:
+                if any(abs(idx - sel) < min_diff for sel in selected):
+                    continue
+            selected.append(idx)
 
     return set(selected)
 # ---------- Main ----------
@@ -503,7 +638,7 @@ def main():
         "--metric",
         choices=["hybrid", "lapvar", "tenengrad", "fft"],
         default="hybrid",
-        help="Sharpness metric (default: hybrid 0.6*lapvar + 0.4*fft).",
+        help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
     )
     ap.add_argument(
         "-P",
@@ -536,6 +671,13 @@ def main():
         type=crop_ratio_arg,
         default=0.8,
         help="Center crop ratio used during scoring (0.8 keeps 80%%).",
+    )
+    ap.add_argument(
+        "-S",
+        "--max_spacing",
+        type=non_negative_int,
+        default=0,
+        help="Maximum allowed gap between kept frames before backfilling (0 uses 80%% of group size).",
     )
     ap.add_argument(
         "-E",
@@ -578,11 +720,24 @@ def main():
         help="Set OpenCV thread count (0 leaves the default).",
     )
     ap.add_argument(
+        "-n",
+        "--dry_run",
+        action="store_true",
+        help="Perform scoring and selection without moving files.",
+    )
+    ap.add_argument(
+        "--allow_initial_adjacent",
+        action="store_true",
+        help="Allow adjacent frames during initial per-group selection.",
+    )
+    ap.add_argument(
         "-C",
         "--csv",
         help="Optional CSV output path relative to the input directory.",
     )
+
     args = ap.parse_args()
+
 
     # Keep OpenCV from competing with the Python thread pool.
     try:
@@ -596,6 +751,15 @@ def main():
         print(f"No input images found: {args.in_dir}")
         sys.exit(1)
 
+    if args.max_spacing <= 0:
+        args.max_spacing = round_half_up(args.group * 0.8)
+
+    min_spacing_raw = round_half_up(args.group * 0.2)
+    if min_spacing_raw <= 1:
+        min_diff = 2
+    else:
+        min_diff = min_spacing_raw + 1
+
     sorter = SORTERS[args.sort]
     files = sorted(files, key=sorter)
 
@@ -607,6 +771,14 @@ def main():
     scores = [None] * n
     p0_arr = [0.0] * n
     p255_arr = [0.0] * n
+    brightness_arr = [1.0] * n
+    brightness_mean_arr = [0.0] * n
+    lap_arr = [None] * n
+    ten_arr = [None] * n
+    fft_arr = [None] * n
+    motion_arr = [1.0] * n
+    exposure_arr = [1.0] * n
+    group_score_arr = [0.0] * n
 
     workers = (
         args.workers
@@ -626,13 +798,62 @@ def main():
         last_pct = -1
         for fut in as_completed(futs):
             i = futs[fut]
-            s, p0, p255 = fut.result()
+            (
+                s,
+                p0,
+                p255,
+                brightness_mean,
+                brightness_weight,
+                lap_feature,
+                ten_feature,
+                fft_feature,
+                motion_factor,
+                exposure_factor,
+            ) = fut.result()
             scores[i] = s
             p0_arr[i] = p0
             p255_arr[i] = p255
+            brightness_mean_arr[i] = brightness_mean
+            brightness_arr[i] = brightness_weight
+            lap_arr[i] = lap_feature
+            ten_arr[i] = ten_feature
+            fft_arr[i] = fft_feature
+            motion_arr[i] = motion_factor
+            exposure_arr[i] = exposure_factor
             completed += 1
             last_pct = update_progress("Scoring", completed, n, last_pct)
 
+
+    if args.metric == "hybrid":
+        lap_values = [v for v in lap_arr if v is not None]
+        ten_values = [v for v in ten_arr if v is not None]
+        fft_values = [v for v in fft_arr if v is not None]
+    
+        def _normalize_feature(values, value):
+            if not values or value is None:
+                return 0.0
+            vmin = min(values)
+            vmax = max(values)
+            if math.isclose(vmax, vmin):
+                return 0.0
+            return (value - vmin) / (vmax - vmin)
+    
+        for idx in range(n):
+            if lap_arr[idx] is None:
+                continue
+            lap_norm = _normalize_feature(lap_values, lap_arr[idx])
+            ten_norm = _normalize_feature(ten_values, ten_arr[idx])
+            fft_norm = _normalize_feature(fft_values, fft_arr[idx])
+    
+            combined = (
+                HYBRID_LAPVAR_WEIGHT * lap_norm
+                + HYBRID_TENENGRAD_WEIGHT * ten_norm
+                + HYBRID_FFT_WEIGHT * fft_norm
+            )
+    
+            combined *= motion_arr[idx]
+            combined *= exposure_arr[idx]
+            scores[idx] = combined
     if n:
         print(f"Scoring... 100% ({n}/{n})")
     # Prepare optional CSV output
@@ -651,8 +872,8 @@ def main():
                 "index",
                 "filename",
                 "score",
-                "p0_black",
-                "p255_white",
+                "brightness_mean",
+                "group_score",
                 "selected(1=keep)",
             ]
         )
@@ -670,7 +891,9 @@ def main():
                 continue
             valid_idx.append(i)
             if s > 0.0:
-                group_sum += s
+                group_sum += s * brightness_arr[i]
+        for idx_in_group in range(grp_start, grp_end):
+            group_score_arr[idx_in_group] = group_sum
         group_infos.append(
             {
                 "start": grp_start,
@@ -722,16 +945,30 @@ def main():
             )
             keep_count = 1
             if is_low_group:
-                desired = max(
-                    args.low_group_min_keep,
-                    int(
-                        math.ceil(
-                            len(sorted_valid) * args.low_group_keep_ratio
-                        )
-                    ),
+                raw_keep = round_half_up(
+                    len(sorted_valid) * args.low_group_keep_ratio
                 )
+                desired = max(args.low_group_min_keep, raw_keep)
                 keep_count = min(len(sorted_valid), max(1, desired))
-            selected_indices = set(sorted_valid[:keep_count])
+
+            chosen = []
+            if args.allow_initial_adjacent:
+                chosen = sorted_valid[:keep_count]
+            else:
+                for idx in sorted_valid:
+                    if not chosen:
+                        chosen.append(idx)
+                    elif min_diff <= 1 or all(abs(idx - sel) >= min_diff for sel in chosen):
+                        chosen.append(idx)
+                    if len(chosen) >= keep_count:
+                        break
+                if len(chosen) < keep_count:
+                    for idx in sorted_valid:
+                        if idx not in chosen:
+                            chosen.append(idx)
+                        if len(chosen) >= keep_count:
+                            break
+            selected_indices = set(chosen)
 
         initial_selected.update(selected_indices)
 
@@ -743,9 +980,19 @@ def main():
         existing_indices,
         initial_selected,
         scores,
+        min_diff,
     )
     if not final_selected and initial_selected:
         final_selected = set(initial_selected)
+
+    final_selected = augment_spacing(
+        final_selected,
+        existing_indices,
+        scores,
+        initial_selected,
+        args.max_spacing,
+        min_diff,
+    )
 
     kept = 0
     moved = 0
@@ -760,60 +1007,60 @@ def main():
         if not file_exists or s is None:
             skipped += 1
             if csv_writer:
-                csv_writer.writerow(
-                    [i, os.path.basename(files[i]), -1.0, 0.0, 0.0, 0]
-                )
-            last_group_pct = update_progress(
-                "Grouping",
-                processed,
-                total,
-                last_group_pct,
-            )
+                csv_writer.writerow([
+                    i,
+                    os.path.basename(files[i]),
+                    -1.0,
+                    0.0,
+                    group_score_arr[i],
+                    0,
+                ])
+            last_group_pct = update_progress("Grouping", processed, total, last_group_pct)
             continue
+
+        score_val = s if s is not None else 0.0
+        mean_val = brightness_mean_arr[i]
 
         if i in final_selected:
             kept += 1
             if csv_writer:
-                csv_writer.writerow(
-                    [
-                        i,
-                        os.path.basename(files[i]),
-                        s,
-                        p0_arr[i],
-                        p255_arr[i],
-                        1,
-                    ]
-                )
+                csv_writer.writerow([
+                    i,
+                    os.path.basename(files[i]),
+                    score_val,
+                    mean_val,
+                    group_score_arr[i],
+                    1,
+                ])
         else:
-            dst = os.path.join(blur_dir, os.path.basename(files[i]))
-            if safe_move(files[i], dst) is None:
-                skipped += 1
-            else:
+            if args.dry_run:
                 moved += 1
+            else:
+                dst = os.path.join(blur_dir, os.path.basename(files[i]))
+                if safe_move(files[i], dst) is None:
+                    skipped += 1
+                else:
+                    moved += 1
             if csv_writer:
-                csv_writer.writerow(
-                    [
-                        i,
-                        os.path.basename(files[i]),
-                        s,
-                        p0_arr[i],
-                        p255_arr[i],
-                        0,
-                    ]
-                )
-        last_group_pct = update_progress(
-            "Grouping",
-            processed,
-            total,
-            last_group_pct,
-        )
+                csv_writer.writerow([
+                    i,
+                    os.path.basename(files[i]),
+                    score_val,
+                    mean_val,
+                    group_score_arr[i],
+                    0,
+                ])
+        last_group_pct = update_progress("Grouping", processed, total, last_group_pct)
     if total:
         print(f"Grouping... 100% ({total}/{total})")
     if fcsv:
         fcsv.close()
 
     print(f"Done: input {total} / kept {kept} / moved {moved} / skipped {skipped}")
-    print("Blur directory:", blur_dir)
+    if args.dry_run:
+        print("Blur directory (dry run, no files moved):", blur_dir)
+    else:
+        print("Blur directory:", blur_dir)
     print(
         f"workers={workers}, opencv_threads={args.opencv_threads}, "
         f"max_long={args.max_long}"
