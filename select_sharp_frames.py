@@ -136,6 +136,12 @@ HYBRID_TENENGRAD_WEIGHT = 0.3
 HYBRID_FFT_WEIGHT = 0.2
 HYBRID_MOTION_REFERENCE = 5000.0
 HYBRID_MOTION_PENALTY_WEIGHT = 0.4
+MOTION_ANISO_WEIGHT = 0.5
+FLOW_DOWNSCALE = 320
+FLOW_MOTION_WEIGHT = 0.6
+FLOW_HIGH_MOTION_THRESHOLD = 0.5
+FLOW_HIGH_MOTION_RATIO = 0.4
+GROUP_BRIGHTNESS_POWER = 1.5
 HYBRID_DARK_THRESHOLD = 0.35
 HYBRID_DARK_PENALTY_WEIGHT = 0.5
 PROGRESS_INTERVAL = 5
@@ -321,6 +327,7 @@ def score_one_file(
         clip_penalty,
         clip_thresh,
         max_long,
+        enhance_motion,
 ):
     """Compute the sharpness score and ancillary metrics for one frame."""
     try:
@@ -369,6 +376,10 @@ def score_one_file(
             motion_ratio = max(0.0, min(1.0, motion_ratio))
             motion_factor = 1.0 - HYBRID_MOTION_PENALTY_WEIGHT * (1.0 - motion_ratio)
             motion_factor = max(0.0, motion_factor)
+
+            if enhance_motion:
+                # Motion-sensitive enhancement is now handled during post-selection augmentation.
+                pass
 
             if brightness_mean < HYBRID_DARK_THRESHOLD:
                 dark_ratio = brightness_mean / HYBRID_DARK_THRESHOLD
@@ -538,6 +549,110 @@ def augment_spacing(final_selected, existing_indices, scores, initial_selected, 
             changed = True
             break
     return augmented
+
+def _load_flow_gray(path):
+    """Load and optionally downscale a grayscale frame for flow."""
+    flow_gray = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if flow_gray is None:
+        return None
+    h, w = flow_gray.shape[:2]
+    if FLOW_DOWNSCALE and max(h, w) > FLOW_DOWNSCALE:
+        scale = FLOW_DOWNSCALE / float(max(h, w))
+        flow_gray = cv2.resize(
+            flow_gray,
+            (max(1, int(w * scale)), max(1, int(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return flow_gray
+
+
+
+def _compute_pair_flow_magnitude(prev_path, curr_path):
+    """Compute mean optical flow magnitude between two frames."""
+    prev_gray = _load_flow_gray(prev_path)
+    if prev_gray is None:
+        return None
+    curr_gray = _load_flow_gray(curr_path)
+    if curr_gray is None or prev_gray.shape != curr_gray.shape:
+        return None
+    flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 1, 15, 3, 5, 1.1, 0)
+    mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    return float(np.mean(mag))
+
+
+
+def augment_motion_segments(
+    final_selected,
+    group_infos,
+    existing_indices,
+    scores,
+    flow_mag_arr,
+    min_diff,
+):
+    """Add extra frames to high-motion groups after gap augmentation."""
+    motion_values = [v for v in flow_mag_arr if v > 0.0 and np.isfinite(v)]
+    if not motion_values:
+        return set(final_selected)
+
+    percentile_threshold = float(np.percentile(motion_values, 75.0))
+    threshold = max(FLOW_HIGH_MOTION_THRESHOLD, percentile_threshold)
+    augmented = set(final_selected)
+    existing_set = set(existing_indices)
+    ratio_limit = max(0.0, min(1.0, FLOW_HIGH_MOTION_RATIO))
+    spacing = max(1, min_diff)
+
+    for info in group_infos:
+        start = info["start"]
+        end = info["end"]
+        segment_indices = [
+            idx
+            for idx in range(start, end)
+            if idx in existing_set and scores[idx] is not None and np.isfinite(flow_mag_arr[idx])
+        ]
+        if not segment_indices:
+            continue
+
+        segment_motion = max(flow_mag_arr[idx] for idx in segment_indices)
+        if not np.isfinite(segment_motion) or segment_motion < threshold:
+            continue
+
+        current_in_segment = [idx for idx in augmented if start <= idx < end]
+        segment_span = max(1, end - start)
+        spacing_limit = math.ceil(segment_span / spacing)
+        available_budget = max(0, spacing_limit - len(current_in_segment))
+        if available_budget <= 0:
+            continue
+
+        if ratio_limit > 0.0:
+            ratio_cap = max(1, round_half_up(segment_span * ratio_limit))
+            available_budget = min(available_budget, ratio_cap)
+            if available_budget <= 0:
+                continue
+
+        candidates = [idx for idx in segment_indices if idx not in augmented]
+        if not candidates:
+            continue
+
+        candidates.sort(
+            key=lambda idx: (
+                flow_mag_arr[idx],
+                _score_or_negative_infinity(scores, idx),
+                -idx,
+            ),
+            reverse=True,
+        )
+
+        added = 0
+        for idx in candidates:
+            if added >= available_budget:
+                break
+            if min_diff > 1 and any(abs(idx - sel) < min_diff for sel in augmented):
+                continue
+            augmented.add(idx)
+            added += 1
+
+    return augmented
+
 def evenly_distribute_indices(existing_indices, initial_selected, scores, min_diff):
     """Return an evenly spaced selection that still prefers sharp frames.
 
@@ -726,6 +841,11 @@ def main():
         help="Perform scoring and selection without moving files.",
     )
     ap.add_argument(
+        "--enhance_motion",
+        action="store_true",
+        help="Apply additional motion blur penalty during hybrid scoring.",
+    )
+    ap.add_argument(
         "--allow_initial_adjacent",
         action="store_true",
         help="Allow adjacent frames during initial per-group selection.",
@@ -779,6 +899,7 @@ def main():
     motion_arr = [1.0] * n
     exposure_arr = [1.0] * n
     group_score_arr = [0.0] * n
+    flow_mag_arr = [0.0] * n
 
     workers = (
         args.workers
@@ -791,7 +912,7 @@ def main():
                 score_one_file, files[i],
                 args.metric, args.crop_ratio,
                 args.use_exposure, args.clip_penalty, args.clip_thresh,
-                args.max_long
+                args.max_long, args.enhance_motion
             ): i for i in range(n)
         }
         completed = 0
@@ -824,11 +945,49 @@ def main():
             last_pct = update_progress("Scoring", completed, n, last_pct)
 
 
+
+    if args.enhance_motion and n > 1:
+        flow_pairs = []
+        prev_idx = None
+        for idx in range(n):
+            fp = files[idx]
+            if not os.path.isfile(fp):
+                prev_idx = None
+                continue
+            if prev_idx is not None:
+                flow_pairs.append((prev_idx, idx))
+            prev_idx = idx
+        if flow_pairs:
+            with ThreadPoolExecutor(max_workers=workers) as flow_executor:
+                flow_futs = {
+                    flow_executor.submit(
+                        _compute_pair_flow_magnitude,
+                        files[left_idx],
+                        files[right_idx],
+                    ): (left_idx, right_idx)
+                    for left_idx, right_idx in flow_pairs
+                }
+                for fut in as_completed(flow_futs):
+                    left_idx, right_idx = flow_futs[fut]
+                    try:
+                        mean_mag = fut.result()
+                    except Exception:
+                        mean_mag = None
+                    if mean_mag is None:
+                        continue
+                    flow_mag_arr[right_idx] = max(flow_mag_arr[right_idx], mean_mag)
+                    flow_mag_arr[left_idx] = max(flow_mag_arr[left_idx], mean_mag)
+
+
     if args.metric == "hybrid":
+        lap_values = np.array([v for v in lap_arr if v is not None], dtype=np.float64)
+        ten_values = np.array([v for v in ten_arr if v is not None], dtype=np.float64)
+        fft_values = np.array([v for v in fft_arr if v is not None], dtype=np.float64)
+
         lap_values = [v for v in lap_arr if v is not None]
         ten_values = [v for v in ten_arr if v is not None]
         fft_values = [v for v in fft_arr if v is not None]
-    
+
         def _normalize_feature(values, value):
             if not values or value is None:
                 return 0.0
@@ -837,20 +996,20 @@ def main():
             if math.isclose(vmax, vmin):
                 return 0.0
             return (value - vmin) / (vmax - vmin)
-    
+
         for idx in range(n):
             if lap_arr[idx] is None:
                 continue
             lap_norm = _normalize_feature(lap_values, lap_arr[idx])
             ten_norm = _normalize_feature(ten_values, ten_arr[idx])
             fft_norm = _normalize_feature(fft_values, fft_arr[idx])
-    
+
             combined = (
                 HYBRID_LAPVAR_WEIGHT * lap_norm
                 + HYBRID_TENENGRAD_WEIGHT * ten_norm
                 + HYBRID_FFT_WEIGHT * fft_norm
             )
-    
+
             combined *= motion_arr[idx]
             combined *= exposure_arr[idx]
             scores[idx] = combined
@@ -874,6 +1033,7 @@ def main():
                 "score",
                 "brightness_mean",
                 "group_score",
+                "flow_motion",
                 "selected(1=keep)",
             ]
         )
@@ -891,7 +1051,8 @@ def main():
                 continue
             valid_idx.append(i)
             if s > 0.0:
-                group_sum += s * brightness_arr[i]
+                brightness_factor = brightness_arr[i] * (max(brightness_mean_arr[i], 1e-6) ** GROUP_BRIGHTNESS_POWER)
+                group_sum += s * brightness_factor
         for idx_in_group in range(grp_start, grp_end):
             group_score_arr[idx_in_group] = group_sum
         group_infos.append(
@@ -994,6 +1155,16 @@ def main():
         min_diff,
     )
 
+    if args.enhance_motion:
+        final_selected = augment_motion_segments(
+            final_selected,
+            group_infos,
+            existing_indices,
+            scores,
+            flow_mag_arr,
+            min_diff,
+        )
+
     kept = 0
     moved = 0
     skipped = 0
@@ -1013,6 +1184,7 @@ def main():
                     -1.0,
                     0.0,
                     group_score_arr[i],
+                    flow_mag_arr[i],
                     0,
                 ])
             last_group_pct = update_progress("Grouping", processed, total, last_group_pct)
@@ -1030,6 +1202,7 @@ def main():
                     score_val,
                     mean_val,
                     group_score_arr[i],
+                    flow_mag_arr[i],
                     1,
                 ])
         else:
@@ -1048,6 +1221,7 @@ def main():
                     score_val,
                     mean_val,
                     group_score_arr[i],
+                    flow_mag_arr[i],
                     0,
                 ])
         last_group_pct = update_progress("Grouping", processed, total, last_group_pct)
