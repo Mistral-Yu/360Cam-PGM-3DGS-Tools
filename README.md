@@ -6,7 +6,7 @@ A toolkit for processing and optimizing **360 Camera 3DGS Scans** aligned with R
 
 ## Overview
 
-RealityScan outputs raw PLY point clouds and 360° images/videos which often need cleaning(masking), optimization, 
+RealityScan outputs raw PLY point clouds and 360° images/videos which often need cleaning, optimization, 
 and alignment before they can be effectively used in PostShot or other 3D Gaussian Splatting pipelines. 
 The tools in this repo cover the typical preprocessing steps for **360° camera-based scanning**:
 
@@ -46,17 +46,6 @@ A small utility to **optimize PLY point clouds from RealityScan for PostShot/3DG
 rs2ps_PlyOptimizer -i input.ply -o output.ply --target-points 500000
 ```
 
-#### Main Options
-
-| Option             | Description                                           |
-| ------------------ | ----------------------------------------------------- |
-| `--voxel-size`     | Fixed voxel size                                      |
-| `--target-points`  | Target number of points                               |
-| `--target-percent` | Target points as percentage of input                  |
-| `--keep-strategy`  | Representative point: `centroid` / `center` / `first` |
-| `--append-ply`     | Append other PLY files                                |
-
----
 
 ## License
 
