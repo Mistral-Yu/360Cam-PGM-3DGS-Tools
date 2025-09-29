@@ -519,7 +519,7 @@ def voxel_downsample_to_target(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Entry point for the rs2ps-opt CLI.
+    """Entry point for the rs2ps_PlyOptimizer CLI.
 
     Args:
         argv: Optional argument vector to parse instead of sys.argv.
@@ -528,7 +528,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         Process exit code.
     """
     ap = argparse.ArgumentParser(
-        prog="rs2ps-opt",
+        prog="rs2ps_PlyOptimizer",
         description=(
             "RealityScan to PostShot PLY optimizer (XYZ+RGB load/save, "
             "voxel downsampling, append)"
