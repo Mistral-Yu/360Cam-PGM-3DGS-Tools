@@ -18,7 +18,7 @@ Together, they allow for a smoother end-to-end pipeline.
 
 * **rs2ps_Video2Frames**: Extracting 360° images from 360° videos
 * **rs2ps_FrameSelector**: Selecting suitable frames from 360° image sequences for SfM/3DGS
-* **rs2ps_360PerspCut: Cutting perspective images from 360° equirectangular images
+* **rs2ps_360PerspCut**: Cutting perspective images from 360° equirectangular images
 * **rs2ps_PlyOptimizer**: Point cloud optimization. Downsampling, merging, and optimizing PLY point clouds — initialization point clouds for 3DGS, exported from RealityScan
 
 ---
