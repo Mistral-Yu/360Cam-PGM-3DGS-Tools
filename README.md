@@ -6,13 +6,9 @@ A toolkit for processing and optimizing **360 Camera 3DGS Scans** aligned with R
 
 ## Overview
 
-RealityScan outputs raw PLY point clouds and 360° images/videos which often need cleaning, optimization, and alignment before they can be effectively used in PostShot or other 3D Gaussian Splatting pipelines. 
+RealityScan outputs raw PLY point clouds and 360° images/videos which often need cleaning(masking), optimization, 
+and alignment before they can be effectively used in PostShot or other 3D Gaussian Splatting pipelines. 
 The tools in this repo cover the typical preprocessing steps for **360° camera-based scanning**:
-
-1. Point cloud optimization (downsampling, merging) — initialization point clouds for 3DGS, exported from RealityScan
-2. **360° video → image frame extraction**
-3. **360° image sequence → image selection for SfM/3DGS**
-4. **360° image → perspective cutout generation**
 
 Together, they allow for a smoother end-to-end pipeline.
 
@@ -20,10 +16,10 @@ Together, they allow for a smoother end-to-end pipeline.
 
 ## Tools
 
-* **rs2ps_PlyOptimizer**: Downsampling, merging, and optimizing PLY point clouds
 * **rs2ps_Video2Frames**: Extracting 360° images from 360° videos
 * **rs2ps_FrameSelector**: Selecting suitable frames from 360° image sequences for SfM/3DGS
 * **rs2ps_360PerspCut: Cutting perspective images from 360° equirectangular images
+* **rs2ps_PlyOptimizer**: Point cloud optimization. Downsampling, merging, and optimizing PLY point clouds — initialization point clouds for 3DGS, exported from RealityScan
 
 ---
 
