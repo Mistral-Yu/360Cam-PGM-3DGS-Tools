@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 select_sharp_frames.py (listdir-based sharp frame selector)
@@ -1243,6 +1243,15 @@ def main():
     else:
         min_diff = 1
 
+    motion_min_diff = min_diff
+    if args.enhance_motion and not args.apply_csv:
+        halved_ratio = max(0.0, min_diff_ratio * 0.5)
+        motion_spacing_raw = math.floor(args.segment_size * halved_ratio)
+        if motion_spacing_raw <= 1:
+            motion_min_diff = 2
+        else:
+            motion_min_diff = motion_spacing_raw + 1
+
     fast_window = FAST_SPACING_WINDOW
     if args.segment_size and args.segment_size > 0:
         fast_window = max(1, round_half_up(args.segment_size * FAST_SPACING_MULTIPLIER))
@@ -1622,7 +1631,7 @@ def main():
                 existing_indices,
                 scores,
                 flow_mag_arr,
-                min_diff,
+                motion_min_diff,
             )
             motion_added_count = len(final_selected - before_motion_aug)
 
