@@ -7,11 +7,10 @@ Workflow (after this update):
   1) Gather images directly under the input directory (tif/png/jpg by default)
   2) Sort them according to the chosen rule
   3) Score sharpness in parallel (grayscale read + optional resize/crop)
-  4) Split the list into --segment_size batches and do an initial "sharpness-driven" selection
-     (optionally more keeps for low-quality groups)
-  5) Evenly distribute the initially selected indices over the whole sequence (min spacing aware)
-  6) Gap augmentation: backfill when gaps between selected frames exceed --max_spacing
-  7) Brightness+Sharpness in-group augmentation (NEW): after gap augmentation, add frames with
+  4) Split the list into --segment_size batches and keep the sharpest frame from each segment
+  5) Finalize the per-segment selection before optional augmentations
+  6) Gap augmentation (optional, enable via --augment_gap): backfill when gaps between selected frames exceed the configured max spacing
+  7) Brightness+Sharpness in-group augmentation (optional, enable via --augment_bs): after gap augmentation, add frames with
      high (score * brightness^power) inside each segment, respecting min spacing and a per-segment budget
   8) Motion enhancement (optional): if --enhance_motion, add extra frames in high-motion segments
   9) (Optional) Motion pruning: if --prune_motion, drop the lowest-motion subset (bottom percentile)
@@ -20,15 +19,14 @@ Workflow (after this update):
 Defaults:
   - ext: all (tif/png/jpg)
   - metric: hybrid (0.6 * laplacian variance + 0.3 * tenengrad + 0.2 * fft)  [normalized blending]
-  - low group: off unless explicitly enabled (ratio controls extra keeps)
-  - crop_ratio: 0.8 (evaluate the central 80%)
+  - crop_ratio: 0.8 (keep central 80% vertical band)
   - sort: lastnum (prefer trailing numbers, fallback to name)
-  - use_exposure: off (enable with --use_exposure)
   - csv: off (enable with --csv)
-  - max_long: 1280 px (0 disables downscale)
+  - max_long: 0 (no downscale by default)
   - workers: min(8, os.cpu_count() or 4)
   - opencv_threads: 0 (leave OpenCV threading untouched)
-  - augment_bs: ON by default (disable via --no_augment_bs)
+  - augment_gap: off by default (enable via --augment_gap)
+  - augment_bs: off by default (enable via --augment_bs)
 
 Python 3.7+ / OpenCV 4.x
 """
@@ -144,33 +142,6 @@ def positive_int(value):
         raise argparse.ArgumentTypeError("--segment_size must be a positive integer")
     return ivalue
 
-def crop_ratio_arg(value):
-    try:
-        fvalue = float(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError("--crop_ratio must be a number")
-    if not (0.0 < fvalue <= 1.0):
-        raise argparse.ArgumentTypeError("--crop_ratio must be in (0, 1]")
-    return fvalue
-
-def percentile_arg(value):
-    try:
-        fvalue = float(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError("percentile must be in [0, 100]")
-    if not (0.0 <= fvalue <= 100.0):
-        raise argparse.ArgumentTypeError("percentile must be in [0, 100]")
-    return fvalue
-
-def fraction_arg(value):
-    try:
-        fvalue = float(value)
-    except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError("fraction must be in [0, 1]")
-    if not (0.0 <= fvalue <= 1.0):
-        raise argparse.ArgumentTypeError("fraction must be in [0, 1]")
-    return fvalue
-
 
 # Validators
 def non_negative_int(value):
@@ -182,9 +153,9 @@ def non_negative_int(value):
         raise argparse.ArgumentTypeError("value must be >= 0")
     return ivalue
 
-HYBRID_LAPVAR_WEIGHT = 0.5
+HYBRID_LAPVAR_WEIGHT = 0.6
 HYBRID_TENENGRAD_WEIGHT = 0.3
-HYBRID_FFT_WEIGHT = 0.2
+HYBRID_FFT_WEIGHT = 0.1
 HYBRID_MOTION_REFERENCE = 5000.0
 HYBRID_MOTION_PENALTY_WEIGHT = 0.4
 MOTION_ANISO_WEIGHT = 0.5
@@ -202,6 +173,13 @@ HYBRID_DARK_THRESHOLD = 0.35
 HYBRID_DARK_PENALTY_WEIGHT = 0.5
 PROGRESS_INTERVAL = 5
 
+CROP_RATIO = 0.8
+MAX_LONG = 0
+MAX_SPACING_FRAMES = 0
+MAX_SPACING_RATIO = 0.8
+BS_KEEP_RATIO = 0.2
+BS_MIN_KEEP = 0
+MIN_DIFF_FRAMES_RATIO = 0.2
 def update_progress(label, completed, total, last_pct):
     if total <= 0:
         return last_pct
@@ -312,12 +290,12 @@ def downscale_gray(gray, max_long):
 def crop_by_ratio_gray(gray, crop_ratio):
 
     """
-    Center-crop the grayscale image by the given ratio.
-    
+    Keep a central horizontal band of the grayscale image by the given ratio.
+
     Args:
         gray (np.ndarray): Input grayscale image.
-        crop_ratio (float | None): Portion to keep (0 < ratio <= 1).
-    
+        crop_ratio (float | None): Vertical portion to keep (0 < ratio <= 1).
+
     Returns:
         np.ndarray: Cropped grayscale image.
     """
@@ -329,10 +307,9 @@ def crop_by_ratio_gray(gray, crop_ratio):
         return gray
     h, w = gray.shape[:2]
     nh = max(1, int(h * crop_ratio))
-    nw = max(1, int(w * crop_ratio))
-    y0 = (h - nh) // 2
-    x0 = (w - nw) // 2
-    return gray[y0:y0+nh, x0:x0+nw]
+    y0 = max(0, (h - nh) // 2)
+    y1 = min(h, y0 + nh)
+    return gray[y0:y1, :]
 
 def lapvar32(gray):
     lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
@@ -370,19 +347,10 @@ def fft_energy_fast(gray):
     hf = fshift * mask
     return float(np.mean(np.abs(hf)))
 
-def exposure_clip_stats(gray):
-    # Assume 8-bit input (IMREAD_GRAYSCALE).
-    p0 = float(np.mean(gray <= 2))
-    p255 = float(np.mean(gray >= 253))
-    return p0, p255
-
 def score_one_file(
         fp,
         metric,
         crop_ratio,
-        use_exposure,
-        clip_penalty,
-        clip_thresh,
         max_long,
         enhance_motion,
 ):
@@ -390,7 +358,7 @@ def score_one_file(
     try:
         gray = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
         if gray is None:
-            return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0, 1.0
+            return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
         gray = downscale_gray(gray, max_long)
         gray = crop_by_ratio_gray(gray, crop_ratio)
 
@@ -400,7 +368,6 @@ def score_one_file(
         ten_feature = None
         fft_feature = None
         motion_factor = 1.0
-        exposure_factor = 1.0
 
         if metric == "lapvar":
             lap_score = lapvar32(gray)
@@ -448,16 +415,9 @@ def score_one_file(
 
             sharp = hybrid_raw * motion_factor
         else:
-            return None, 0.0, 0.0, brightness_mean, brightness_weight, None, None, None, 1.0, 1.0
+            return None, 0.0, 0.0, brightness_mean, brightness_weight, None, None, None, 1.0
 
-        if use_exposure:
-            p0, p255 = exposure_clip_stats(gray)
-            clip = p0 + p255
-            if clip > clip_thresh:
-                exposure_factor = clip_penalty
-            sharp *= exposure_factor
-        else:
-            p0, p255 = 0.0, 0.0
+        p0, p255 = 0.0, 0.0
 
         return (
             sharp,
@@ -469,13 +429,12 @@ def score_one_file(
             ten_feature,
             fft_feature,
             motion_factor,
-            exposure_factor,
         )
 
     except ValueError:
         raise
     except Exception:
-        return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0, 1.0
+        return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
 
 
 
@@ -1056,72 +1015,6 @@ def main():
         help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
     )
     ap.add_argument(
-        "-q",
-        "--low_group_percentile",
-        type=percentile_arg,
-        default=30.0,
-        help=(
-            "Percentile threshold for detecting low-quality groups (default: 30)."
-        ),
-    )
-    ap.add_argument(
-        "-r",
-        "--low_group_keep_ratio",
-        type=fraction_arg,
-        default=0.4,
-        help=(
-            "Fraction of frames to keep in low-quality groups (0 disables)."
-        ),
-    )
-    ap.add_argument(
-        "-k",
-        "--low_group_min_keep",
-        type=positive_int,
-        default=2,
-        help="Minimum number of frames to keep when a group is flagged low.",
-    )
-    ap.add_argument(
-        "-c",
-        "--crop_ratio",
-        type=crop_ratio_arg,
-        default=0.8,
-        help="Center crop ratio used during scoring (0.8 keeps 80%%).",
-    )
-    ap.add_argument(
-        "-x",
-        "--max_spacing",
-        type=non_negative_int,
-        default=0,
-        help="Maximum allowed gap between kept frames before backfilling (0 uses 80%% of segment size).",
-    )
-    ap.add_argument(
-        "-u",
-        "--use_exposure",
-        action="store_true",
-        help="Apply exposure penalty when black/white clipping is detected.",
-    )
-    ap.add_argument(
-        "-p",
-        "--clip_penalty",
-        type=float,
-        default=0.5,
-        help="Multiplier applied to scores when clipping exceeds the threshold.",
-    )
-    ap.add_argument(
-        "-t",
-        "--clip_thresh",
-        type=float,
-        default=0.25,
-        help="Exposure clipping threshold for applying the penalty.",
-    )
-    ap.add_argument(
-        "-l",
-        "--max_long",
-        type=int,
-        default=0,
-        help="Maximum long edge for scoring (0 keeps the original resolution).",
-    )
-    ap.add_argument(
         "-w",
         "--workers",
         type=int,
@@ -1146,27 +1039,19 @@ def main():
         help="Apply selections from an existing CSV produced during a dry run.",
     )
     ap.add_argument(
+        "--reselect_csv",
+        help="Reuse scores and metrics from an existing CSV (produced via --csv) to recompute selection without rescoring.",
+    )
+    ap.add_argument(
         "--enhance_motion",
         action="store_true",
         help="Apply additional motion blur penalty during hybrid scoring.",
     )
     ap.add_argument(
-        "--allow_initial_adjacent",
-        action="store_true",
-        help="Allow adjacent frames during initial per-group selection.",
-    )
-    ap.add_argument(
-        "-md",
-        "--min_diff_ratio",
-        type=float,
-        default=0.2,
-        help="Base ratio of --segment_size used to enforce spacing between initially selected frames.",
-    )
-    ap.add_argument(
-        "--flow_crop_ratio",
-        type=float,
-        default=FLOW_CROP_RATIO,
-        help="Central crop ratio to apply before optical flow (0<r<=1).",
+        "--min_spacing_frames",
+        type=non_negative_int,
+        default=None,
+        help=f"Minimum number of frames to keep between selected frames (0 allows adjacency, default: round(segment_size * {MIN_DIFF_FRAMES_RATIO:.1f})).",
     )
     ap.add_argument(
         "--prune_motion",
@@ -1179,29 +1064,25 @@ def main():
         help="Optional CSV output path relative to the input directory.",
     )
 
-    # NEW: Brightness+Sharpness augmentation controls
+    # Augmentation toggles
     ap.add_argument(
-        "--no_augment_bs",
-        action="store_false",
-        dest="augment_bs",
-        help="Disable brightness+sharpness in-group augmentation step.",
+        "--augment_gap",
+        action="store_true",
+        help="Enable gap backfill augmentation step after initial selection.",
     )
     ap.add_argument(
-        "--bs_keep_ratio",
-        type=fraction_arg,
-        default=0.2,
-        help="Per-segment ratio for brightness+sharpness augmentation (default: 0.2).",
+        "--augment_bs",
+        action="store_true",
+        help="Enable brightness+sharpness in-group augmentation step.",
     )
-    ap.add_argument(
-        "--bs_min_keep",
-        type=non_negative_int,
-        default=0,
-        help="Minimum number of frames to add per segment in brightness+sharpness augmentation (default: 0).",
-    )
-
-    ap.set_defaults(augment_bs=True)
 
     args = ap.parse_args()
+
+    if args.apply_csv and args.reselect_csv:
+        raise SystemExit("--apply_csv and --reselect_csv cannot be used together.")
+
+    if args.reselect_csv:
+        args.dry_run = True
 
     if not args.apply_csv and args.segment_size is None:
         print("--segment_size is required unless --apply_csv is provided.")
@@ -1213,12 +1094,17 @@ def main():
         pass
     _cancel_listener_thread = start_cancel_listener()
 
-    flow_crop_ratio = args.flow_crop_ratio
+    flow_crop_ratio = FLOW_CROP_RATIO
     if not (0.0 < flow_crop_ratio <= 1.0):
-        raise SystemExit("--flow_crop_ratio must be in (0, 1]")
-    if args.min_diff_ratio < 0.0:
-        raise SystemExit("--min_diff_ratio must be >= 0")
-    min_diff_ratio = args.min_diff_ratio
+        raise SystemExit("FLOW_CROP_RATIO must be in (0, 1]")
+    if args.min_spacing_frames is None:
+        if args.segment_size is None:
+            base_spacing_frames = 0
+        else:
+            base_spacing_frames = max(0, round_half_up(args.segment_size * MIN_DIFF_FRAMES_RATIO))
+    else:
+        base_spacing_frames = max(0, args.min_spacing_frames)
+
     # Keep OpenCV from competing with the Python thread pool.
     try:
         if args.opencv_threads and args.opencv_threads > 0:
@@ -1231,26 +1117,22 @@ def main():
         print(f"No input images found: {args.in_dir}")
         sys.exit(1)
 
-    if not args.apply_csv:
-        if args.max_spacing <= 0:
-            args.max_spacing = round_half_up(args.segment_size * 0.8)
+    max_spacing = MAX_SPACING_FRAMES
 
-        min_spacing_raw = round_half_up(args.segment_size * min_diff_ratio)
-        if min_spacing_raw <= 1:
-            min_diff = 2
-        else:
-            min_diff = min_spacing_raw + 1
+    if not args.apply_csv:
+        if max_spacing <= 0:
+            max_spacing = round_half_up(args.segment_size * MAX_SPACING_RATIO)
+
+        min_diff = base_spacing_frames + 1
     else:
         min_diff = 1
 
     motion_min_diff = min_diff
     if args.enhance_motion and not args.apply_csv:
-        halved_ratio = max(0.0, min_diff_ratio * 0.5)
-        motion_spacing_raw = math.floor(args.segment_size * halved_ratio)
-        if motion_spacing_raw <= 1:
-            motion_min_diff = 2
-        else:
-            motion_min_diff = motion_spacing_raw + 1
+        halved_frames = max(0, base_spacing_frames // 2)
+        motion_min_diff = halved_frames + 1
+
+    augment_min_diff = min_diff
 
     fast_window = FAST_SPACING_WINDOW
     if args.segment_size and args.segment_size > 0:
@@ -1273,7 +1155,6 @@ def main():
     ten_arr = [None] * n
     fft_arr = [None] * n
     motion_arr = [1.0] * n
-    exposure_arr = [1.0] * n
     group_score_arr = [0.0] * n
     flow_mag_arr = [0.0] * n
 
@@ -1282,9 +1163,11 @@ def main():
     cancelled = cancel_event.is_set()
     selection_flags = [0] * n
     gap_added_count = 0
+    reselect_csv_path = None
     bs_added_count = 0
     motion_added_count = 0
     low_motion_filtered_count = 0
+    motion_prune_reported = False
     final_selected = set()
     initial_selected = set()
     group_infos = []
@@ -1326,14 +1209,36 @@ def main():
             idx for idx in range(total) if os.path.isfile(files[idx])
         ]
         cancelled = cancel_event.is_set()
+    elif args.reselect_csv:
+        reselect_csv_path = args.reselect_csv
+        if not os.path.isabs(reselect_csv_path):
+            reselect_csv_path = os.path.join(args.in_dir, reselect_csv_path)
+        if not os.path.isfile(reselect_csv_path):
+            print(f"Metrics CSV not found: {reselect_csv_path}")
+            sys.exit(1)
+        try:
+            selection_flags = load_selection_from_csv(
+                reselect_csv_path,
+                files,
+                scores,
+                brightness_mean_arr,
+                group_score_arr,
+                flow_mag_arr,
+            )
+        except ValueError as exc:
+            print(f"Failed to load metrics CSV: {exc}")
+            sys.exit(1)
+        existing_indices = [
+            idx for idx in range(total) if os.path.isfile(files[idx])
+        ]
+        cancelled = cancel_event.is_set()
     else:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futs = {
                 ex.submit(
                     score_one_file, files[i],
-                    args.metric, args.crop_ratio,
-                    args.use_exposure, args.clip_penalty, args.clip_thresh,
-                    args.max_long, args.enhance_motion
+                    args.metric, CROP_RATIO,
+                    MAX_LONG, args.enhance_motion
                 ): i for i in range(n)
             }
             completed = 0
@@ -1353,7 +1258,6 @@ def main():
                         ten_feature,
                         fft_feature,
                         motion_factor,
-                        exposure_factor,
                     ) = fut.result()
                     scores[i] = s
                     p0_arr[i] = p0
@@ -1364,7 +1268,6 @@ def main():
                     ten_arr[i] = ten_feature
                     fft_arr[i] = fft_feature
                     motion_arr[i] = motion_factor
-                    exposure_arr[i] = exposure_factor
                     completed += 1
                     last_pct = update_progress("Scoring", completed, n, last_pct)
             except KeyboardInterrupt:
@@ -1372,7 +1275,13 @@ def main():
         cancelled = cancel_event.is_set()
 
     flow_pairs_total = 0
-    if (not cancelled) and n > 1 and (args.prune_motion or args.enhance_motion):
+    if (
+        not cancelled
+        and not args.apply_csv
+        and not args.reselect_csv
+        and n > 1
+        and (args.prune_motion or args.enhance_motion)
+    ):
         flow_pairs_total = _compute_flow_magnitudes(
             files,
             flow_mag_arr,
@@ -1411,18 +1320,21 @@ def main():
             )
 
             combined *= motion_arr[idx]
-            combined *= exposure_arr[idx]
             scores[idx] = combined
     
     # Prepare optional CSV output
     csv_writer = None
     fcsv = None
+    csv_path = None
     if args.csv:
         csv_path = (
             args.csv
             if os.path.isabs(args.csv)
             else os.path.join(args.in_dir, args.csv)
         )
+    elif reselect_csv_path:
+        csv_path = reselect_csv_path
+    if csv_path:
         fcsv = open(csv_path, "w", newline="")
         csv_writer = csv.writer(fcsv)
         csv_writer.writerow(
@@ -1462,16 +1374,6 @@ def main():
                 }
             )
 
-        group_sums = [info["group_sum"] for info in group_infos if info["valid_idx"]]
-        low_threshold = None
-        if args.low_group_keep_ratio > 0.0:
-            if group_sums:
-                low_threshold = float(
-                    np.percentile(group_sums, args.low_group_percentile)
-                )
-            else:
-                low_threshold = 0.0
-
         initial_selected = set()
         for info in group_infos:
             grp_start = info["start"]
@@ -1484,66 +1386,23 @@ def main():
                 i for i in existing_indices if scores[i] is not None
             ]
 
-            is_low_group = False
-            if args.low_group_keep_ratio > 0.0:
-                if not valid_indices:
-                    is_low_group = True
-                elif (
-                    low_threshold is None
-                    or info["group_sum"] <= low_threshold
-                ):
-                    is_low_group = True
-
-            if not valid_indices:
-                selected_indices = set(existing_indices)
-            else:
-                sorted_valid = sorted(
+            chosen_idx = None
+            if valid_indices:
+                chosen_idx = max(
                     valid_indices,
-                    key=lambda idx: (scores[idx], idx),
-                    reverse=True,
+                    key=lambda idx: (scores[idx], -idx),
                 )
-                keep_count = 1
-                if is_low_group:
-                    raw_keep = round_half_up(
-                        len(sorted_valid) * args.low_group_keep_ratio
-                    )
-                    desired = max(args.low_group_min_keep, raw_keep)
-                    keep_count = min(len(sorted_valid), max(1, desired))
+            elif existing_indices:
+                chosen_idx = existing_indices[0]
 
-                chosen = []
-                if args.allow_initial_adjacent:
-                    chosen = sorted_valid[:keep_count]
-                else:
-                    for idx in sorted_valid:
-                        if not chosen:
-                            chosen.append(idx)
-                        elif min_diff <= 1 or all(abs(idx - sel) >= min_diff for sel in chosen):
-                            chosen.append(idx)
-                        if len(chosen) >= keep_count:
-                            break
-                    if len(chosen) < keep_count:
-                        for idx in sorted_valid:
-                            if idx not in chosen:
-                                chosen.append(idx)
-                            if len(chosen) >= keep_count:
-                                break
-                selected_indices = set(chosen)
-
-            initial_selected.update(selected_indices)
+            if chosen_idx is not None:
+                initial_selected.add(chosen_idx)
 
         existing_indices = [
             i for i in range(total) if os.path.isfile(files[i])
         ]
         initial_selected &= set(existing_indices)
-        final_selected = evenly_distribute_indices(
-            existing_indices,
-            initial_selected,
-            scores,
-            min_diff,
-            fast_window,
-        )
-        if not final_selected and initial_selected:
-            final_selected = set(initial_selected)
+        final_selected = set(initial_selected)
 
     if (
         args.prune_motion
@@ -1584,30 +1443,32 @@ def main():
                             if idx not in motion_pruned_indices
                         ]
                     initial_selected &= set(existing_indices)
-                print(
-                    f"Motion prune removed {low_motion_filtered_count} frame(s) below P{FLOW_LOW_MOTION_PERCENTILE:.0f} "
-                    f"(threshold {motion_prune_threshold:.4f})."
-                )
+                if not motion_prune_reported:
+                    print(
+                        f"Motion prune removed {low_motion_filtered_count} frame(s) below P{FLOW_LOW_MOTION_PERCENTILE:.0f} "
+                        f"(threshold {motion_prune_threshold:.4f})."
+                    )
+                    motion_prune_reported = True
 
     # ----- Augmentations after initial selection -----
     if not args.apply_csv and not cancelled:
         # 1) Gap augmentation
-        gap_added_count = 0
-        before_gap_aug = set(final_selected)
-        final_selected = augment_spacing(
-            final_selected,
-            existing_indices,
-            scores,
-            initial_selected,
-            args.max_spacing,
-            min_diff,
-            fast_window,
-        )
-        gap_added_count = len(final_selected - before_gap_aug)
+        if args.augment_gap:
+            before_gap_aug = set(final_selected)
+            final_selected = augment_spacing(
+                final_selected,
+                existing_indices,
+                scores,
+                initial_selected,
+                max_spacing,
+                augment_min_diff,
+                fast_window,
+            )
+            gap_added_count = len(final_selected - before_gap_aug)
 
         # 2) Brightness+Sharpness in-group augmentation (NEW, runs after gap fill)
-        bs_added_count = 0
         if args.augment_bs:
+            bs_added_count = 0
             before_bs_aug = set(final_selected)
             final_selected = augment_brightness_sharpness_segments(
                 final_selected,
@@ -1615,9 +1476,9 @@ def main():
                 existing_indices,
                 scores,
                 brightness_mean_arr,
-                min_diff,
-                args.bs_keep_ratio,
-                args.bs_min_keep,
+                augment_min_diff,
+                BS_KEEP_RATIO,
+                BS_MIN_KEEP,
             )
             bs_added_count = len(final_selected - before_bs_aug)
 
@@ -1713,10 +1574,8 @@ def main():
     if cancelled:
         print("Cancelled by user. Partial results may be incomplete.")
 
-    if low_motion_filtered_count:
-        print(f"Flow filter removed {low_motion_filtered_count} frame(s).")
-
-    print(f"Gap augmentation added {gap_added_count} frame(s).")
+    if args.augment_gap:
+        print(f"Gap augmentation added {gap_added_count} frame(s).")
     if args.augment_bs:
         print(f"Brightness+Sharpness augmentation added {bs_added_count} frame(s).")
     if args.enhance_motion:
@@ -1729,7 +1588,7 @@ def main():
         print("Blur directory:", blur_dir)
     print(
         f"workers={workers}, opencv_threads={args.opencv_threads}, "
-        f"max_long={args.max_long}"
+        f"max_long={MAX_LONG}, crop_ratio={CROP_RATIO}, max_spacing={max_spacing}, flow_crop_ratio={flow_crop_ratio}, min_spacing_frames={base_spacing_frames}"
     )
 
 
