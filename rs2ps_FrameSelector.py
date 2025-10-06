@@ -166,6 +166,7 @@ FLOW_HIGH_MOTION_RATIO = 0.4
 FLOW_LOW_MOTION_PERCENTILE = 10.0
 FLOW_MISSING_HIGH_VALUE = 9999.0
 FLOW_CROP_RATIO = 0.5
+FLOW_METHOD = "lucas_kanade"  # options: 'farneback', 'lucas_kanade'
 FAST_SPACING_WINDOW = 64
 FAST_SPACING_MULTIPLIER = 4.0
 GROUP_BRIGHTNESS_POWER = 1.5
@@ -658,6 +659,31 @@ def _compute_pair_flow_magnitude(prev_path, curr_path, crop_ratio):
     curr_gray = _load_flow_gray(curr_path, crop_ratio)
     if curr_gray is None or prev_gray.shape != curr_gray.shape:
         return None
+
+    if FLOW_METHOD == "lucas_kanade":
+        feature_params = dict(maxCorners=1000, qualityLevel=0.01, minDistance=5, blockSize=7)
+        lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        p0 = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
+        if p0 is None or len(p0) == 0:
+            return None
+        p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, p0, None, **lk_params)
+        if p1 is None or st is None:
+            return None
+        st = st.reshape(-1)
+        valid = st == 1
+        if not np.any(valid):
+            return None
+        displacement = (p1[valid] - p0[valid]).reshape(-1, 2)
+        if displacement.size == 0:
+            return None
+        mag = np.linalg.norm(displacement, axis=1)
+        if mag.size == 0:
+            return None
+        mean_mag = float(np.mean(mag))
+        if not np.isfinite(mean_mag):
+            return None
+        return mean_mag
+
     try:
         flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 1, 15, 3, 5, 1.1, 0)
     except Exception:
