@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""Overview:
+    CLI script that drives ffmpeg/ffprobe to extract frames from a video while tracking bit depth and progress.
+
+Dependencies:
+    - Python standard library: argparse, json, pathlib, re, shlex, shutil, signal, subprocess, sys, time, typing
+    - External tools: ffmpeg, ffprobe
+"""
+
 import argparse
 import json
 import pathlib
