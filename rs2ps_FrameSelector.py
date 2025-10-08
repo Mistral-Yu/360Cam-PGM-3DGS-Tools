@@ -6,27 +6,28 @@ select_sharp_frames.py (listdir-based sharp frame selector)
 Workflow (after this update):
   1) Gather images directly under the input directory (tif/png/jpg by default)
   2) Sort them according to the chosen rule
-  3) Score sharpness in parallel (grayscale read + optional resize/crop)
+  3) Score sharpness in parallel (grayscale read + optional resize/crop via --crop_ratio)
   4) Split the list into --segment_size batches and keep the sharpest frame from each segment
   5) Finalize the per-segment selection before optional augmentations
   6) Gap augmentation (optional, enable via --augment_gap): backfill when gaps between selected frames exceed the configured max spacing
-  7) Brightness+Sharpness in-group augmentation (optional, enable via --augment_bs): after gap augmentation, add frames with
+  7) Brightness+Sharpness in-group augmentation (optional, enable via --augment_lowlight): after gap augmentation, add frames with
      high (score * brightness^power) inside each segment, respecting min spacing and a per-segment budget
-  8) Motion enhancement (optional): if --enhance_motion, add extra frames in high-motion segments
-  9) (Optional) Motion pruning: if --prune_motion, drop the lowest-motion subset (bottom percentile)
+  8) Motion enhancement (optional): if --augment_motion, add extra frames in high-motion segments
+  9) (Optional) Motion pruning: if --prune_motion, drop at most one frame from contiguous low-motion clusters
+     when both the candidate and the nearest selected neighbors stay below the low-motion threshold
  10) Move non-selected images into in_dir/blur/ (or only write CSV in --dry_run)
 
 Defaults:
   - ext: all (tif/png/jpg)
   - metric: hybrid (0.6 * laplacian variance + 0.3 * tenengrad + 0.2 * fft)  [normalized blending]
-  - crop_ratio: 0.8 (keep central 80% vertical band)
+  - crop_ratio: 0.8 (keep central 80% vertical band; override with --crop_ratio)
   - sort: lastnum (prefer trailing numbers, fallback to name)
   - csv: off (enable with --csv)
   - max_long: 0 (no downscale by default)
   - workers: min(8, os.cpu_count() or 4)
-  - opencv_threads: 0 (leave OpenCV threading untouched)
+  - opencv_threads: 0 (module constant; leave OpenCV threading untouched)
   - augment_gap: off by default (enable via --augment_gap)
-  - augment_bs: off by default (enable via --augment_bs)
+  - augment_lowlight: off by default (enable via --augment_lowlight)
 
 Python 3.7+ / OpenCV 4.x
 """
@@ -153,6 +154,16 @@ def non_negative_int(value):
         raise argparse.ArgumentTypeError("value must be >= 0")
     return ivalue
 
+
+def ratio_in_0_1(value):
+    try:
+        fvalue = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("value must be a float in (0, 1]")
+    if not (0.0 < fvalue <= 1.0):
+        raise argparse.ArgumentTypeError("value must be a float in (0, 1]")
+    return fvalue
+
 HYBRID_LAPVAR_WEIGHT = 0.6
 HYBRID_TENENGRAD_WEIGHT = 0.3
 HYBRID_FFT_WEIGHT = 0.1
@@ -165,7 +176,7 @@ FLOW_HIGH_MOTION_THRESHOLD = 0.5
 FLOW_HIGH_MOTION_RATIO = 0.4
 FLOW_LOW_MOTION_PERCENTILE = 10.0
 FLOW_MISSING_HIGH_VALUE = 9999.0
-FLOW_CROP_RATIO = 0.5
+FLOW_CROP_RATIO = 0.6
 FLOW_METHOD = "lucas_kanade"  # options: 'farneback', 'lucas_kanade'
 FAST_SPACING_WINDOW = 64
 FAST_SPACING_MULTIPLIER = 4.0
@@ -174,13 +185,16 @@ HYBRID_DARK_THRESHOLD = 0.35
 HYBRID_DARK_PENALTY_WEIGHT = 0.5
 PROGRESS_INTERVAL = 5
 
-CROP_RATIO = 0.8
+DEFAULT_CROP_RATIO = 0.8
+OPENCV_THREADS = 0
 MAX_LONG = 0
 MAX_SPACING_FRAMES = 0
 MAX_SPACING_RATIO = 0.8
-BS_KEEP_RATIO = 0.2
-BS_MIN_KEEP = 0
+BRIGHTNESS_SHARPNESS_KEEP_RATIO = 0.2
+BRIGHTNESS_SHARPNESS_MIN_KEEP = 0
 MIN_DIFF_FRAMES_RATIO = 0.2
+
+
 def update_progress(label, completed, total, last_pct):
     if total <= 0:
         return last_pct
@@ -353,7 +367,7 @@ def score_one_file(
         metric,
         crop_ratio,
         max_long,
-        enhance_motion,
+        augment_motion,
 ):
     """Compute the sharpness score and ancillary metrics for one frame."""
     try:
@@ -402,7 +416,7 @@ def score_one_file(
             motion_factor = 1.0 - HYBRID_MOTION_PENALTY_WEIGHT * (1.0 - motion_ratio)
             motion_factor = max(0.0, motion_factor)
 
-            if enhance_motion:
+            if augment_motion:
                 # Motion-sensitive enhancement is now handled during post-selection augmentation.
                 pass
 
@@ -948,7 +962,7 @@ def augment_brightness_sharpness_segments(
     """
     After gap augmentation, add more frames within each segment using a brightness-weighted sharpness:
 
-        bs_score = scores[idx] * (brightness_mean[idx] ** GROUP_BRIGHTNESS_POWER)
+        brightsharp_score = score * brightness_mean^GROUP_BRIGHTNESS_POWER
 
     - Only considers frames that exist, are scored, and are not already selected.
     - Enforces spacing by min_diff.
@@ -977,12 +991,19 @@ def augment_brightness_sharpness_segments(
         if not candidates:
             continue
 
-        def bs_score(i):
+        def brightsharp_score(i):
             b = max(1e-6, float(brightness_mean_arr[i]))
             return float(scores[i]) * (b ** GROUP_BRIGHTNESS_POWER)
 
-        # Sort by bs_score then raw score (both high-first)
-        candidates.sort(key=lambda i: (bs_score(i), _score_or_negative_infinity(scores, i), -i), reverse=True)
+        # Sort by brightness+sharpness score then raw score (both high-first)
+        candidates.sort(
+            key=lambda i: (
+                brightsharp_score(i),
+                _score_or_negative_infinity(scores, i),
+                -i,
+            ),
+            reverse=True,
+        )
 
         added = 0
         sorted_selected = sorted(augmented)
@@ -1020,6 +1041,18 @@ def main():
         help="Number of consecutive frames considered per segment (required unless --apply_csv).",
     )
     ap.add_argument(
+        "-d",
+        "--dry_run",
+        action="store_true",
+        help="Perform scoring and selection without moving files.",
+    )
+    ap.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        help="Override the worker pool size (default: min(8, cpu or 4)).",
+    )
+    ap.add_argument(
         "-e",
         "--ext",
         choices=["all", "tif", "jpg", "png"],
@@ -1041,23 +1074,9 @@ def main():
         help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
     )
     ap.add_argument(
-        "-w",
-        "--workers",
-        type=int,
-        help="Override the worker pool size (default: min(8, cpu or 4)).",
-    )
-    ap.add_argument(
-        "-o",
-        "--opencv_threads",
-        type=int,
-        default=0,
-        help="Set OpenCV thread count (0 leaves the default).",
-    )
-    ap.add_argument(
-        "-d",
-        "--dry_run",
-        action="store_true",
-        help="Perform scoring and selection without moving files.",
+        "-f",
+        "--csv",
+        help="Optional CSV output path relative to the input directory.",
     )
     ap.add_argument(
         "-a",
@@ -1065,13 +1084,15 @@ def main():
         help="Apply selections from an existing CSV produced during a dry run.",
     )
     ap.add_argument(
+        "-r",
         "--reselect_csv",
         help="Reuse scores and metrics from an existing CSV (produced via --csv) to recompute selection without rescoring.",
     )
     ap.add_argument(
-        "--enhance_motion",
-        action="store_true",
-        help="Apply additional motion blur penalty during hybrid scoring.",
+        "--crop_ratio",
+        type=ratio_in_0_1,
+        default=DEFAULT_CROP_RATIO,
+        help=f"Vertical crop ratio applied before scoring (0 < r <= 1, default: {DEFAULT_CROP_RATIO:.1f}).",
     )
     ap.add_argument(
         "--min_spacing_frames",
@@ -1084,11 +1105,6 @@ def main():
         action="store_true",
         help="Remove the lowest-motion frames based on optical flow (bottom 20%%).",
     )
-    ap.add_argument(
-        "-f",
-        "--csv",
-        help="Optional CSV output path relative to the input directory.",
-    )
 
     # Augmentation toggles
     ap.add_argument(
@@ -1097,9 +1113,14 @@ def main():
         help="Enable gap backfill augmentation step after initial selection.",
     )
     ap.add_argument(
-        "--augment_bs",
+        "--augment_lowlight",
         action="store_true",
-        help="Enable brightness+sharpness in-group augmentation step.",
+        help="Enable the brightness+sharpness in-group augmentation step.",
+    )
+    ap.add_argument(
+        "--augment_motion",
+        action="store_true",
+        help="Apply additional motion blur penalty during hybrid scoring.",
     )
 
     args = ap.parse_args()
@@ -1123,6 +1144,9 @@ def main():
     flow_crop_ratio = FLOW_CROP_RATIO
     if not (0.0 < flow_crop_ratio <= 1.0):
         raise SystemExit("FLOW_CROP_RATIO must be in (0, 1]")
+    crop_ratio = args.crop_ratio
+    if not (0.0 < crop_ratio <= 1.0):
+        raise SystemExit("--crop_ratio must be in (0, 1]")
     if args.min_spacing_frames is None:
         if args.segment_size is None:
             base_spacing_frames = 0
@@ -1133,8 +1157,8 @@ def main():
 
     # Keep OpenCV from competing with the Python thread pool.
     try:
-        if args.opencv_threads and args.opencv_threads > 0:
-            cv2.setNumThreads(args.opencv_threads)
+        if OPENCV_THREADS and OPENCV_THREADS > 0:
+            cv2.setNumThreads(OPENCV_THREADS)
     except Exception:
         pass
 
@@ -1154,7 +1178,7 @@ def main():
         min_diff = 1
 
     motion_min_diff = min_diff
-    if args.enhance_motion and not args.apply_csv:
+    if args.augment_motion and not args.apply_csv:
         halved_frames = max(0, base_spacing_frames // 2)
         motion_min_diff = halved_frames + 1
 
@@ -1190,7 +1214,7 @@ def main():
     selection_flags = [0] * n
     gap_added_count = 0
     reselect_csv_path = None
-    bs_added_count = 0
+    brightness_sharpness_added_count = 0
     motion_added_count = 0
     low_motion_filtered_count = 0
     motion_prune_reported = False
@@ -1263,8 +1287,8 @@ def main():
             futs = {
                 ex.submit(
                     score_one_file, files[i],
-                    args.metric, CROP_RATIO,
-                    MAX_LONG, args.enhance_motion
+                    args.metric, crop_ratio,
+                    MAX_LONG, args.augment_motion
                 ): i for i in range(n)
             }
             completed = 0
@@ -1306,7 +1330,7 @@ def main():
         and not args.apply_csv
         and not args.reselect_csv
         and n > 1
-        and (args.prune_motion or args.enhance_motion)
+        and (args.prune_motion or args.augment_motion)
     ):
         flow_pairs_total = _compute_flow_magnitudes(
             files,
@@ -1446,10 +1470,82 @@ def main():
             motion_prune_threshold = float(
                 np.percentile(motion_values, FLOW_LOW_MOTION_PERCENTILE)
             )
-            motion_pruned_indices = {
-                idx for idx, mag in motion_candidates
-                if mag <= motion_prune_threshold
-            }
+            def _is_low_motion_value(value):
+                return (
+                    value is not None
+                    and math.isfinite(value)
+                    and value <= motion_prune_threshold
+                )
+
+            def _is_low_motion_index(idx):
+                if idx < 0 or idx >= n:
+                    return False
+                return _is_low_motion_value(flow_mag_arr[idx])
+
+            # Require a sustained low-motion neighbourhood before pruning.
+            context_radius = 2
+
+            def _has_low_motion_streak(center_idx):
+                left_low = any(
+                    _is_low_motion_index(center_idx - offset)
+                    for offset in range(1, context_radius + 1)
+                )
+                right_low = any(
+                    _is_low_motion_index(center_idx + offset)
+                    for offset in range(1, context_radius + 1)
+                )
+                return left_low and right_low
+
+            active_selected = sorted(final_selected)
+
+            def _nearest_selected_excluding(center_idx):
+                if not active_selected:
+                    return None
+                pos = bisect_left(active_selected, center_idx)
+                candidates = []
+                if pos < len(active_selected) and active_selected[pos] == center_idx:
+                    if pos - 1 >= 0:
+                        candidates.append(active_selected[pos - 1])
+                    if pos + 1 < len(active_selected):
+                        candidates.append(active_selected[pos + 1])
+                else:
+                    if pos - 1 >= 0:
+                        candidates.append(active_selected[pos - 1])
+                    if pos < len(active_selected):
+                        candidates.append(active_selected[pos])
+                candidates = [c for c in candidates if c != center_idx]
+                if not candidates:
+                    return None
+                return min(candidates, key=lambda val: abs(val - center_idx))
+
+            motion_pruned_indices = set()
+            low_motion_candidates = sorted(
+                (
+                    (idx, mag)
+                    for idx, mag in motion_candidates
+                    if _is_low_motion_value(mag)
+                ),
+                key=lambda item: (item[1], item[0]),
+            )
+
+            for idx, _ in low_motion_candidates:
+                if any(
+                    abs(idx - existing) <= context_radius
+                    for existing in motion_pruned_indices
+                ):
+                    continue
+                if not _has_low_motion_streak(idx):
+                    continue
+                nearest_idx = _nearest_selected_excluding(idx)
+                if nearest_idx is None or not _is_low_motion_index(nearest_idx):
+                    continue
+                motion_pruned_indices.add(idx)
+                remove_pos = bisect_left(active_selected, idx)
+                if (
+                    0 <= remove_pos < len(active_selected)
+                    and active_selected[remove_pos] == idx
+                ):
+                    active_selected.pop(remove_pos)
             if motion_pruned_indices:
                 low_motion_filtered_count = len(motion_pruned_indices)
                 if args.apply_csv:
@@ -1493,9 +1589,9 @@ def main():
             gap_added_count = len(final_selected - before_gap_aug)
 
         # 2) Brightness+Sharpness in-group augmentation (NEW, runs after gap fill)
-        if args.augment_bs:
-            bs_added_count = 0
-            before_bs_aug = set(final_selected)
+        if args.augment_lowlight:
+            brightness_sharpness_added_count = 0
+            before_brightsharp_aug = set(final_selected)
             final_selected = augment_brightness_sharpness_segments(
                 final_selected,
                 group_infos,
@@ -1503,14 +1599,16 @@ def main():
                 scores,
                 brightness_mean_arr,
                 augment_min_diff,
-                BS_KEEP_RATIO,
-                BS_MIN_KEEP,
+                BRIGHTNESS_SHARPNESS_KEEP_RATIO,
+                BRIGHTNESS_SHARPNESS_MIN_KEEP,
             )
-            bs_added_count = len(final_selected - before_bs_aug)
+            brightness_sharpness_added_count = len(
+                final_selected - before_brightsharp_aug
+            )
 
         # 3) Motion enhancement (if requested)
         motion_added_count = 0
-        if args.enhance_motion:
+        if args.augment_motion:
             before_motion_aug = set(final_selected)
             final_selected = augment_motion_segments(
                 final_selected,
@@ -1602,9 +1700,11 @@ def main():
 
     if args.augment_gap:
         print(f"Gap augmentation added {gap_added_count} frame(s).")
-    if args.augment_bs:
-        print(f"Brightness+Sharpness augmentation added {bs_added_count} frame(s).")
-    if args.enhance_motion:
+    if args.augment_lowlight:
+        print(
+            f"Brightness+Sharpness augmentation added {brightness_sharpness_added_count} frame(s)."
+        )
+    if args.augment_motion:
         print(f"Motion augmentation added {motion_added_count} frame(s).")
 
     print(f"Done: input {total} / kept {kept} / moved {moved} / skipped {skipped}")
@@ -1613,8 +1713,8 @@ def main():
     else:
         print("Blur directory:", blur_dir)
     print(
-        f"workers={workers}, opencv_threads={args.opencv_threads}, "
-        f"max_long={MAX_LONG}, crop_ratio={CROP_RATIO}, max_spacing={max_spacing}, flow_crop_ratio={flow_crop_ratio}, min_spacing_frames={base_spacing_frames}"
+        f"workers={workers},  "
+        f"crop_ratio={crop_ratio}, max_spacing={max_spacing}, min_spacing_frames={base_spacing_frames}"
     )
 
 
