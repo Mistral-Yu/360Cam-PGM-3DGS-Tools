@@ -68,6 +68,23 @@ def parse_sensor(s: str) -> float:
     w = s.split("x")[0].strip() if "x" in s else s.split()[0]
     return float(w)
 
+def parse_sensor_dimensions(s: str) -> Tuple[float, ...]:
+    """
+    Return all numeric components from a sensor string such as '36 24' or '36x24'.
+    """
+    s_norm = s.lower().replace("\u00d7", "x").replace(",", " ").strip()
+    if "x" in s_norm:
+        tokens = [t.strip() for t in s_norm.split("x") if t.strip()]
+    else:
+        tokens = [t for t in s_norm.split() if t]
+    dims: List[float] = []
+    for token in tokens:
+        try:
+            dims.append(float(token))
+        except ValueError:
+            continue
+    return tuple(dims)
+
 # ---- add/del/setcam parser ----
 def parse_addcam_spec(spec: str, default_deg: float) -> Dict[int, List[float]]:
 
@@ -354,12 +371,18 @@ def main():
 
     # ---- FOV / size / derived values ----
     sensor_w_mm = parse_sensor(args.sensor_mm)
+    sensor_dims = parse_sensor_dimensions(args.sensor_mm)
+    sensor_long_mm = max(sensor_dims) if sensor_dims else sensor_w_mm
     if args.hfov is not None:
         hfov_deg = float(args.hfov)
         f_used_mm = focal_from_hfov_deg(hfov_deg, sensor_w_mm)
     else:
         f_used_mm = float(args.focal_mm)
         hfov_deg = fov_from_focal_mm(f_used_mm, sensor_w_mm)
+
+    focal_35mm_equiv = None
+    if sensor_long_mm and sensor_long_mm > 0 and abs(sensor_long_mm - 36.0) > 1e-6:
+        focal_35mm_equiv = f_used_mm * (36.0 / sensor_long_mm)
 
     base_size = int(args.size)
     w = h = base_size
@@ -491,6 +514,9 @@ def main():
     total = len(jobs_list)
 
     preview_views_line = ""
+    sensor_line = ""
+    realityscan_line = ""
+    metashape_line = ""
     if jobs_list:
         first_src = jobs_list[0][1]
         reference_stem = pathlib.Path(first_src).stem
@@ -513,7 +539,20 @@ def main():
             if preset_fisheye_xy:
                 preview_views_line += f" | fisheye_fov={fisheye_fov_deg:.1f}deg | size={fisheye_size}x{fisheye_size}"
             else:
-                preview_views_line += f" | focal={f_used_mm:.3f}mm | sensor={args.sensor_mm} mm | size={w}x{h}"
+                sensor_line = f"[INFO] Sensor={args.sensor_mm} mm | size={w}x{h}"
+                focal_segment = f"focal length={f_used_mm:.3f}mm"
+                if focal_35mm_equiv is not None:
+                    focal_segment += f" (35mm eq={focal_35mm_equiv:.3f}mm)"
+                realityscan_line = f"[INFO] For RealityScan: {focal_segment}"
+                if w > 0:
+                    pixel_size_mm = sensor_w_mm / float(w)
+                    if pixel_size_mm > 0:
+                        focal_px = f_used_mm / pixel_size_mm
+                        metashape_line = (
+                            "[INFO] For Metashape: Precalibrated f={:.5f} | pixel_size={:.4f} mm".format(
+                                focal_px, pixel_size_mm
+                            )
+                        )
 
         # dry-run: print commands only
     if args.dry_run:
@@ -532,6 +571,12 @@ def main():
     print(f"[INFO] parallel jobs: {jobs} / ffthreads: {args.ffthreads} / total: {total}")
     if preview_views_line:
         print(preview_views_line)
+        if sensor_line:
+            print(sensor_line)
+        if realityscan_line:
+            print(realityscan_line)
+        if metashape_line:
+            print(metashape_line)
 
     ok = fail = done = 0
     with ThreadPoolExecutor(max_workers=jobs) as ex:
