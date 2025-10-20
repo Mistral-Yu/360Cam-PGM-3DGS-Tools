@@ -12,12 +12,57 @@ Cancellation uses the default Ctrl+C (SIGINT) handler for graceful shutdowns.
 """
 
 import argparse, math, pathlib, subprocess, sys, os, signal, threading, shlex, re
-from typing import List, Dict, Tuple, Set
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Set, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 EXTS = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
 
 PROGRESS_INTERVAL = 5
+
+
+class StoreWithFlag(argparse.Action):
+    """Argparse action that records whether the value was explicitly set."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f"{self.dest}_explicit", True)
+
+
+@dataclass
+class ViewSpec:
+    """Perspective or fisheye view definition derived from CLI options."""
+
+    source_path: pathlib.Path
+    output_name: str
+    view_id: str
+    yaw_deg: float
+    pitch_deg: float
+    hfov_deg: float
+    vfov_deg: float
+    width: int
+    height: int
+    projection: str = "perspective"
+
+
+@dataclass
+class BuildResult:
+    """Container for generated ffmpeg jobs and associated metadata."""
+
+    jobs: List[Tuple[List[str], str, str]]
+    view_specs: List[ViewSpec]
+    focal_used_mm: float
+    focal_35mm_equiv: Optional[float]
+    hfov_deg: float
+    vfov_deg: float
+    preview_views_line: str
+    sensor_line: str
+    realityscan_line: str
+    metashape_line: str
+
+    @property
+    def total(self) -> int:
+        return len(self.jobs)
 
 def update_progress(label: str, completed: int, total: int, last_pct: int) -> int:
     if total <= 0:
@@ -84,6 +129,15 @@ def parse_sensor_dimensions(s: str) -> Tuple[float, ...]:
         except ValueError:
             continue
     return tuple(dims)
+
+def extra_suffix(delta_pitch: float, default_deg: float=30.0) -> str:
+    sign = "_U" if delta_pitch > 0 else "_D"
+    mag = abs(delta_pitch)
+    if abs(mag - default_deg) < 1e-6:
+        return sign
+    if float(mag).is_integer():
+        return f"{sign}{int(round(mag))}"
+    return f"{sign}{mag:g}"
 
 # ---- add/del/setcam parser ----
 def parse_addcam_spec(spec: str, default_deg: float) -> Dict[int, List[float]]:
@@ -207,6 +261,91 @@ def build_ffmpeg_equisolid_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path
     cmd.append(str(out))
     return cmd
 
+
+def create_arg_parser() -> argparse.ArgumentParser:
+    """Create the shared argument parser for CLI usage and GUI preview tools."""
+
+    ap = argparse.ArgumentParser(
+        description=(
+            "Batch convert equirectangular images with ffmpeg/v360, "
+            "including optional virtual camera add/delete/set operations."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=(
+            "Notes: presets can be overridden with --focal-mm / --size / --sensor-mm. "
+            "Priority: --hfov overrides --focal-mm. "
+            "Use --setcam to specify absolute or relative pitch values per camera."
+        )
+    )
+    ap.add_argument(
+        "-i", "--in", dest="input_dir", required=True,
+        help="Input folder containing equirectangular images (.tif/.tiff/.jpg/.jpeg/.png)"
+    )
+    ap.add_argument(
+        "-o", "--out", dest="out_dir", default=None,
+        help="Output folder. Defaults to <input>/_geometry if omitted"
+    )
+
+    ap.add_argument(
+        "--preset",
+        choices=["default", "2views", "10views", "evenMinus30", "evenPlus30", "fisheyeXY"],
+        default="default",
+        help=(
+            "default=8-view baseline / "
+            "2views=front/back only (6mm focal, 3600px) / "
+            "10views=baseline + top/bottom (10 total views) / "
+            "evenMinus30=even slots pitch -30deg / "
+            "evenPlus30=even slots pitch +30deg / "
+            "fisheyeXY=fisheye X/Y pair only (Equisolid 3600px FOV180)"
+        )
+    )
+    ap.add_argument("--count", type=int, default=8, help="Horizontal division count (4=90deg, 8=45deg)")
+    ap.add_argument(
+        "--addcam", default="",
+        help="Add virtual cameras, e.g. 'B' (+/-default pitch), 'B:U', 'D:D20', 'F:U15' (comma separated)"
+    )
+    ap.add_argument(
+        "--addcam-deg", type=float, default=30.0,
+        help="Default magnitude in degrees when 'U/D' in --addcam/--setcam omit a value (default 30)"
+    )
+    ap.add_argument(
+        "--add-topdown", action="store_true",
+        help="Include cube-map style top (pitch +90 deg) and bottom (pitch -90 deg) views"
+    )
+    ap.add_argument("--delcam", default="", help="Remove baseline cameras by letter, e.g. 'B,D'")
+    ap.add_argument(
+        "--setcam", default="",
+        help="Override/adjust baseline pitch. Absolute: 'A=30','A=U','A=D20'. Relative: 'A:+10','B:-5'."
+    )
+
+    ap.add_argument("--size", type=int, default=1600, action=StoreWithFlag, help="Square output size per view")
+    ap.add_argument("--ext", default="jpg", help="Output extension (jpg=high quality mjpeg)")
+    ap.add_argument(
+        "--hfov", type=float, default=None, action=StoreWithFlag,
+        help="Horizontal FOV in degrees (overrides focal length)"
+    )
+    ap.add_argument(
+        "--focal-mm", type=float, default=12.0, action=StoreWithFlag,
+        help="Focal length in millimetres when --hfov is not set"
+    )
+    ap.add_argument(
+        "--sensor-mm", default="36 36",
+        help="Sensor width/height in millimetres, e.g. '36 36' or '36x24'"
+    )
+
+    ap.add_argument(
+        "-j", "--jobs", default="auto",
+        help="Concurrent ffmpeg processes (number or 'auto'=physical cores/2)"
+    )
+    ap.add_argument("--ffthreads", default="1", help="Internal ffmpeg threads per process (number or 'auto')")
+    ap.add_argument(
+        "--print-cmd", choices=["once", "none", "all"], default="once",
+        help="How many ffmpeg commands to print: once/none/all"
+    )
+    ap.add_argument("--ffmpeg", default="ffmpeg", help="Path to the ffmpeg executable")
+    ap.add_argument("--dry-run", action="store_true", help="Print all commands without executing them")
+    return ap
+
 # ---- Parallel execution and cancellation ----
 stop_event = threading.Event()
 procs_lock = threading.Lock()
@@ -265,78 +404,14 @@ def run_one(cmd: List[str]) -> Tuple[int, str]:
         with procs_lock:
             running_procs.discard(proc)
 
-# ---- main ----
-def main():
-    ap = argparse.ArgumentParser(
-        description=(
-            "Batch convert equirectangular images with ffmpeg/v360, "
-            "including optional virtual camera add/delete/set operations."
-        ),
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog=(
-            "Notes: presets can be overridden with --focal-mm / --size / --sensor-mm. "
-            "Priority: --hfov overrides --focal-mm. "
-            "Use --setcam to specify absolute or relative pitch values per camera."
-        )
-    )
-    ap.add_argument("-i","--in", dest="input_dir", required=True,
-        help="Input folder containing equirectangular images (.tif/.tiff/.jpg/.jpeg/.png)")
-    ap.add_argument("-o","--out", dest="out_dir", default=None,
-        help="Output folder. Defaults to <input>/_geometry if omitted")
 
-    ap.add_argument("--preset",
-        choices=["default","2views","10views","evenMinus30","evenPlus30","fisheyeXY"], default="default",
-        help=("default=8-view baseline / "
-              "2views=front/back only (6mm focal, 3600px) / "
-              "10views=baseline + top/bottom (10 total views) / "
-              "evenMinus30=even slots pitch -30deg / "
-              "evenPlus30=even slots pitch +30deg / "
-              "fisheyeXY=fisheye X/Y pair only (Equisolid 3600px FOV180)"))
+def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> BuildResult:
+    """Compose ffmpeg job definitions and collect view specifications."""
 
-    ap.add_argument("--count", type=int, default=8, help="Horizontal division count (4=90deg, 8=45deg)")
+    size_explicit = getattr(args, "size_explicit", False)
+    hfov_explicit = getattr(args, "hfov_explicit", False)
+    focal_explicit = getattr(args, "focal_mm_explicit", False)
 
-    ap.add_argument("--addcam", default="",
-        help="Add virtual cameras, e.g. 'B' (+/-default pitch), 'B:U', 'D:D20', 'F:U15' (comma separated)")
-    ap.add_argument("--addcam-deg", type=float, default=30.0,
-        help="Default magnitude in degrees when 'U/D' in --addcam/--setcam omit a value (default 30)")
-    ap.add_argument("--add-topdown", action="store_true",
-        help="Include cube-map style top (pitch +90 deg) and bottom (pitch -90 deg) views")
-
-    ap.add_argument("--delcam", default="",
-        help="Remove baseline cameras by letter, e.g. 'B,D'")
-    ap.add_argument("--setcam", default="",
-        help="Override/adjust baseline pitch. Absolute: 'A=30','A=U','A=D20'. Relative: 'A:+10','B:-5'.")
-
-    # geometry / output
-    ap.add_argument("--size", type=int, default=1600, help="Square output size per view")
-    ap.add_argument("--ext", default="jpg", help="Output extension (jpg=high quality mjpeg)")
-    ap.add_argument("--hfov", type=float, default=None, help="Horizontal FOV in degrees (overrides focal length)")
-    ap.add_argument("--focal-mm", type=float, default=12.0, help="Focal length in millimetres when --hfov is not set")
-    ap.add_argument("--sensor-mm", default="36 36", help="Sensor width/height in millimetres, e.g. '36 36' or '36x24'")
-
-    # parallelism / logging
-    ap.add_argument("-j","--jobs", default="auto", help="Concurrent ffmpeg processes (number or 'auto'=physical cores/2)")
-    ap.add_argument("--ffthreads", default="1", help="Internal ffmpeg threads per process (number or 'auto')")
-    ap.add_argument("--print-cmd", choices=["once","none","all"], default="once",
-        help="How many ffmpeg commands to print: once/none/all")
-    ap.add_argument("--ffmpeg", default="ffmpeg", help="Path to the ffmpeg executable")
-    ap.add_argument("--dry-run", action="store_true", help="Print all commands without executing them")
-    args = ap.parse_args()
-    in_dir = pathlib.Path(args.input_dir).expanduser().resolve()
-    if not in_dir.is_dir():
-        print("[ERR] Input folder not found:", in_dir, file=sys.stderr); sys.exit(1)
-    out_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else (in_dir / "_geometry")
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    files = [p for p in sorted(in_dir.iterdir()) if p.is_file() and p.suffix.lower() in EXTS]
-    if not files:
-        print("[WARN] No target images found (tif/jpg/png)", file=sys.stderr); sys.exit(0)
-
-    size_explicit = any(arg == "--size" or arg.startswith("--size=") for arg in sys.argv[1:])
-    hfov_explicit = any(arg == "--hfov" or arg.startswith("--hfov=") for arg in sys.argv[1:])
-    focal_explicit = any(arg == "--focal-mm" or arg.startswith("--focal-mm=") for arg in sys.argv[1:])
-
-    # ---- preset handling (pitch adjustments only) ----
     even_pitch_all = None
     even_pitch_map: Dict[int, float] = {}
 
@@ -354,25 +429,33 @@ def main():
         even_pitch_all = -30.0
     elif args.preset == "evenPlus30" and even_pitch_all is None:
         even_pitch_all = +30.0
-    preset_extra_even_pitches = []
+    preset_extra_even_pitches: List[float] = []
 
     if preset_two_views and not size_explicit:
         args.size = 3600
     if preset_two_views and not hfov_explicit and not focal_explicit:
         args.focal_mm = 6.0
 
-    # add/del/setcam parsing
-    add_map = parse_addcam_spec(args.addcam, args.addcam_deg)   # idx1 -> [delta_pitch,...]
-    del_set = parse_delcam_spec(args.delcam)                    # idx1 set
+    add_map = parse_addcam_spec(args.addcam, args.addcam_deg)
+    del_set = parse_delcam_spec(args.delcam)
     if preset_two_views:
-        for ch in ("B","C","D","F","G","H"):
+        for ch in ("B", "C", "D", "F", "G", "H"):
             del_set.add(letter_to_index1(ch))
-    set_abs_map, set_delta_map = parse_setcam_spec(args.setcam, args.addcam_deg if hasattr(args, "addcam_deeg") else args.addcam_deg)
+    set_abs_map, set_delta_map = parse_setcam_spec(args.setcam, args.addcam_deg)
 
-    # ---- FOV / size / derived values ----
     sensor_w_mm = parse_sensor(args.sensor_mm)
     sensor_dims = parse_sensor_dimensions(args.sensor_mm)
     sensor_long_mm = max(sensor_dims) if sensor_dims else sensor_w_mm
+    sensor_h_mm = None
+    if sensor_dims:
+        if len(sensor_dims) >= 2:
+            sensor_h_mm = float(sensor_dims[1])
+        else:
+            sensor_h_mm = sensor_w_mm
+    else:
+        sensor_h_mm = sensor_w_mm
+    if sensor_h_mm is not None and sensor_h_mm <= 0:
+        sensor_h_mm = None
     if args.hfov is not None:
         hfov_deg = float(args.hfov)
         f_used_mm = focal_from_hfov_deg(hfov_deg, sensor_w_mm)
@@ -386,7 +469,11 @@ def main():
 
     base_size = int(args.size)
     w = h = base_size
-    vfov_deg = v_fov_from_hfov(hfov_deg, w, h)
+    if sensor_h_mm and f_used_mm > 1e-6:
+        vfov_rad = 2.0 * math.atan(sensor_h_mm / (2.0 * f_used_mm))
+        vfov_deg = max(1.0, min(179.9, math.degrees(vfov_rad)))
+    else:
+        vfov_deg = v_fov_from_hfov(hfov_deg, w, h)
 
     if preset_fisheye_xy:
         fisheye_size = base_size if size_explicit else 3600
@@ -395,94 +482,109 @@ def main():
         fisheye_size = base_size
         fisheye_fov_deg = hfov_deg
 
-    # ---- Angles & output naming ----
     count = int(args.count)
     if count <= 0:
-        print("[ERR] --count must be >= 1", file=sys.stderr); sys.exit(1)
+        print("[ERR] --count must be >= 1", file=sys.stderr)
+        sys.exit(1)
     yaw_step = 360.0 / count
 
     ffmpeg = args.ffmpeg
     ext_dot = "." + args.ext.lower().lstrip(".")
     interp_v360 = map_interp_for_v360("bicubic")
 
-    def extra_suffix(delta_pitch: float, default_deg: float=30.0) -> str:
-        sign = "_U" if delta_pitch > 0 else "_D"
-        mag = abs(delta_pitch)
-        if abs(mag - default_deg) < 1e-6:
-            return sign
-        if float(mag).is_integer():
-            return f"{sign}{int(round(mag))}"
-        else:
-            return f"{sign}{mag:g}"
-
     jobs_list: List[Tuple[List[str], str, str]] = []
-    existing_names: Set[str] = set()  # prevent duplicate jobs
+    view_specs: List[ViewSpec] = []
+    existing_names: Set[str] = set()
     fisheye_letter_map = {1: "X", 5: "Y"} if preset_fisheye_xy else {}
 
     for img in files:
         stem = img.stem
         xy_views: List[Tuple[str, float, float]] = []
         base_pitch0 = 0.0
+
+        def record_view(out_path: pathlib.Path, yaw_val: float, pitch_val: float,
+                        width: int, height: int, hfov_val: float, vfov_val: float,
+                        projection: str = "perspective") -> None:
+            out_stem = out_path.stem
+            if out_stem.startswith(f"{stem}_"):
+                view_id = out_stem[len(stem) + 1:]
+            else:
+                view_id = out_stem
+            view_specs.append(
+                ViewSpec(
+                    source_path=img,
+                    output_name=out_path.name,
+                    view_id=view_id,
+                    yaw_deg=yaw_val,
+                    pitch_deg=pitch_val,
+                    hfov_deg=hfov_val,
+                    vfov_deg=vfov_val,
+                    width=width,
+                    height=height,
+                    projection=projection,
+                )
+            )
+
         for yi in range(count):
-            if stop_event.is_set(): break
+            if stop_event.is_set():
+                break
             idx1 = yi + 1
             tag = letter_tag(yi)
-
-            # Skip baseline output when camera is deleted or preset suppresses it
             skip_base = (idx1 in del_set) or preset_fisheye_xy
-
             yaw = normalize_angle_deg(yi * yaw_step)
-
-            # ---- Base view adjustments (preset -> setcam) ----
             pitch = base_pitch0
             if (idx1 % 2) == 0 and not preset_fisheye_xy:
-                if even_pitch_all is not None: pitch += float(even_pitch_all)
-                if idx1 in even_pitch_map:     pitch += float(even_pitch_map[idx1])
-
-            # setcam: absolute values replace, relative values add
+                if even_pitch_all is not None:
+                    pitch += float(even_pitch_all)
+                if idx1 in even_pitch_map:
+                    pitch += float(even_pitch_map[idx1])
             if idx1 in set_abs_map:
                 pitch = float(set_abs_map[idx1])
             if idx1 in set_delta_map:
                 pitch += float(set_delta_map[idx1])
-
             pitch = clamp(pitch, -90.0, 90.0)
+
             if preset_fisheye_xy and idx1 in fisheye_letter_map:
                 xy_views.append((fisheye_letter_map[idx1], yaw, pitch))
 
-            # 1) Baseline image (skipped when requested)
             if not skip_base:
                 out_path = out_dir / f"{stem}_{tag}{ext_dot}"
                 if out_path.name not in existing_names:
-                    cmd = build_ffmpeg_cmd(ffmpeg, img, out_path, w, h, yaw, pitch,
-                                           hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads)
+                    cmd = build_ffmpeg_cmd(
+                        ffmpeg, img, out_path, w, h, yaw, pitch,
+                        hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                    )
                     jobs_list.append((cmd, img.name, out_path.name))
                     existing_names.add(out_path.name)
+                    record_view(out_path, yaw, pitch, w, h, hfov_deg, vfov_deg)
 
-            # 2) Preset extras (only when baseline exists)
             if not skip_base and (idx1 % 2) == 0 and preset_extra_even_pitches:
                 for d in preset_extra_even_pitches:
                     p2 = clamp(pitch + d, -90.0, 90.0)
                     suf = extra_suffix(d, 30.0)
                     out_path2 = out_dir / f"{stem}_{tag}{suf}{ext_dot}"
                     if out_path2.name not in existing_names:
-                        cmd2 = build_ffmpeg_cmd(ffmpeg, img, out_path2, w, h, yaw, p2,
-                                                hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads)
+                        cmd2 = build_ffmpeg_cmd(
+                            ffmpeg, img, out_path2, w, h, yaw, p2,
+                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                        )
                         jobs_list.append((cmd2, img.name, out_path2.name))
                         existing_names.add(out_path2.name)
+                        record_view(out_path2, yaw, p2, w, h, hfov_deg, vfov_deg)
 
-            # 3) User-specified additions (applied regardless of --delcam)
             if not preset_fisheye_xy and idx1 in add_map:
                 for d in add_map[idx1]:
                     p3 = clamp(pitch + d, -90.0, 90.0)
                     suf3 = extra_suffix(d, args.addcam_deg)
                     out_path3 = out_dir / f"{stem}_{tag}{suf3}{ext_dot}"
                     if out_path3.name not in existing_names:
-                        cmd3 = build_ffmpeg_cmd(ffmpeg, img, out_path3, w, h, yaw, p3,
-                                                hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads)
+                        cmd3 = build_ffmpeg_cmd(
+                            ffmpeg, img, out_path3, w, h, yaw, p3,
+                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                        )
                         jobs_list.append((cmd3, img.name, out_path3.name))
                         existing_names.add(out_path3.name)
-
-
+                        record_view(out_path3, yaw, p3, w, h, hfov_deg, vfov_deg)
 
         if preset_fisheye_xy:
             for xy_tag, yaw_xy, pitch_xy in xy_views:
@@ -491,12 +593,17 @@ def main():
                     continue
                 cmd_xy = build_ffmpeg_equisolid_cmd(
                     ffmpeg, img, out_path_xy, fisheye_size, fisheye_size,
-                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot, args.ffthreads)
+                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot, args.ffthreads
+                )
                 jobs_list.append((cmd_xy, img.name, out_path_xy.name))
                 existing_names.add(out_path_xy.name)
+                record_view(
+                    out_path_xy, yaw_xy, pitch_xy,
+                    fisheye_size, fisheye_size, fisheye_fov_deg, fisheye_fov_deg,
+                    projection="equisolid"
+                )
 
         if add_topdown:
-            # Optional cube-map style vertical views
             td_index = count
             for td_pitch in (90.0, -90.0):
                 td_tag = letter_tag(td_index)
@@ -507,20 +614,21 @@ def main():
                     continue
                 cmd_td = build_ffmpeg_cmd(
                     ffmpeg, img, out_path_td, w, h, 0.0, pitch_td,
-                    hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads)
+                    hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                )
                 jobs_list.append((cmd_td, img.name, out_path_td.name))
                 existing_names.add(out_path_td.name)
-
-    total = len(jobs_list)
+                record_view(out_path_td, 0.0, pitch_td, w, h, hfov_deg, vfov_deg)
 
     preview_views_line = ""
     sensor_line = ""
     realityscan_line = ""
     metashape_line = ""
+
     if jobs_list:
         first_src = jobs_list[0][1]
         reference_stem = pathlib.Path(first_src).stem
-        seen_views = []
+        seen_views: List[str] = []
         for _, src_name, dst_name in jobs_list:
             if src_name != first_src:
                 break
@@ -537,7 +645,9 @@ def main():
                 + ", ".join(seen_views)
             )
             if preset_fisheye_xy:
-                preview_views_line += f" | fisheye_fov={fisheye_fov_deg:.1f}deg | size={fisheye_size}x{fisheye_size}"
+                preview_views_line += (
+                    f" | fisheye_fov={fisheye_fov_deg:.1f}deg | size={fisheye_size}x{fisheye_size}"
+                )
             else:
                 sensor_line = f"[INFO] Sensor={args.sensor_mm} mm | size={w}x{h}"
                 focal_segment = f"focal length={f_used_mm:.3f}mm"
@@ -554,10 +664,45 @@ def main():
                             )
                         )
 
-        # dry-run: print commands only
+    return BuildResult(
+        jobs=jobs_list,
+        view_specs=view_specs,
+        focal_used_mm=f_used_mm,
+        focal_35mm_equiv=focal_35mm_equiv,
+        hfov_deg=hfov_deg,
+        vfov_deg=vfov_deg,
+        preview_views_line=preview_views_line,
+        sensor_line=sensor_line,
+        realityscan_line=realityscan_line,
+        metashape_line=metashape_line,
+    )
+
+# ---- main ----
+def main():
+    ap = create_arg_parser()
+    args = ap.parse_args()
+    for attr in ("size", "hfov", "focal_mm"):
+        setattr(args, f"{attr}_explicit", getattr(args, f"{attr}_explicit", False))
+
+    in_dir = pathlib.Path(args.input_dir).expanduser().resolve()
+    if not in_dir.is_dir():
+        print("[ERR] Input folder not found:", in_dir, file=sys.stderr); sys.exit(1)
+    out_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else (in_dir / "_geometry")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    files = [p for p in sorted(in_dir.iterdir()) if p.is_file() and p.suffix.lower() in EXTS]
+    if not files:
+        print("[WARN] No target images found (tif/jpg/png)", file=sys.stderr); sys.exit(0)
+
+    result = build_view_jobs(args, files, out_dir)
+    jobs_list = result.jobs
+    total = result.total
+
     if args.dry_run:
-        for cmd, _, _ in jobs_list: print("$ " + " ".join(shlex.quote(c) for c in cmd))
-        print(f"\n[DRY] Exiting without execution (total {total} commands)"); return
+        for cmd, _, _ in jobs_list:
+            print("$ " + " ".join(shlex.quote(c) for c in cmd))
+        print(f"\n[DRY] Exiting without execution (total {total} commands)")
+        return
 
     # command display policy
     if args.print_cmd == "all":
@@ -569,14 +714,14 @@ def main():
     last_progress_pct = -1
     progress_label = "Progress"
     print(f"[INFO] parallel jobs: {jobs} / ffthreads: {args.ffthreads} / total: {total}")
-    if preview_views_line:
-        print(preview_views_line)
-        if sensor_line:
-            print(sensor_line)
-        if realityscan_line:
-            print(realityscan_line)
-        if metashape_line:
-            print(metashape_line)
+    if result.preview_views_line:
+        print(result.preview_views_line)
+        if result.sensor_line:
+            print(result.sensor_line)
+        if result.realityscan_line:
+            print(result.realityscan_line)
+        if result.metashape_line:
+            print(result.metashape_line)
 
     ok = fail = done = 0
     with ThreadPoolExecutor(max_workers=jobs) as ex:
