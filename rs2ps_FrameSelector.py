@@ -9,10 +9,10 @@ Workflow (after this update):
   3) Score sharpness in parallel (grayscale read + optional resize/crop via --crop_ratio)
   4) Split the list into --segment_size batches and keep the sharpest frame from each segment
   5) Finalize the per-segment selection before optional augmentations
-  6) Gap augmentation (optional, enable via --augment_gap): backfill when gaps between selected frames exceed the configured max spacing
-  7) Brightness+Sharpness in-group augmentation (optional, enable via --augment_lowlight): after gap augmentation, add frames with
+  6) Gap augmentation (optional, enable via --augment_gaps): backfill when gaps between selected frames exceed the configured max spacing
+  7) Low-light sharpness augmentation (optional, enable via --augment_lowlight): after gap augmentation, add frames with
      high (score * brightness^power) inside each segment, respecting min spacing and a per-segment budget
-  8) Motion enhancement (optional): if --augment_motion, add extra frames in high-motion segments
+  8) Motion augmentation (optional, enable via --augment_motion): add extra frames in high-motion segments
   9) (Optional) Motion pruning: if --prune_motion, drop at most one frame from contiguous low-motion clusters
      when both the candidate and the nearest selected neighbors stay below the low-motion threshold
  10) Move non-selected images into in_dir/blur/ (or only write CSV in --dry_run)
@@ -26,8 +26,9 @@ Defaults:
   - max_long: 0 (no downscale by default)
   - workers: min(8, os.cpu_count() or 4)
   - opencv_threads: 0 (module constant; leave OpenCV threading untouched)
-  - augment_gap: off by default (enable via --augment_gap)
+  - augment_gaps: off by default (enable via --augment_gaps)
   - augment_lowlight: off by default (enable via --augment_lowlight)
+  - augment_motion: off by default (enable via --augment_motion)
 
 Python 3.7+ / OpenCV 4.x
 """
@@ -416,9 +417,9 @@ def score_one_file(
             motion_factor = 1.0 - HYBRID_MOTION_PENALTY_WEIGHT * (1.0 - motion_ratio)
             motion_factor = max(0.0, motion_factor)
 
-            if augment_motion:
-                # Motion-sensitive enhancement is now handled during post-selection augmentation.
-                pass
+        if augment_motion:
+            # Motion-sensitive enhancement is now handled during post-selection augmentation.
+            pass
 
             if brightness_mean < HYBRID_DARK_THRESHOLD:
                 dark_ratio = brightness_mean / HYBRID_DARK_THRESHOLD
@@ -947,9 +948,9 @@ def evenly_distribute_indices(existing_indices, initial_selected, scores, min_di
     return set(selected_sorted)
 
 
-# ---------- New: Brightness+Sharpness in-group augmentation ----------
+# ---------- Low-light in-group augmentation ----------
 
-def augment_brightness_sharpness_segments(
+def augment_lowlight_segments(
     final_selected,
     group_infos,
     existing_indices,
@@ -960,9 +961,9 @@ def augment_brightness_sharpness_segments(
     min_keep,
 ):
     """
-    After gap augmentation, add more frames within each segment using a brightness-weighted sharpness:
+    After gap augmentation, add more frames within each segment using a brightness-weighted sharpness that favors low-light frames:
 
-        brightsharp_score = score * brightness_mean^GROUP_BRIGHTNESS_POWER
+        lowlight_score = score * brightness_mean^GROUP_BRIGHTNESS_POWER
 
     - Only considers frames that exist, are scored, and are not already selected.
     - Enforces spacing by min_diff.
@@ -991,14 +992,14 @@ def augment_brightness_sharpness_segments(
         if not candidates:
             continue
 
-        def brightsharp_score(i):
+        def lowlight_score(i):
             b = max(1e-6, float(brightness_mean_arr[i]))
             return float(scores[i]) * (b ** GROUP_BRIGHTNESS_POWER)
 
-        # Sort by brightness+sharpness score then raw score (both high-first)
+        # Sort by low-light score then raw score (both high-first)
         candidates.sort(
             key=lambda i: (
-                brightsharp_score(i),
+                lowlight_score(i),
                 _score_or_negative_infinity(scores, i),
                 -i,
             ),
@@ -1047,10 +1048,26 @@ def main():
         help="Perform scoring and selection without moving files.",
     )
     ap.add_argument(
-        "-w",
-        "--workers",
-        type=int,
-        help="Override the worker pool size (default: min(8, cpu or 4)).",
+        "-c",
+        "--csv",
+        help="Create a selection CSV (absolute path or relative to the input directory).",
+    )
+    ap.add_argument(
+        "-r",
+        "--reselect_csv",
+        help="Reuse scores and metrics from an existing CSV (produced via --csv) to recompute selection without rescoring.",
+    )
+    ap.add_argument(
+        "-a",
+        "--apply_csv",
+        help="Apply selections from an existing CSV produced during a dry run.",
+    )
+    ap.add_argument(
+        "-m",
+        "--metric",
+        choices=["hybrid", "lapvar", "tenengrad", "fft"],
+        default="hybrid",
+        help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
     )
     ap.add_argument(
         "-e",
@@ -1067,26 +1084,10 @@ def main():
         help="Sorting rule applied before scoring.",
     )
     ap.add_argument(
-        "-m",
-        "--metric",
-        choices=["hybrid", "lapvar", "tenengrad", "fft"],
-        default="hybrid",
-        help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
-    )
-    ap.add_argument(
-        "-f",
-        "--csv",
-        help="Optional CSV output path relative to the input directory.",
-    )
-    ap.add_argument(
-        "-a",
-        "--apply_csv",
-        help="Apply selections from an existing CSV produced during a dry run.",
-    )
-    ap.add_argument(
-        "-r",
-        "--reselect_csv",
-        help="Reuse scores and metrics from an existing CSV (produced via --csv) to recompute selection without rescoring.",
+        "-w",
+        "--workers",
+        type=int,
+        help="Override the worker pool size (default: min(8, cpu or 4)).",
     )
     ap.add_argument(
         "--crop_ratio",
@@ -1101,26 +1102,24 @@ def main():
         help=f"Minimum number of frames to keep between selected frames (0 allows adjacency, default: round(segment_size * {MIN_DIFF_FRAMES_RATIO:.1f})).",
     )
     ap.add_argument(
-        "--prune_motion",
-        action="store_true",
-        help="Remove the lowest-motion frames based on optical flow (bottom 20%%).",
-    )
-
-    # Augmentation toggles
-    ap.add_argument(
-        "--augment_gap",
+        "--augment_gaps",
         action="store_true",
         help="Enable gap backfill augmentation step after initial selection.",
     )
     ap.add_argument(
         "--augment_lowlight",
         action="store_true",
-        help="Enable the brightness+sharpness in-group augmentation step.",
+        help="Enable the low-light sharpness in-group augmentation step.",
     )
     ap.add_argument(
         "--augment_motion",
         action="store_true",
-        help="Apply additional motion blur penalty during hybrid scoring.",
+        help="Enable motion-driven augmentation that adds frames in high-motion segments.",
+    )
+    ap.add_argument(
+        "--prune_motion",
+        action="store_true",
+        help="Remove the lowest-motion frames based on optical flow (bottom 20%%).",
     )
 
     args = ap.parse_args()
@@ -1214,7 +1213,7 @@ def main():
     selection_flags = [0] * n
     gap_added_count = 0
     reselect_csv_path = None
-    brightness_sharpness_added_count = 0
+    lowlight_added_count = 0
     motion_added_count = 0
     low_motion_filtered_count = 0
     motion_prune_reported = False
@@ -1470,6 +1469,7 @@ def main():
             motion_prune_threshold = float(
                 np.percentile(motion_values, FLOW_LOW_MOTION_PERCENTILE)
             )
+            motion_pruned_indices = set()
             def _is_low_motion_value(value):
                 return (
                     value is not None
@@ -1477,75 +1477,63 @@ def main():
                     and value <= motion_prune_threshold
                 )
 
-            def _is_low_motion_index(idx):
-                if idx < 0 or idx >= n:
-                    return False
-                return _is_low_motion_value(flow_mag_arr[idx])
+            low_motion_flags = [
+                _is_low_motion_value(flow_mag_arr[idx])
+                for idx in range(n)
+            ]
+            selected_sorted = sorted(final_selected)
 
-            # Require a sustained low-motion neighbourhood before pruning.
-            context_radius = 2
+            def _collect_selected_in_span(start_idx, end_idx):
+                left = bisect_left(selected_sorted, start_idx)
+                right = bisect_left(selected_sorted, end_idx + 1)
+                return selected_sorted[left:right]
 
-            def _has_low_motion_streak(center_idx):
-                left_low = any(
-                    _is_low_motion_index(center_idx - offset)
-                    for offset in range(1, context_radius + 1)
+            def _process_span(span_start, span_end):
+                # Only consider contiguous low-motion windows with neighbours on both sides.
+                if span_end - span_start < 2:
+                    return
+                span_selected = _collect_selected_in_span(span_start, span_end)
+                if len(span_selected) < 2:
+                    return
+                candidate_pool = [
+                    idx
+                    for idx in span_selected
+                    if span_start < idx < span_end
+                    and _is_low_motion_value(flow_mag_arr[idx])
+                ]
+                if not candidate_pool:
+                    return
+                candidate = min(
+                    candidate_pool,
+                    key=lambda idx: (
+                        flow_mag_arr[idx]
+                        if flow_mag_arr[idx] is not None
+                        else float("inf"),
+                        idx,
+                    ),
                 )
-                right_low = any(
-                    _is_low_motion_index(center_idx + offset)
-                    for offset in range(1, context_radius + 1)
+                nearest_idx = min(
+                    (val for val in span_selected if val != candidate),
+                    key=lambda val: abs(val - candidate),
+                    default=None,
                 )
-                return left_low and right_low
+                if nearest_idx is None:
+                    return
+                if not _is_low_motion_value(flow_mag_arr[nearest_idx]):
+                    return
+                if candidate not in motion_pruned_indices:
+                    motion_pruned_indices.add(candidate)
 
-            active_selected = sorted(final_selected)
-
-            def _nearest_selected_excluding(center_idx):
-                if not active_selected:
-                    return None
-                pos = bisect_left(active_selected, center_idx)
-                candidates = []
-                if pos < len(active_selected) and active_selected[pos] == center_idx:
-                    if pos - 1 >= 0:
-                        candidates.append(active_selected[pos - 1])
-                    if pos + 1 < len(active_selected):
-                        candidates.append(active_selected[pos + 1])
-                else:
-                    if pos - 1 >= 0:
-                        candidates.append(active_selected[pos - 1])
-                    if pos < len(active_selected):
-                        candidates.append(active_selected[pos])
-                candidates = [c for c in candidates if c != center_idx]
-                if not candidates:
-                    return None
-                return min(candidates, key=lambda val: abs(val - center_idx))
-
-            motion_pruned_indices = set()
-            low_motion_candidates = sorted(
-                (
-                    (idx, mag)
-                    for idx, mag in motion_candidates
-                    if _is_low_motion_value(mag)
-                ),
-                key=lambda item: (item[1], item[0]),
-            )
-
-            for idx, _ in low_motion_candidates:
-                if any(
-                    abs(idx - existing) <= context_radius
-                    for existing in motion_pruned_indices
-                ):
-                    continue
-                if not _has_low_motion_streak(idx):
-                    continue
-                nearest_idx = _nearest_selected_excluding(idx)
-                if nearest_idx is None or not _is_low_motion_index(nearest_idx):
-                    continue
-                motion_pruned_indices.add(idx)
-                remove_pos = bisect_left(active_selected, idx)
-                if (
-                    0 <= remove_pos < len(active_selected)
-                    and active_selected[remove_pos] == idx
-                ):
-                    active_selected.pop(remove_pos)
+            span_start = None
+            for idx, is_low in enumerate(low_motion_flags):
+                if is_low:
+                    if span_start is None:
+                        span_start = idx
+                elif span_start is not None:
+                    _process_span(span_start, idx - 1)
+                    span_start = None
+            if span_start is not None:
+                _process_span(span_start, n - 1)
             if motion_pruned_indices:
                 low_motion_filtered_count = len(motion_pruned_indices)
                 if args.apply_csv:
@@ -1574,8 +1562,8 @@ def main():
 
     # ----- Augmentations after initial selection -----
     if not args.apply_csv and not cancelled:
-        # 1) Gap augmentation
-        if args.augment_gap:
+        # 1) Gap augmentation (--augment_gaps)
+        if args.augment_gaps:
             before_gap_aug = set(final_selected)
             final_selected = augment_spacing(
                 final_selected,
@@ -1588,11 +1576,11 @@ def main():
             )
             gap_added_count = len(final_selected - before_gap_aug)
 
-        # 2) Brightness+Sharpness in-group augmentation (NEW, runs after gap fill)
+        # 2) Low-light in-group augmentation (--augment_lowlight)
         if args.augment_lowlight:
-            brightness_sharpness_added_count = 0
-            before_brightsharp_aug = set(final_selected)
-            final_selected = augment_brightness_sharpness_segments(
+            lowlight_added_count = 0
+            before_lowlight_aug = set(final_selected)
+            final_selected = augment_lowlight_segments(
                 final_selected,
                 group_infos,
                 existing_indices,
@@ -1602,11 +1590,11 @@ def main():
                 BRIGHTNESS_SHARPNESS_KEEP_RATIO,
                 BRIGHTNESS_SHARPNESS_MIN_KEEP,
             )
-            brightness_sharpness_added_count = len(
-                final_selected - before_brightsharp_aug
+            lowlight_added_count = len(
+                final_selected - before_lowlight_aug
             )
 
-        # 3) Motion enhancement (if requested)
+        # 3) Motion augmentation (--augment_motion)
         motion_added_count = 0
         if args.augment_motion:
             before_motion_aug = set(final_selected)
@@ -1698,11 +1686,11 @@ def main():
     if cancelled:
         print("Cancelled by user. Partial results may be incomplete.")
 
-    if args.augment_gap:
+    if args.augment_gaps:
         print(f"Gap augmentation added {gap_added_count} frame(s).")
     if args.augment_lowlight:
         print(
-            f"Brightness+Sharpness augmentation added {brightness_sharpness_added_count} frame(s)."
+            f"Low-light augmentation added {lowlight_added_count} frame(s)."
         )
     if args.augment_motion:
         print(f"Motion augmentation added {motion_added_count} frame(s).")
@@ -1714,7 +1702,7 @@ def main():
         print("Blur directory:", blur_dir)
     print(
         f"workers={workers},  "
-        f"crop_ratio={crop_ratio}, max_spacing={max_spacing}, min_spacing_frames={base_spacing_frames}"
+        f"crop_ratio={crop_ratio}, flow_crop_ratio={flow_crop_ratio}, max_spacing={max_spacing}, min_spacing_frames={base_spacing_frames}"
     )
 
 
