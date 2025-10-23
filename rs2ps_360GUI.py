@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """GUI preview and execution tool for rs2ps_360PerspCut."""
 
@@ -1490,7 +1490,7 @@ class PreviewApp:
                 messagebox.showerror("rs2ps_FrameSelector", "CSV path is required for the selected mode.")
                 return
             if csv_mode == "write":
-                cmd.extend(["-f", csv_path])
+                cmd.extend(["-c", csv_path])
             elif csv_mode == "apply":
                 cmd.extend(["-a", csv_path])
             elif csv_mode == "reselect":
