@@ -11,7 +11,7 @@ jobs run in parallel with progress reporting and graceful cleanup.
 Cancellation uses the default Ctrl+C (SIGINT) handler for graceful shutdowns.
 """
 
-import argparse, math, pathlib, subprocess, sys, os, signal, threading, shlex, re
+import argparse, json, math, pathlib, subprocess, sys, os, signal, threading, shlex, re, shutil
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Set, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -108,6 +108,46 @@ def map_interp_for_v360(name: str) -> str:
     name = (name or "").lower()
     return {"bicubic":"cubic","bilinear":"linear","lanczos":"lanczos"}.get(name, "cubic")
 
+def detect_input_bit_depth(in_path: pathlib.Path) -> int:
+    """Detect the video's nominal bit depth using ffprobe metadata."""
+    if not shutil.which("ffprobe"):
+        return 8
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=bits_per_raw_sample,pix_fmt",
+        "-of", "json",
+        str(in_path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        info = json.loads(result.stdout or "{}")
+        streams = info.get("streams") or [{}]
+        stream = streams[0]
+        bits_raw = stream.get("bits_per_raw_sample")
+        if isinstance(bits_raw, str) and bits_raw.isdigit():
+            value = int(bits_raw)
+            return value if value >= 9 else 8
+        pix_fmt = stream.get("pix_fmt") or ""
+        if any(token in pix_fmt for token in (
+            "p10", "p12", "p14", "p16",
+            "yuv420p10", "yuv422p10", "yuv444p10",
+            "yuv420p12", "yuv422p12", "yuv444p12",
+            "p010", "p012", "p016",
+            "gbrp10", "gbrp12", "gbrp14", "gbrp16",
+            "rgb48", "rgba64",
+        )):
+            return 10
+    except Exception:
+        pass
+    return 8
+
 def parse_sensor(s: str) -> float:
     s = s.lower().replace("\u00d7", "x").replace(",", " ").strip()
     w = s.split("x")[0].strip() if "x" in s else s.split()[0]
@@ -182,82 +222,172 @@ def parse_setcam_spec(spec: str, default_deg: float):
     """
     Parse --setcam specification.
 
-    Absolute examples: A=30, A=-10, A=U30, A=D, A:U15, A:D
-    Relative examples: A:+10, A:-5
+    Absolute examples: A=30, A=-10, A=U30, A=D, A:U15, A:D, A_U=5
+    Relative examples: A:+10, A:-5, A_U:+5
 
     Returns:
-        (abs_map, delta_map) where keys are 1-based indices.
+        (abs_map, delta_map, extra_abs_map, extra_delta_map)
+        where extra maps are keyed by (idx, suffix) for additional views.
     """
     abs_map: Dict[int, float] = {}
     delta_map: Dict[int, float] = {}
+    extra_abs_map: Dict[Tuple[int, str], float] = {}
+    extra_delta_map: Dict[Tuple[int, str], float] = {}
     if not spec:
-        return abs_map, delta_map
+        return abs_map, delta_map, extra_abs_map, extra_delta_map
+
+    def split_key(raw: str) -> Tuple[int, Optional[str]]:
+        raw = raw.strip()
+        suffix: Optional[str] = None
+        base = raw
+        if "_" in raw:
+            base, suffix_part = raw.split("_", 1)
+            suffix = "_" + suffix_part.strip()
+        idx1 = letter_to_index1(base)
+        return idx1, suffix
 
     for token in spec.split(","):
         token = token.strip()
         if not token:
             continue
+        target_abs = abs_map
+        target_delta = delta_map
+        suffix: Optional[str] = None
         if ":" in token or "=" in token:
             k, v = re.split(r"[:=]", token, maxsplit=1)
-            idx1 = letter_to_index1(k)
+            idx1, suffix = split_key(k)
+            if suffix:
+                target_abs = extra_abs_map
+                target_delta = extra_delta_map
+            key = (idx1, suffix) if suffix else idx1
             v2 = v.strip()
             mrel = re.match(r'^[+|-]\s*\d+(?:\.\d+)?$', v2)
             if mrel:
-                delta_map[idx1] = float(v2.replace(" ", ""))
+                target_delta[key] = float(v2.replace(" ", ""))
                 continue
             up = re.match(r'^[Uu]\s*(\d+(?:\.\d+)?)?$', v2)
             dn = re.match(r'^[Dd]\s*(\d+(?:\.\d+)?)?$', v2)
             if up:
                 deg = float(up.group(1)) if up.group(1) else default_deg
-                abs_map[idx1] = +deg
+                target_abs[key] = +deg
             elif dn:
                 deg = float(dn.group(1)) if dn.group(1) else default_deg
-                abs_map[idx1] = -deg
+                target_abs[key] = -deg
             else:
                 try:
-                    abs_map[idx1] = float(v2.replace(" ", ""))
+                    target_abs[key] = float(v2.replace(" ", ""))
                 except Exception as exc:
                     raise ValueError("invalid --setcam token: " + token) from exc
         else:
             raise ValueError("invalid --setcam token: " + token)
-    return abs_map, delta_map
+    return abs_map, delta_map, extra_abs_map, extra_delta_map
 
 # ---- ffmpeg command builders ----
 def build_ffmpeg_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
                      w: int, h: int, yaw: float, pitch: float,
                      hfov: float, vfov: float, interp_v360: str,
-                     ext: str, ffthreads: str) -> List[str]:
-    vfilter = (
+                     ext: str, ffthreads: str, *,
+                     video_mode: bool = False,
+                     fps: Optional[float] = None,
+                     keep_rec709: bool = False,
+                     bit_depth: int = 8) -> List[str]:
+    ext_lower = ext.lower()
+    filters: List[str] = []
+    if video_mode:
+        if fps is None or fps <= 0:
+            raise ValueError("fps must be specified and > 0 when processing a video input")
+        filters.append(f"fps={fps}")
+        colorspace_filter = "colorspace=iall=bt709:all=smpte170m"
+        if not keep_rec709:
+            colorspace_filter += ":trc=iec61966-2-1"
+        if ext_lower in (".jpg", ".jpeg"):
+            filters.append(f"{colorspace_filter}:range=jpeg:format=yuv444p")
+        else:
+            filters.append(f"{colorspace_filter}:format=yuv444p")
+    filters.append(
         f"v360=input=equirect:output=rectilinear"
         f":w={w}:h={h}:yaw={yaw}:pitch={pitch}:roll=0"
         f":h_fov={hfov}:v_fov={vfov}:interp={interp_v360}"
     )
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", vfilter]
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", ",".join(filters)]
     if str(ffthreads).lower() != "auto":
         cmd += ["-threads", str(int(ffthreads))]
-    cmd += ["-frames:v", "1"]
-    if ext.lower() in (".jpg", ".jpeg"):
-        cmd += ["-c:v","mjpeg","-q:v","1","-qmin","1","-qmax","1",
-                "-pix_fmt","yuvj444p","-huffman","optimal"]
+    if video_mode:
+        cmd += ["-vsync", "vfr", "-start_number", "0"]
+    else:
+        cmd += ["-frames:v", "1"]
+    if ext_lower in (".jpg", ".jpeg"):
+        cmd += [
+            "-c:v", "mjpeg",
+            "-q:v", "1",
+            "-qmin", "1",
+            "-qmax", "1",
+            "-pix_fmt", "yuvj444p",
+            "-huffman", "optimal",
+        ]
+        if video_mode:
+            cmd += [
+                "-colorspace", "smpte170m",
+                "-color_primaries", "smpte170m",
+                "-color_trc", "smpte170m",
+            ]
+    elif video_mode and ext_lower in (".png", ".tif", ".tiff"):
+        pix_fmt = "rgb48le" if bit_depth > 8 else "rgb24"
+        cmd += ["-pix_fmt", pix_fmt]
     cmd.append(str(out))
     return cmd
 
 def build_ffmpeg_equisolid_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
                                w: int, h: int, yaw: float, pitch: float,
                                fov_deg: float, interp_v360: str,
-                               ext: str, ffthreads: str) -> List[str]:
-    vfilter = (
+                               ext: str, ffthreads: str, *,
+                               video_mode: bool = False,
+                               fps: Optional[float] = None,
+                               keep_rec709: bool = False,
+                               bit_depth: int = 8) -> List[str]:
+    ext_lower = ext.lower()
+    filters: List[str] = []
+    if video_mode:
+        if fps is None or fps <= 0:
+            raise ValueError("fps must be specified and > 0 when processing a video input")
+        filters.append(f"fps={fps}")
+        colorspace_filter = "colorspace=iall=bt709:all=smpte170m"
+        if not keep_rec709:
+            colorspace_filter += ":trc=iec61966-2-1"
+        if ext_lower in (".jpg", ".jpeg"):
+            filters.append(f"{colorspace_filter}:range=jpeg:format=yuv444p")
+        else:
+            filters.append(f"{colorspace_filter}:format=yuv444p")
+    filters.append(
         f"v360=input=equirect:output=fisheye"
         f":w={w}:h={h}:yaw={yaw}:pitch={pitch}:roll=0"
         f":d_fov={fov_deg}:interp={interp_v360}"
     )
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", vfilter]
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", ",".join(filters)]
     if str(ffthreads).lower() != "auto":
         cmd += ["-threads", str(int(ffthreads))]
-    cmd += ["-frames:v", "1"]
-    if ext.lower() in (".jpg", ".jpeg"):
-        cmd += ["-c:v","mjpeg","-q:v","1","-qmin","1","-qmax","1",
-                "-pix_fmt","yuvj444p","-huffman","optimal"]
+    if video_mode:
+        cmd += ["-vsync", "vfr", "-start_number", "0"]
+    else:
+        cmd += ["-frames:v", "1"]
+    if ext_lower in (".jpg", ".jpeg"):
+        cmd += [
+            "-c:v", "mjpeg",
+            "-q:v", "1",
+            "-qmin", "1",
+            "-qmax", "1",
+            "-pix_fmt", "yuvj444p",
+            "-huffman", "optimal",
+        ]
+        if video_mode:
+            cmd += [
+                "-colorspace", "smpte170m",
+                "-color_primaries", "smpte170m",
+                "-color_trc", "smpte170m",
+            ]
+    elif video_mode and ext_lower in (".png", ".tif", ".tiff"):
+        pix_fmt = "rgb48le" if bit_depth > 8 else "rgb24"
+        cmd += ["-pix_fmt", pix_fmt]
     cmd.append(str(out))
     return cmd
 
@@ -279,7 +409,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "-i", "--in", dest="input_dir", required=True,
-        help="Input folder containing equirectangular images (.tif/.tiff/.jpg/.jpeg/.png)"
+        help="Input folder (equirectangular images) or a video file containing equirectangular frames"
     )
     ap.add_argument(
         "-o", "--out", dest="out_dir", default=None,
@@ -288,12 +418,12 @@ def create_arg_parser() -> argparse.ArgumentParser:
 
     ap.add_argument(
         "--preset",
-        choices=["default", "2views", "10views", "evenMinus30", "evenPlus30", "fisheyeXY"],
+        choices=["default", "fisheyelike", "2views", "evenMinus30", "evenPlus30", "fisheyeXY"],
         default="default",
         help=(
             "default=8-view baseline / "
+            "fisheyelike=10-view mix (auto focal 17mm, custom deletions/additions) / "
             "2views=front/back only (6mm focal, 3600px) / "
-            "10views=baseline + top/bottom (10 total views) / "
             "evenMinus30=even slots pitch -30deg / "
             "evenPlus30=even slots pitch +30deg / "
             "fisheyeXY=fisheye X/Y pair only (Equisolid 3600px FOV180)"
@@ -320,6 +450,14 @@ def create_arg_parser() -> argparse.ArgumentParser:
 
     ap.add_argument("--size", type=int, default=1600, action=StoreWithFlag, help="Square output size per view")
     ap.add_argument("--ext", default="jpg", help="Output extension (jpg=high quality mjpeg)")
+    ap.add_argument(
+        "-f", "--fps", type=float, default=None,
+        help="Frame extraction rate (fps) when input is a video file"
+    )
+    ap.add_argument(
+        "--keep-rec709", action="store_true",
+        help="Keep Rec.709 transfer characteristics for video inputs (default: convert to sRGB)"
+    )
     ap.add_argument(
         "--hfov", type=float, default=None, action=StoreWithFlag,
         help="Horizontal FOV in degrees (overrides focal length)"
@@ -411,6 +549,10 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
     size_explicit = getattr(args, "size_explicit", False)
     hfov_explicit = getattr(args, "hfov_explicit", False)
     focal_explicit = getattr(args, "focal_mm_explicit", False)
+    video_mode = bool(getattr(args, "input_is_video", False))
+    fps_value = getattr(args, "fps", None)
+    keep_rec709 = bool(getattr(args, "keep_rec709", False))
+    video_bit_depth = int(getattr(args, "video_bit_depth", 8))
 
     even_pitch_all = None
     even_pitch_map: Dict[int, float] = {}
@@ -418,9 +560,11 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
     add_topdown = bool(args.add_topdown)
     preset_fisheye_xy = (args.preset == "fisheyeXY")
     preset_two_views = (args.preset == "2views")
+    preset_fisheyelike = (args.preset == "fisheyelike")
 
-    if args.preset == "10views":
-        add_topdown = True
+    if preset_fisheyelike:
+        if args.count != 10:
+            args.count = 10
     elif preset_fisheye_xy:
         if args.count != 8:
             print("[INFO] preset 'fisheyeXY' forces count=8")
@@ -435,13 +579,25 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
         args.size = 3600
     if preset_two_views and not hfov_explicit and not focal_explicit:
         args.focal_mm = 6.0
+    if preset_fisheyelike and not hfov_explicit and not focal_explicit:
+        args.focal_mm = 17.0
 
     add_map = parse_addcam_spec(args.addcam, args.addcam_deg)
     del_set = parse_delcam_spec(args.delcam)
+    if preset_fisheyelike:
+        for ch in ("C", "D", "H", "I"):
+            del_set.add(letter_to_index1(ch))
+        for ch in ("A", "F"):
+            idx = letter_to_index1(ch)
+            slot = add_map.setdefault(idx, [])
+            if not any(abs(val - float(args.addcam_deg)) < 1e-6 for val in slot):
+                slot.append(float(args.addcam_deg))
+            if not any(abs(val + float(args.addcam_deg)) < 1e-6 for val in slot):
+                slot.append(-float(args.addcam_deg))
     if preset_two_views:
         for ch in ("B", "C", "D", "F", "G", "H"):
             del_set.add(letter_to_index1(ch))
-    set_abs_map, set_delta_map = parse_setcam_spec(args.setcam, args.addcam_deg)
+    set_abs_map, set_delta_map, set_extra_abs_map, set_extra_delta_map = parse_setcam_spec(args.setcam, args.addcam_deg)
 
     sensor_w_mm = parse_sensor(args.sensor_mm)
     sensor_dims = parse_sensor_dimensions(args.sensor_mm)
@@ -496,6 +652,17 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
     view_specs: List[ViewSpec] = []
     existing_names: Set[str] = set()
     fisheye_letter_map = {1: "X", 5: "Y"} if preset_fisheye_xy else {}
+    ffmpeg_common_kwargs = dict(
+        video_mode=video_mode,
+        fps=fps_value,
+        keep_rec709=keep_rec709,
+        bit_depth=video_bit_depth,
+    )
+
+    def make_out_path(view_id: str) -> pathlib.Path:
+        if video_mode:
+            return out_dir / f"{stem}_%07d_{view_id}{ext_dot}"
+        return out_dir / f"{stem}_{view_id}{ext_dot}"
 
     for img in files:
         stem = img.stem
@@ -506,10 +673,19 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                         width: int, height: int, hfov_val: float, vfov_val: float,
                         projection: str = "perspective") -> None:
             out_stem = out_path.stem
-            if out_stem.startswith(f"{stem}_"):
-                view_id = out_stem[len(stem) + 1:]
+            if video_mode:
+                placeholder_prefix = f"{stem}_%07d_"
+                if out_stem.startswith(placeholder_prefix):
+                    view_id = out_stem[len(placeholder_prefix):]
+                elif out_stem.startswith(f"{stem}_"):
+                    view_id = out_stem[len(stem) + 1:]
+                else:
+                    view_id = out_stem
             else:
-                view_id = out_stem
+                if out_stem.startswith(f"{stem}_"):
+                    view_id = out_stem[len(stem) + 1:]
+                else:
+                    view_id = out_stem
             view_specs.append(
                 ViewSpec(
                     source_path=img,
@@ -538,21 +714,39 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                     pitch += float(even_pitch_all)
                 if idx1 in even_pitch_map:
                     pitch += float(even_pitch_map[idx1])
-            if idx1 in set_abs_map:
-                pitch = float(set_abs_map[idx1])
-            if idx1 in set_delta_map:
-                pitch += float(set_delta_map[idx1])
+
+            def apply_setcam_pitch(idx: int, base_pitch: float, suffix: Optional[str] = None) -> float:
+                pitch_val = base_pitch
+                if suffix:
+                    key = (idx, suffix)
+                    if key in set_extra_abs_map:
+                        pitch_val = float(set_extra_abs_map[key])
+                    elif idx in set_abs_map:
+                        pitch_val = float(set_abs_map[idx])
+                    if key in set_extra_delta_map:
+                        pitch_val += float(set_extra_delta_map[key])
+                    elif idx in set_delta_map:
+                        pitch_val += float(set_delta_map[idx])
+                else:
+                    if idx in set_abs_map:
+                        pitch_val = float(set_abs_map[idx])
+                    if idx in set_delta_map:
+                        pitch_val += float(set_delta_map[idx])
+                return pitch_val
+
+            pitch = apply_setcam_pitch(idx1, pitch)
             pitch = clamp(pitch, -90.0, 90.0)
 
             if preset_fisheye_xy and idx1 in fisheye_letter_map:
                 xy_views.append((fisheye_letter_map[idx1], yaw, pitch))
 
             if not skip_base:
-                out_path = out_dir / f"{stem}_{tag}{ext_dot}"
+                out_path = make_out_path(tag)
                 if out_path.name not in existing_names:
                     cmd = build_ffmpeg_cmd(
                         ffmpeg, img, out_path, w, h, yaw, pitch,
-                        hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                        hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                        **ffmpeg_common_kwargs,
                     )
                     jobs_list.append((cmd, img.name, out_path.name))
                     existing_names.add(out_path.name)
@@ -562,11 +756,13 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                 for d in preset_extra_even_pitches:
                     p2 = clamp(pitch + d, -90.0, 90.0)
                     suf = extra_suffix(d, 30.0)
-                    out_path2 = out_dir / f"{stem}_{tag}{suf}{ext_dot}"
+                    p2 = apply_setcam_pitch(idx1, p2, suffix=suf)
+                    out_path2 = make_out_path(f"{tag}{suf}")
                     if out_path2.name not in existing_names:
                         cmd2 = build_ffmpeg_cmd(
                             ffmpeg, img, out_path2, w, h, yaw, p2,
-                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                            **ffmpeg_common_kwargs,
                         )
                         jobs_list.append((cmd2, img.name, out_path2.name))
                         existing_names.add(out_path2.name)
@@ -576,11 +772,13 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                 for d in add_map[idx1]:
                     p3 = clamp(pitch + d, -90.0, 90.0)
                     suf3 = extra_suffix(d, args.addcam_deg)
-                    out_path3 = out_dir / f"{stem}_{tag}{suf3}{ext_dot}"
+                    p3 = apply_setcam_pitch(idx1, p3, suffix=suf3)
+                    out_path3 = make_out_path(f"{tag}{suf3}")
                     if out_path3.name not in existing_names:
                         cmd3 = build_ffmpeg_cmd(
                             ffmpeg, img, out_path3, w, h, yaw, p3,
-                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                            **ffmpeg_common_kwargs,
                         )
                         jobs_list.append((cmd3, img.name, out_path3.name))
                         existing_names.add(out_path3.name)
@@ -588,12 +786,13 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
 
         if preset_fisheye_xy:
             for xy_tag, yaw_xy, pitch_xy in xy_views:
-                out_path_xy = out_dir / f"{stem}_{xy_tag}{ext_dot}"
+                out_path_xy = make_out_path(xy_tag)
                 if out_path_xy.name in existing_names:
                     continue
                 cmd_xy = build_ffmpeg_equisolid_cmd(
                     ffmpeg, img, out_path_xy, fisheye_size, fisheye_size,
-                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot, args.ffthreads
+                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot, args.ffthreads,
+                    **ffmpeg_common_kwargs,
                 )
                 jobs_list.append((cmd_xy, img.name, out_path_xy.name))
                 existing_names.add(out_path_xy.name)
@@ -609,12 +808,15 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                 td_tag = letter_tag(td_index)
                 td_index += 1
                 pitch_td = clamp(td_pitch, -90.0, 90.0)
-                out_path_td = out_dir / f"{stem}_{td_tag}{ext_dot}"
+                idx_td = letter_to_index1(td_tag)
+                pitch_td = apply_setcam_pitch(idx_td, pitch_td)
+                out_path_td = make_out_path(td_tag)
                 if out_path_td.name in existing_names:
                     continue
                 cmd_td = build_ffmpeg_cmd(
                     ffmpeg, img, out_path_td, w, h, 0.0, pitch_td,
-                    hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads
+                    hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                    **ffmpeg_common_kwargs,
                 )
                 jobs_list.append((cmd_td, img.name, out_path_td.name))
                 existing_names.add(out_path_td.name)
@@ -633,10 +835,19 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
             if src_name != first_src:
                 break
             stem_candidate = pathlib.Path(dst_name).stem
-            if stem_candidate.startswith(f"{reference_stem}_"):
-                view_id = stem_candidate[len(reference_stem) + 1:]
+            if getattr(args, "input_is_video", False):
+                placeholder_prefix = f"{reference_stem}_%07d_"
+                if stem_candidate.startswith(placeholder_prefix):
+                    view_id = stem_candidate[len(placeholder_prefix):]
+                elif stem_candidate.startswith(f"{reference_stem}_"):
+                    view_id = stem_candidate[len(reference_stem) + 1:]
+                else:
+                    view_id = stem_candidate
             else:
-                view_id = stem_candidate
+                if stem_candidate.startswith(f"{reference_stem}_"):
+                    view_id = stem_candidate[len(reference_stem) + 1:]
+                else:
+                    view_id = stem_candidate
             if view_id and view_id not in seen_views:
                 seen_views.append(view_id)
         if seen_views:
@@ -684,15 +895,35 @@ def main():
     for attr in ("size", "hfov", "focal_mm"):
         setattr(args, f"{attr}_explicit", getattr(args, f"{attr}_explicit", False))
 
-    in_dir = pathlib.Path(args.input_dir).expanduser().resolve()
-    if not in_dir.is_dir():
-        print("[ERR] Input folder not found:", in_dir, file=sys.stderr); sys.exit(1)
-    out_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else (in_dir / "_geometry")
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    files = [p for p in sorted(in_dir.iterdir()) if p.is_file() and p.suffix.lower() in EXTS]
-    if not files:
-        print("[WARN] No target images found (tif/jpg/png)", file=sys.stderr); sys.exit(0)
+    input_path = pathlib.Path(args.input_dir).expanduser().resolve()
+    files: List[pathlib.Path] = []
+    if input_path.is_dir():
+        setattr(args, "input_is_video", False)
+        setattr(args, "video_bit_depth", 8)
+        out_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else (input_path / "_geometry")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files = [
+            p for p in sorted(input_path.iterdir())
+            if p.is_file() and p.suffix.lower() in EXTS
+        ]
+        if not files:
+            print("[WARN] No target images found (tif/jpg/png)", file=sys.stderr)
+            sys.exit(0)
+    elif input_path.is_file():
+        setattr(args, "input_is_video", True)
+        if args.fps is None or args.fps <= 0:
+            print("[ERR] -f/--fps must be specified for video inputs", file=sys.stderr)
+            sys.exit(1)
+        video_out_dir = pathlib.Path(args.out_dir).resolve() if args.out_dir else (
+            input_path.parent / f"{input_path.stem}_geometry"
+        )
+        video_out_dir.mkdir(parents=True, exist_ok=True)
+        setattr(args, "video_bit_depth", detect_input_bit_depth(input_path))
+        files = [input_path]
+        out_dir = video_out_dir
+    else:
+        print("[ERR] Input path not found:", input_path, file=sys.stderr)
+        sys.exit(1)
 
     result = build_view_jobs(args, files, out_dir)
     jobs_list = result.jobs
