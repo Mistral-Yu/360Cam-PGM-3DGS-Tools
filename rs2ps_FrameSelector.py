@@ -1695,7 +1695,11 @@ def main():
     if args.augment_motion:
         print(f"Motion augmentation added {motion_added_count} frame(s).")
 
-    print(f"Done: input {total} / kept {kept} / moved {moved} / skipped {skipped}")
+    print(f"Done:")
+    print(f" Input {total}")
+    print(f" Kept {kept}")
+    print(f" Moved {moved} ")
+    print(f" Skipped {skipped}")
     if args.dry_run:
         print("Blur directory (dry run, no files moved):", blur_dir)
     else:
