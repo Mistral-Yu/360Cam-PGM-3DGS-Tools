@@ -17,7 +17,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
     from PIL import Image, ImageTk
@@ -41,6 +41,8 @@ COLOR_CYCLE = [
 ]
 
 PRESET_CHOICES = ["default", "2views", "fisheyelike", "evenMinus30", "evenPlus30", "fisheyeXY"]
+
+HUMAN_MODE_CHOICES = ["mask", "alpha", "cutout", "keep_person", "remove_person", "inpaint"]
 
 
 
@@ -109,12 +111,13 @@ HELP_TEXT = """
 - addcam: Extra cameras, e.g. B, D:U15, H:D20
 - addcam delta (deg): Default delta when U/D omit a value
 - delcam: Remove baseline cameras, e.g. B,D
-- setcam: Override/adjust cameras, e.g. A=U30, B:-5
+- setcam: Override/adjust cameras, e.g. A=U30, B:-5, A_U=10 (upper), A_D:-5 (lower)
 - Size(px): Output square size per view
 - HFOV (deg): Horizontal FOV (overrides focal length)
 - Focal(mm): Focal length when HFOV is not set
 - Sensor(mm): Sensor width/height (e.g. 36 24 or 36x24)
 - Add top/bottom: Include cube-map style top/bottom views
+- Video input: Use Browse... to select a video file (mp4/mov/etc.); choose preview FPS and ensure ffmpeg path is configured.
 
 Update: Refresh preview only with the current parameters
 Run Export: Execute FFmpeg jobs and write outputs (with confirmation)
@@ -125,13 +128,14 @@ FIELD_HELP_TEXT = {
     "addcam": "Add extra cameras using codes like B, D:U20, H:D to offset pitch or duplicate slots.",
     "addcam_deg": "Default pitch delta (degrees) when U/D is specified without a value in addcam/setcam.",
     "delcam": "Remove baseline cameras by letter, e.g. B,D to skip those outputs.",
-    "setcam": "Override existing camera pitch. Use forms like A=U20, C:+15, D:-5.",
+    "setcam": "Override existing camera pitch. Use A=U20, C:+15, D:-5, or target extras with A_U=10 / A_D:-5.",
     "size": "Square output size (pixels) for each perspective view.",
     "focal_mm": "Virtual focal length (mm). Used when HFOV is blank.",
     "hfov": "Horizontal field-of-view override (degrees). Takes priority over focal length when provided.",
     "sensor_mm": "Sensor width/height (mm). Example: 36 24 or 36x24.",
     "count": "Number of evenly spaced horizontal cameras (360° / count determines yaw step).",
     "add_topdown": "Enable additional top (+90° pitch) and bottom (-90° pitch) views.",
+    "input_path": "Select an image folder or Browse to choose a video file (mp4/mov/etc.). For videos, set preview FPS and ensure ffmpeg is configured.",
     "show_seam_overlay": "Overlay a translucent band along the panorama seam to visualise potential stitching artifacts.",
     "ffmpeg": "Path to the ffmpeg executable. Leave blank to use the system PATH.",
     "jobs": "Number of parallel ffmpeg processes. 'auto' uses approximately half the CPU cores.",
@@ -528,6 +532,10 @@ class PreviewApp:
         self.selector_log: Optional[tk.Text] = None
         self.selector_run_button: Optional[tk.Button] = None
 
+        self.human_vars: Dict[str, tk.Variable] = {}
+        self.human_log: Optional[tk.Text] = None
+        self.human_run_button: Optional[tk.Button] = None
+
         self.ply_vars: Dict[str, tk.Variable] = {}
         self.ply_log: Optional[tk.Text] = None
         self.ply_run_button: Optional[tk.Button] = None
@@ -535,6 +543,7 @@ class PreviewApp:
 
         self.video_stop_button: Optional[tk.Button] = None
         self.selector_stop_button: Optional[tk.Button] = None
+        self.human_stop_button: Optional[tk.Button] = None
         self.ply_stop_button: Optional[tk.Button] = None
         self.preview_stop_button: Optional[tk.Button] = None
 
@@ -555,7 +564,7 @@ class PreviewApp:
         self._preview_frame_padding = 0
         self._controls_frame_padding = 0
 
-        self.root.title("rs2ps_360 preview")
+        self.root.title("rs2ps_360GUI")
         self.build_ui()
         self.set_form_values()
         self.root.update_idletasks()
@@ -581,16 +590,19 @@ class PreviewApp:
         video_tab = tk.Frame(self.notebook)
         selector_tab = tk.Frame(self.notebook)
         preview_tab = tk.Frame(self.notebook)
+        human_tab = tk.Frame(self.notebook)
         ply_tab = tk.Frame(self.notebook)
 
         self.notebook.add(video_tab, text="rs2ps_Video2Frames")
         self.notebook.add(selector_tab, text="rs2ps_FrameSelector")
         self.notebook.add(preview_tab, text="rs2ps_360PerspCut")
+        self.notebook.add(human_tab, text="rs2ps_HumanMaskTool")
         self.notebook.add(ply_tab, text="rs2ps_PlyOptimizer")
 
         self._build_video_tab(video_tab)
         self._build_frame_selector_tab(selector_tab)
         self._build_preview_tab(preview_tab)
+        self._build_human_mask_tab(human_tab)
         self._build_ply_tab(ply_tab)
 
         self.notebook.select(preview_tab)
@@ -924,6 +936,108 @@ class PreviewApp:
 
         self._on_selector_csv_mode_changed()
 
+    def _build_human_mask_tab(self, parent: tk.Widget) -> None:
+        container = tk.Frame(parent)
+        container.pack(fill="both", expand=True)
+
+        params = tk.LabelFrame(container, text="Parameters")
+        params.pack(fill="x", padx=8, pady=8)
+
+        self.human_vars = {
+            "input": tk.StringVar(),
+            "output": tk.StringVar(),
+            "mode": tk.StringVar(value="mask"),
+            "dilate": tk.StringVar(),
+            "cpu": tk.BooleanVar(value=False),
+            "include_shadow": tk.BooleanVar(value=False),
+        }
+
+        row = 0
+        tk.Label(params, text="Input folder").grid(row=row, column=0, sticky="e", padx=4, pady=4)
+        tk.Entry(params, textvariable=self.human_vars["input"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            params,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.human_vars["input"],
+                title="Select input folder",
+                on_select=self._on_human_input_selected,
+            ),
+        ).grid(row=row, column=2, padx=4, pady=4)
+
+        row += 1
+        tk.Label(params, text="Output folder").grid(row=row, column=0, sticky="e", padx=4, pady=4)
+        tk.Entry(params, textvariable=self.human_vars["output"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            params,
+            text="Browse...",
+            command=lambda: self._select_directory(self.human_vars["output"], title="Select output folder"),
+        ).grid(row=row, column=2, padx=4, pady=4)
+
+        row += 1
+        mode_frame = tk.Frame(params)
+        mode_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
+        tk.Label(mode_frame, text="Mode").pack(side=tk.LEFT, padx=(0, 4))
+        mode_combo = ttk.Combobox(
+            mode_frame,
+            textvariable=self.human_vars["mode"],
+            values=HUMAN_MODE_CHOICES,
+            state="readonly",
+            width=16,
+        )
+        mode_combo.pack(side=tk.LEFT, padx=(0, 12))
+        mode_combo.set(self.human_vars["mode"].get())
+
+        tk.Label(mode_frame, text="Dilation %").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(mode_frame, textvariable=self.human_vars["dilate"], width=10).pack(side=tk.LEFT, padx=(0, 12))
+
+        row += 1
+        flags_frame = tk.Frame(params)
+        flags_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
+        tk.Checkbutton(flags_frame, text="Force CPU", variable=self.human_vars["cpu"]).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            flags_frame,
+            text="Include shadow",
+            variable=self.human_vars["include_shadow"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        for col in range(3):
+            params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
+
+        actions = tk.Frame(container)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        self.human_stop_button = tk.Button(
+            actions,
+            text="Stop",
+            command=lambda: self._stop_cli_process("human"),
+        )
+        self.human_stop_button.pack(side=tk.RIGHT, padx=4, pady=4)
+        self.human_stop_button.configure(state="disabled")
+        self.human_run_button = tk.Button(
+            actions,
+            text="Run rs2ps_HumanMaskTool",
+            command=self._run_human_mask_tool,
+        )
+        self.human_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
+
+        log_frame = tk.LabelFrame(container, text="Log")
+        log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.human_log = tk.Text(log_frame, wrap="word", height=18, cursor="arrow")
+        self.human_log.pack(fill="both", expand=True, padx=6, pady=4)
+        self.human_log.bind("<Key>", self._block_text_edit)
+        self.human_log.bind("<Button-1>", lambda event: self.human_log.focus_set())
+        self._set_text_widget(self.human_log, "")
+
+    def _on_human_input_selected(self, selected_path: str) -> None:
+        if not self.human_vars:
+            return
+        try:
+            base_path = Path(selected_path).expanduser()
+        except Exception:
+            return
+        default_out = base_path / "_mask"
+        self.human_vars["output"].set(str(default_out))
+
     def _build_ply_tab(self, parent: tk.Widget) -> None:
         container = tk.Frame(parent)
         container.pack(fill="both", expand=True)
@@ -1051,6 +1165,7 @@ class PreviewApp:
         folder_frame.pack(fill="x")
         path_entry = tk.Entry(folder_frame, textvariable=self.folder_path_var, width=38)
         path_entry.pack(side=tk.LEFT, fill="x", expand=True, padx=(8, 4), pady=4)
+        self._bind_help(path_entry, "input_path")
         tk.Button(
             folder_frame,
             text="Browse...",
@@ -1361,6 +1476,56 @@ class PreviewApp:
             self.preview_stop_button.configure(state="disabled")
         self.append_log_line("[EXEC] Stop requested...")
 
+    def _run_human_mask_tool(self) -> None:
+        if not self.human_vars:
+            return
+        input_dir = self.human_vars["input"].get().strip()
+        if not input_dir:
+            messagebox.showerror("rs2ps_HumanMaskTool", "Input folder is required.")
+            return
+        input_path = Path(input_dir).expanduser()
+        if not input_path.exists() or not input_path.is_dir():
+            messagebox.showerror("rs2ps_HumanMaskTool", f"Input folder not found:\n{input_dir}")
+            return
+
+        cmd: List[str] = [
+            sys.executable,
+            str(self.base_dir / "rs2ps_HumanMaskTool.py"),
+            "-i",
+            str(input_path),
+        ]
+
+        output_dir = self.human_vars["output"].get().strip()
+        if output_dir:
+            cmd.extend(["-o", output_dir])
+
+        mode_value = self.human_vars["mode"].get().strip()
+        if mode_value and mode_value in HUMAN_MODE_CHOICES:
+            cmd.extend(["--mode", mode_value])
+
+        dilate_value = self.human_vars["dilate"].get().strip()
+        if dilate_value:
+            try:
+                float(dilate_value)
+            except ValueError:
+                messagebox.showerror("rs2ps_HumanMaskTool", "Dilation must be numeric.")
+                return
+            cmd.extend(["--dilate", dilate_value])
+
+        if bool(self.human_vars["cpu"].get()):
+            cmd.append("--cpu")
+        if bool(self.human_vars["include_shadow"].get()):
+            cmd.append("--include_shadow")
+
+        self._run_cli_command(
+            cmd,
+            self.human_log,
+            self.human_run_button,
+            process_key="human",
+            stop_button=self.human_stop_button,
+            cwd=self.base_dir,
+        )
+
     def _run_video_tool(self) -> None:
         if not self.video_vars:
             return
@@ -1425,6 +1590,10 @@ class PreviewApp:
             cmd.append("--keep-rec709")
         if bool(self.video_vars["overwrite"].get()):
             cmd.append("--overwrite")
+
+        ffmpeg_path = self.ffmpeg_path_var.get().strip()
+        if ffmpeg_path:
+            cmd.extend(["--ffmpeg", ffmpeg_path])
 
         self._run_cli_command(
             cmd,
@@ -1643,6 +1812,9 @@ class PreviewApp:
             if mode_value == "reselect":
                 self.selector_vars["dry_run"].set(True)
                 self.selector_dry_run_check.configure(state="disabled")
+            elif mode_value == "apply":
+                self.selector_vars["dry_run"].set(False)
+                self.selector_dry_run_check.configure(state="disabled")
             else:
                 self.selector_dry_run_check.configure(state="normal")
 
@@ -1682,7 +1854,12 @@ class PreviewApp:
         if path:
             self.selector_vars["csv_path"].set(path)
 
-    def _select_directory(self, var: tk.Variable, title: str = "Select folder") -> None:
+    def _select_directory(
+        self,
+        var: tk.Variable,
+        title: str = "Select folder",
+        on_select: Optional[Callable[[str], None]] = None,
+    ) -> None:
         current = var.get().strip() if hasattr(var, "get") else ""
         initialdir = Path(current) if current else self.base_dir
         try:
@@ -1695,6 +1872,11 @@ class PreviewApp:
         )
         if path:
             var.set(path)
+            if on_select is not None:
+                try:
+                    on_select(path)
+                except Exception:
+                    pass
 
     def _select_save_file(
         self,
