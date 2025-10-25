@@ -55,7 +55,7 @@ The **rs2ps_360GUI** provides a launch pad for each CLI stage, letting you previ
 ## Toolchain Overview
 
 - **rs2ps_360GUI (Desktop Launcher)** — Tkinter/Pillow interface that wraps the CLI scripts. Preview camera rigs, edit presets, trigger FFmpeg jobs, and surface inline help for every option.
-  - Launch with `python rs2ps_360GUI.py --input-dir path/to/frames` and use the tabs to configure exports, kick off batch operations, and hand RealityScan outputs to the optimiser.
+  - Launch with `python rs2ps_360GUI.py` and use the tabs to configure exports, kick off batch operations, and hand RealityScan outputs to the optimiser.
 - **rs2ps_Video2Frames** — Samples frames from 360° footage at controllable rates, normalises colour space/bit depth, and trims time ranges.
   - Example: `python rs2ps_Video2Frames.py --input path/to/video.mp4 --output-dir frames/360_raw --fps 2`
 - **rs2ps_FrameSelector** — Ranks equirectangular stills with hybrid sharpness metrics, segment quotas, and CSV round-tripping to curate SfM-ready sets.
