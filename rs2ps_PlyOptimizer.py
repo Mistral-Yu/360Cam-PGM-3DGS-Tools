@@ -279,7 +279,8 @@ def voxel_downsample_by_size(
         xyz: Array of shape (N, 3) with point coordinates.
         rgb: Array of shape (N, 3) with 8-bit color values.
         voxel: Voxel edge length.
-        representative: Strategy used to pick the voxel representative.
+        representative: Strategy used to pick the voxel representative
+            ('centroid', 'center', 'first', or 'random').
 
     Returns:
         Downsampled XYZ and RGB arrays.
@@ -301,11 +302,23 @@ def voxel_downsample_by_size(
 
     xyz32 = xyz.astype(np.float32, copy=False)
 
+    rng = np.random.default_rng()
+
     if representative == "first":
         pick_idx = np.full(k, -1, dtype=np.int64)
         for idx, gid in enumerate(inv):
             if pick_idx[gid] == -1:
                 pick_idx[gid] = idx
+    elif representative == "random":
+        order = np.argsort(inv, kind="mergesort")
+        inv_sorted = inv[order]
+        starts = np.flatnonzero(np.r_[True, inv_sorted[1:] != inv_sorted[:-1]])
+        ends = np.r_[starts[1:], inv_sorted.size]
+        pick_idx = np.empty(k, dtype=np.int64)
+        for a, b in zip(starts, ends):
+            gid = int(inv_sorted[a])
+            rand_offset = int(rng.integers(max(1, b - a)))
+            pick_idx[gid] = int(order[a + rand_offset])
     else:
         if representative == "center":
             targets = (
@@ -521,7 +534,7 @@ def adaptive_voxel_downsample(
     xyz: np.ndarray,
     rgb: np.ndarray,
     target_points: Optional[int],
-    weight_power: float = 1.0,
+    weight_power: float = 0.5,
     stats: Optional[PointCloudStats] = None,
     min_voxel_size: Optional[float] = None,
     representative: str = "centroid",
@@ -538,7 +551,8 @@ def adaptive_voxel_downsample(
         stats: Optional precomputed statistics for the point cloud.
         min_voxel_size: Optional minimum voxel edge length; prevents recursive
             subdivision beyond this size when supplied.
-        representative: Strategy for picking a point from a leaf voxel.
+        representative: Strategy for picking a point from a leaf voxel
+            ('centroid', 'center', 'first', or 'random').
         max_depth: Maximum octree depth.
 
     Returns:
@@ -559,6 +573,7 @@ def adaptive_voxel_downsample(
 
     xyz32 = xyz.astype(np.float32, copy=False)
     rgb8 = rgb.astype(np.uint8, copy=False)
+    rng = np.random.default_rng()
 
     if stats is None or stats.count != n:
         stats = compute_point_cloud_stats(xyz32)
@@ -700,6 +715,8 @@ def adaptive_voxel_downsample(
             target_point = node.min_corner + node.size * 0.5
         elif representative == "centroid":
             target_point = pts.mean(axis=0)
+        elif representative == "random":
+            return int(idx[int(rng.integers(idx.size))])
         else:
             raise ValueError(
                 f"Unknown representative strategy: {representative}"
@@ -799,7 +816,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--adaptive-weight",
         type=float,
-        default=1.0,
+        default=0.5,
         metavar="POWER",
         help=(
             "Weight exponent for adaptive sampling. Values >1 favour splitting "
@@ -820,19 +837,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "-k",
         "--keep-strategy",
-        choices=("centroid", "center", "first"),
+        choices=("centroid", "center", "first", "random"),
         default="centroid",
         help=(
             "Representative selection per voxel: "
             "centroid=closest to centroid (default), "
             "center=closest to voxel center, "
-            "first=first point encountered."
+            "first=first point encountered, "
+            "random=random point per voxel."
         ),
     )
     args = ap.parse_args(argv)
 
     if args.target_points is not None and args.target_points <= 0:
         ap.error("--target-points must be greater than 0")
+
+    if args.adaptive and args.keep_strategy != "random":
+        print("[adaptive] forcing keep-strategy=random")
+        args.keep_strategy = "random"
 
     base_path = os.path.expanduser(args.input)
     if not os.path.isabs(base_path):
