@@ -48,7 +48,7 @@ A consolidated toolkit for turning 360° video captures into RealityScan-friendl
 6. Downsample/merge the PLY for PostShot initialization and feed both assets into your 3DGS pipeline.
 
 ### Recommended RealityScan-to-PostShot Flow
-- After RealityScan completes **Reconstruction** and **Colorize**, export the colourised mesh as a PLY and grab the accompanying camera **CSV** (not the Bundler bundle); that pairing feeds best into `rs2ps_PlyOptimizer`.
+- After RealityScan completes **Reconstruction** and **Colorize**, export the colourised mesh as a PLY and grab the accompanying camera **CSV** ; that pairing feeds best into `rs2ps_PlyOptimizer`.
 - Start with a conservative `--target-points` value around **100,000** to keep PostShot responsive; you can rerun the optimizer with higher counts if needed.
 
 The **rs2ps_360GUI** provides a launch pad for each CLI stage, letting you preview perspective camera layouts and run exports without memorising command-line options.
