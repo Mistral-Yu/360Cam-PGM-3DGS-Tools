@@ -6,13 +6,13 @@ import argparse
 import copy
 import itertools
 import math
-import pathlib
+import pathlib                                                                                                                                                                                                                                          
 from pathlib import Path
 import re
 import shlex
 import subprocess
 import sys
-import tempfile
+import tempfile                                                                                                                          
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -1105,7 +1105,7 @@ class PreviewApp:
 
         row += 1
         tk.Label(params, text="Keep strategy").grid(row=row, column=0, sticky="e", padx=4, pady=4)
-        tk.OptionMenu(params, self.ply_vars["keep_strategy"], "centroid", "center", "first").grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        tk.OptionMenu(params, self.ply_vars["keep_strategy"], "centroid", "center", "first", "random").grid(row=row, column=1, sticky="w", padx=4, pady=4)
 
         params.grid_columnconfigure(1, weight=1)
 
