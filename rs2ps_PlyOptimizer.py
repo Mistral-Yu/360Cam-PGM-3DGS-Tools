@@ -9,8 +9,10 @@ and writes the result as a binary little-endian PLY file.
 
 from __future__ import annotations
 import argparse
+import heapq
 import os
 from dataclasses import dataclass
+from itertools import count
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -515,6 +517,213 @@ def voxel_downsample_to_target(
     return out_xyz, out_rgb
 
 
+def adaptive_voxel_downsample(
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    target_points: Optional[int],
+    weight_power: float = 1.0,
+    stats: Optional[PointCloudStats] = None,
+    min_voxel_size: Optional[float] = None,
+    representative: str = "centroid",
+    max_depth: int = 12,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Adaptive octree-based voxel sampling that prefers dense regions.
+
+    Args:
+        xyz: Array of shape (N, 3) with point coordinates.
+        rgb: Array of shape (N, 3) with 8-bit color values.
+        target_points: Desired number of output points (clamped to [1, N]).
+        weight_power: Exponent applied to voxel population when prioritising
+            splits (>1 emphasises dense voxels, 0 makes all voxels equal).
+        stats: Optional precomputed statistics for the point cloud.
+        min_voxel_size: Optional minimum voxel edge length; prevents recursive
+            subdivision beyond this size when supplied.
+        representative: Strategy for picking a point from a leaf voxel.
+        max_depth: Maximum octree depth.
+
+    Returns:
+        Downsampled XYZ and RGB arrays selected by adaptive sampling.
+    """
+
+    n = int(xyz.shape[0])
+    if n == 0:
+        return xyz.astype(np.float32, copy=False), rgb.astype(np.uint8, copy=False)
+
+    if target_points is None or target_points <= 0:
+        target = n
+    else:
+        target = int(max(1, min(n, target_points)))
+
+    if target >= n:
+        return xyz.astype(np.float32, copy=False), rgb.astype(np.uint8, copy=False)
+
+    xyz32 = xyz.astype(np.float32, copy=False)
+    rgb8 = rgb.astype(np.uint8, copy=False)
+
+    if stats is None or stats.count != n:
+        stats = compute_point_cloud_stats(xyz32)
+
+    extent = np.asarray(stats.extent, dtype=np.float32)
+    cube_size = float(np.max(extent))
+    if cube_size <= 0.0:
+        keep = np.arange(0, target, dtype=np.int64)
+        return xyz32[keep], rgb8[keep]
+
+    pad = np.maximum((cube_size - extent) * 0.5, 0.0)
+    cube_min = np.asarray(stats.xyz_min - pad, dtype=np.float32)
+
+    min_voxel = float(min_voxel_size) if min_voxel_size else None
+    weight_power = float(weight_power) if weight_power is not None else 1.0
+    if weight_power < 0.0:
+        weight_power = 0.0
+
+    def _weight(count_value: int) -> float:
+        if count_value <= 0:
+            return 0.0
+        if weight_power == 0.0:
+            return 1.0
+        return float(count_value) ** weight_power
+
+    @dataclass
+    class _Node:
+        indices: np.ndarray
+        min_corner: np.ndarray
+        size: float
+        depth: int
+        count: int
+        weight: float
+
+    root_indices = np.arange(n, dtype=np.int64)
+    root = _Node(
+        indices=root_indices,
+        min_corner=cube_min,
+        size=cube_size,
+        depth=0,
+        count=n,
+        weight=_weight(n),
+    )
+
+    heap: List[Tuple[float, int, _Node]] = []
+    seq = count()
+    heapq.heappush(heap, (-root.weight, next(seq), root))
+    leaves: List[_Node] = []
+
+    eps = 1e-9
+    desired = target
+
+    def _can_split(node: _Node) -> bool:
+        if node.count <= 1:
+            return False
+        if node.depth >= max_depth:
+            return False
+        if min_voxel is not None and node.size <= (min_voxel + eps):
+            return False
+        if node.size * 0.5 <= eps:
+            return False
+        return True
+
+    while heap and (len(leaves) + len(heap)) < desired:
+        _, _, node = heapq.heappop(heap)
+        if not _can_split(node):
+            leaves.append(node)
+            continue
+
+        half = node.size * 0.5
+        pts = xyz32[node.indices]
+        centre = node.min_corner + half
+        codes = (
+            ((pts[:, 0] >= centre[0]).astype(np.int8) << 2)
+            | ((pts[:, 1] >= centre[1]).astype(np.int8) << 1)
+            | (pts[:, 2] >= centre[2]).astype(np.int8)
+        )
+
+        child_nodes: List[_Node] = []
+        for child_code in range(8):
+            mask = codes == child_code
+            if not np.any(mask):
+                continue
+            child_idx = node.indices[mask]
+            child_count = int(child_idx.size)
+            child_min = node.min_corner + np.array(
+                [
+                    half if (child_code & 4) else 0.0,
+                    half if (child_code & 2) else 0.0,
+                    half if (child_code & 1) else 0.0,
+                ],
+                dtype=np.float32,
+            )
+            child_nodes.append(
+                _Node(
+                    indices=child_idx,
+                    min_corner=child_min,
+                    size=half,
+                    depth=node.depth + 1,
+                    count=child_count,
+                    weight=_weight(child_count),
+                )
+            )
+
+        if not child_nodes:
+            leaves.append(node)
+            continue
+
+        for child in child_nodes:
+            if child.count <= 1:
+                leaves.append(child)
+            else:
+                heapq.heappush(heap, (-child.weight, next(seq), child))
+
+        if len(leaves) + len(heap) >= desired:
+            break
+
+    leaves.extend(item[2] for item in heap)
+    leaves = [leaf for leaf in leaves if leaf.count > 0]
+    if not leaves:
+        idx = np.arange(0, min(n, desired), dtype=np.int64)
+        return xyz32[idx], rgb8[idx]
+
+    leaves.sort(
+        key=lambda node: (node.weight, node.count, -int(node.indices[0])),
+        reverse=True,
+    )
+    keep_count = min(len(leaves), desired)
+    selected = leaves[:keep_count]
+
+    def _pick_index(node: _Node) -> int:
+        idx = node.indices
+        if idx.size == 0:
+            return -1
+        if representative == "first" or idx.size == 1:
+            return int(idx[0])
+        pts = xyz32[idx]
+        if representative == "center":
+            target_point = node.min_corner + node.size * 0.5
+        elif representative == "centroid":
+            target_point = pts.mean(axis=0)
+        else:
+            raise ValueError(
+                f"Unknown representative strategy: {representative}"
+            )
+        diff = pts - target_point
+        dist2 = (diff * diff).sum(axis=1)
+        return int(idx[int(np.argmin(dist2))])
+
+    chosen: List[int] = []
+    seen = set()
+    for node in selected:
+        pick = _pick_index(node)
+        if pick >= 0 and pick not in seen:
+            chosen.append(pick)
+            seen.add(pick)
+
+    if not chosen:
+        idx = np.arange(0, min(n, desired), dtype=np.int64)
+        return xyz32[idx], rgb8[idx]
+
+    chosen_idx = np.asarray(chosen, dtype=np.int64)
+    return xyz32[chosen_idx], rgb8[chosen_idx]
+
+
 # ------------------------------ CLI ------------------------------
 
 
@@ -577,6 +786,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=float,
         default=None,
         help="Fixed voxel size in meters.",
+    )
+    ap.add_argument(
+        "--adaptive",
+        action="store_true",
+        help=(
+            "Enable adaptive voxel sampling (octree). "
+            "Requires target points/percent; keeps more points in dense areas. "
+            "When --voxel-size is set it becomes the minimum leaf size."
+        ),
+    )
+    ap.add_argument(
+        "--adaptive-weight",
+        type=float,
+        default=1.0,
+        metavar="POWER",
+        help=(
+            "Weight exponent for adaptive sampling. Values >1 favour splitting "
+            "dense voxels more aggressively, 0 treats all voxels equally."
+        ),
     )
     ap.add_argument(
         "-a",
@@ -653,6 +881,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if (
             (args.voxel_size is not None and args.voxel_size > 0)
             or (target_points is not None and target_points > 0)
+            or args.adaptive
             or args.append_ply
         ):
             print("[warn] --out missing; skipping downsample/append options.")
@@ -661,7 +890,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     # 2) Downsample
-    if args.voxel_size is not None and args.voxel_size > 0:
+    adaptive_min_voxel = (
+        args.voxel_size if args.voxel_size is not None and args.voxel_size > 0 else None
+    )
+    if args.adaptive:
+        adaptive_target = (
+            target_points if target_points is not None and target_points > 0 else stats.count
+        )
+        if adaptive_target == stats.count:
+            print(
+                "[adaptive] target not specified; defaulting to input count "
+                "(no reduction)."
+            )
+        print(
+            "[adaptive] weight={:.3g} min_voxel={}".format(
+                args.adaptive_weight,
+                f"{adaptive_min_voxel:.6g}" if adaptive_min_voxel else "auto",
+            )
+        )
+        xyz, rgb = adaptive_voxel_downsample(
+            xyz,
+            rgb,
+            adaptive_target,
+            weight_power=args.adaptive_weight,
+            stats=stats,
+            min_voxel_size=adaptive_min_voxel,
+            representative=args.keep_strategy,
+        )
+        print(
+            f"[adaptive] target~{adaptive_target:,} -> {xyz.shape[0]:,} points"
+        )
+    elif args.voxel_size is not None and args.voxel_size > 0:
         print(f"[downsample] fixed voxel-size={args.voxel_size:.6g}")
         xyz, rgb = voxel_downsample_by_size(
             xyz, rgb, args.voxel_size, representative=args.keep_strategy
