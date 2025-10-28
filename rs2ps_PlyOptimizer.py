@@ -534,7 +534,7 @@ def adaptive_voxel_downsample(
     xyz: np.ndarray,
     rgb: np.ndarray,
     target_points: Optional[int],
-    weight_power: float = 0.5,
+    weight_power: float = 1.0,
     stats: Optional[PointCloudStats] = None,
     min_voxel_size: Optional[float] = None,
     representative: str = "centroid",
@@ -816,7 +816,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--adaptive-weight",
         type=float,
-        default=0.5,
+        default=1.0,
         metavar="POWER",
         help=(
             "Weight exponent for adaptive sampling. Values >1 favour splitting "
