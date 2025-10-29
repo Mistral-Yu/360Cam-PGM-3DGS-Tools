@@ -143,6 +143,7 @@ FIELD_HELP_TEXT = {
     "ffthreads": "Internal ffmpeg threads per process. Set greater than 1 for multi-threaded encoding.",
     "fps": "Frame extraction rate (fps) required when processing a video source.",
     "keep_rec709": "Keep Rec.709 transfer characteristics for video inputs instead of converting to sRGB.",
+    "jpeg_quality_95": "When checked, save JPG outputs with approximately 95% quality rather than maximum quality.",
 }
 
 
@@ -410,10 +411,10 @@ class PreviewApp:
         {"name": "hfov", "label": "HFOV", "type": "float_optional", "width": 10},
         {"name": "sensor_mm", "label": "Sensor", "type": "str", "width": 14},
         {"name": "count", "label": "Count", "type": "int", "width": 8},
-        {"name": "ext", "label": "Ext", "type": "str", "width": 8},
+        {"name": "ext", "label": "Ext", "type": "choice", "choices": ["jpg", "tif", "png"], "width": 8},
         {
-            "name": "add_topdown",
-            "label": "Add top/bottom",
+            "name": "jpeg_quality_95",
+            "label": "JPEG 95%",
             "type": "bool",
             "align_with": "ext",
             "col_shift": 2,
@@ -426,8 +427,16 @@ class PreviewApp:
             "video_only": True,
             "align_with": "count",
             "col_shift": 0,
-            "row_shift": 1,
+            "row_shift": 2,
             "required_if_video": True,
+        },
+        {
+            "name": "add_topdown",
+            "label": "Add top/bottom",
+            "type": "bool",
+            "align_with": "count",
+            "col_shift": 0,
+            "row_shift": 1,
         },
         {
             "name": "keep_rec709",
@@ -436,7 +445,7 @@ class PreviewApp:
             "video_only": True,
             "align_with": "ext",
             "col_shift": 0,
-            "row_shift": 1,
+            "row_shift": 2,
         },
         {
             "name": "show_seam_overlay",
@@ -444,7 +453,7 @@ class PreviewApp:
             "type": "bool",
             "align_with": "ext",
             "col_shift": 0,
-            "row_shift": 2,
+            "row_shift": 1,
         },
     ]
 
@@ -458,6 +467,8 @@ class PreviewApp:
             setattr(self.current_args, "input_is_video", False)
         if not hasattr(self.current_args, "video_bit_depth"):
             setattr(self.current_args, "video_bit_depth", 8)
+        if not hasattr(self.current_args, "jpeg_quality_95"):
+            setattr(self.current_args, "jpeg_quality_95", False)
         if not hasattr(self.current_args, "show_seam_overlay"):
             setattr(self.current_args, "show_seam_overlay", False)
         self.defaults = clone_namespace(self.current_args)
@@ -533,6 +544,7 @@ class PreviewApp:
         self.selector_log: Optional[tk.Text] = None
         self.selector_run_button: Optional[tk.Button] = None
         self.selector_show_score_button: Optional[tk.Button] = None
+        self.selector_count_var: Optional[tk.StringVar] = None
 
         self.human_vars: Dict[str, tk.Variable] = {}
         self.human_log: Optional[tk.Text] = None
@@ -543,7 +555,7 @@ class PreviewApp:
         self.ply_run_button: Optional[tk.Button] = None
         self.ply_append_text: Optional[tk.Text] = None
         self.ply_adaptive_weight_entry: Optional[tk.Entry] = None
-        self.ply_keep_menu: Optional[tk.OptionMenu] = None
+        self.ply_keep_menu: Optional[ttk.Combobox] = None
 
         self.video_stop_button: Optional[tk.Button] = None
         self.selector_stop_button: Optional[tk.Button] = None
@@ -876,17 +888,45 @@ class PreviewApp:
         esm_frame = tk.Frame(params)
         esm_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
         tk.Label(esm_frame, text="Extension").pack(side=tk.LEFT, padx=(0, 4))
-        tk.OptionMenu(esm_frame, self.selector_vars["ext"], "all", "tif", "jpg", "png").pack(side=tk.LEFT, padx=(0, 12))
+        selector_ext_combo = ttk.Combobox(
+            esm_frame,
+            textvariable=self.selector_vars["ext"],
+            values=("all", "tif", "jpg", "png"),
+            state="readonly",
+            width=8,
+        )
+        selector_ext_combo.pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(esm_frame, text="Sort").pack(side=tk.LEFT, padx=(0, 4))
-        tk.OptionMenu(esm_frame, self.selector_vars["sort"], "lastnum", "firstnum", "name", "mtime").pack(side=tk.LEFT, padx=(0, 12))
+        selector_sort_combo = ttk.Combobox(
+            esm_frame,
+            textvariable=self.selector_vars["sort"],
+            values=("lastnum", "firstnum", "name", "mtime"),
+            state="readonly",
+            width=10,
+        )
+        selector_sort_combo.pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(esm_frame, text="Metric").pack(side=tk.LEFT, padx=(0, 4))
-        tk.OptionMenu(esm_frame, self.selector_vars["metric"], "hybrid", "lapvar", "tenengrad", "fft").pack(side=tk.LEFT, padx=(0, 4))
+        selector_metric_combo = ttk.Combobox(
+            esm_frame,
+            textvariable=self.selector_vars["metric"],
+            values=("hybrid", "lapvar", "tenengrad", "fft"),
+            state="readonly",
+            width=10,
+        )
+        selector_metric_combo.pack(side=tk.LEFT, padx=(0, 4))
 
         row += 1
         csv_frame = tk.Frame(params)
         csv_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
         tk.Label(csv_frame, text="CSV mode").pack(side=tk.LEFT, padx=(0, 4))
-        tk.OptionMenu(csv_frame, self.selector_vars["csv_mode"], "none", "write", "apply", "reselect").pack(side=tk.LEFT, padx=(0, 12))
+        selector_csv_combo = ttk.Combobox(
+            csv_frame,
+            textvariable=self.selector_vars["csv_mode"],
+            values=("none", "write", "apply", "reselect"),
+            state="readonly",
+            width=10,
+        )
+        selector_csv_combo.pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(csv_frame, text="Path").pack(side=tk.LEFT, padx=(0, 4))
         self.selector_csv_entry = tk.Entry(csv_frame, textvariable=self.selector_vars["csv_path"], width=40)
         self.selector_csv_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
@@ -932,9 +972,6 @@ class PreviewApp:
         self.selector_count_var = tk.StringVar(value="20")
         count_entry = tk.Entry(actions, textvariable=self.selector_count_var, width=6)
         count_entry.pack(side=tk.LEFT, padx=(4, 0), pady=4)
-        count_entry.insert(0, "")
-        if not self.selector_count_var.get():
-            self.selector_count_var.set("20")
         self.selector_show_score_button = tk.Button(
             actions,
             text="Fetch Sharpness Scores From CSV",
@@ -1120,13 +1157,12 @@ class PreviewApp:
 
         row += 1
         tk.Label(params, text="Keep strategy").grid(row=row, column=0, sticky="e", padx=4, pady=4)
-        self.ply_keep_menu = tk.OptionMenu(
+        self.ply_keep_menu = ttk.Combobox(
             params,
-            self.ply_vars["keep_strategy"],
-            "centroid",
-            "center",
-            "first",
-            "random",
+            textvariable=self.ply_vars["keep_strategy"],
+            values=("centroid", "center", "first", "random"),
+            state="readonly",
+            width=10,
         )
         self.ply_keep_menu.grid(row=row, column=1, sticky="w", padx=4, pady=4)
 
@@ -1270,15 +1306,23 @@ class PreviewApp:
                 label = tk.Label(controls, text=definition["label"])
                 label.grid(row=row, column=col, sticky="e", padx=4, pady=2)
                 self._bind_help(label, name)
+                combo = ttk.Combobox(
+                    controls,
+                    textvariable=var,
+                    values=definition["choices"],
+                    state="readonly",
+                    width=definition.get("width", 12),
+                )
                 if name == "preset":
-                    option = tk.OptionMenu(controls, var, *definition["choices"], command=self.on_preset_changed)
-                else:
-                    option = tk.OptionMenu(controls, var, *definition["choices"])
-                option.grid(row=row, column=col + 1, sticky="we", padx=4, pady=2)
-                option.configure(width=max(definition.get("width", 12), 16))
-                self._bind_help(option, name)
+                    combo.bind("<<ComboboxSelected>>", lambda _event, v=var: self.on_preset_changed(v.get()))
+                elif name == "ext":
+                    combo.bind("<<ComboboxSelected>>", lambda _event, v=var: self.on_ext_changed(v.get()))
+                combo.grid(row=row, column=col + 1, sticky="we", padx=4, pady=2)
+                self._bind_help(combo, name)
                 self.field_vars[name] = var
-                self.field_widgets[name] = option
+                self.field_widgets[name] = combo
+                if video_only and not self.source_is_video:
+                    combo.configure(state="disabled")
                 continue
             label = tk.Label(controls, text=definition["label"])
             label.grid(row=row, column=col, sticky="e", padx=4, pady=2)
@@ -1372,6 +1416,7 @@ class PreviewApp:
         self.help_text.insert("1.0", HELP_TEXT)
         self.help_text.bind("<Key>", self._block_text_edit)
         self.help_text.bind("<Button-1>", lambda event: self.help_text.focus_set())
+        self._update_jpeg_quality_state()
         self._sync_panel_heights()
 
     def _set_text_widget(self, widget: Optional[tk.Text], text: str) -> None:
@@ -1760,6 +1805,12 @@ class PreviewApp:
                 entry.configure(state=state)
             except tk.TclError:
                 pass
+        menu = self.ply_keep_menu
+        if menu is not None:
+            try:
+                menu.configure(state="readonly" if active else "disabled")
+            except tk.TclError:
+                pass
 
     def _run_ply_optimizer(self) -> None:
         if not self.ply_vars:
@@ -1978,7 +2029,11 @@ class PreviewApp:
 
         sorted_entries = sorted(selected_entries, key=lambda item: item[0])
         try:
-            limit_text = self.selector_count_var.get().strip()
+            if self.selector_count_var is not None:
+                limit_source = self.selector_count_var.get()
+            else:
+                limit_source = ""
+            limit_text = str(limit_source).strip()
             max_lines = int(limit_text) if limit_text else 20
         except (TypeError, ValueError):
             max_lines = 20
@@ -2050,10 +2105,13 @@ class PreviewApp:
             var.set(path)
 
     def _set_video_mode_controls(self, enabled: bool) -> None:
-        state = "normal" if enabled else "disabled"
         for name in self.video_only_fields:
             widget = self.field_widgets.get(name)
             if widget is not None:
+                target_state = "normal"
+                if isinstance(widget, ttk.Combobox):
+                    target_state = "readonly"
+                state = target_state if enabled else "disabled"
                 try:
                     widget.configure(state=state)
                 except tk.TclError:
@@ -2243,6 +2301,7 @@ class PreviewApp:
             self.output_path_var.set(str(default_out) if default_out is not None else "")
         else:
             self.output_path_var.set("")
+        self._update_jpeg_quality_state()
 
 
     def _bind_help(self, widget: tk.Widget, key: str) -> None:
@@ -2252,6 +2311,21 @@ class PreviewApp:
         tooltip = ToolTip(widget, text)
         self._tooltips.append(tooltip)
 
+    def _update_jpeg_quality_state(self) -> None:
+        checkbox = self.field_widgets.get("jpeg_quality_95")
+        ext_var = self.field_vars.get("ext")
+        quality_var = self.field_vars.get("jpeg_quality_95")
+        if checkbox is None or ext_var is None or quality_var is None:
+            return
+        ext_value = ext_var.get().strip().lower()
+        enabled = ext_value == "jpg"
+        state = "normal" if enabled else "disabled"
+        try:
+            checkbox.configure(state=state)
+        except tk.TclError:
+            return
+        if not enabled:
+            quality_var.set(False)
 
     def collect_updated_args(self) -> Optional[argparse.Namespace]:
         updated = clone_namespace(self.current_args)
@@ -2382,11 +2456,17 @@ class PreviewApp:
 
         return updated
 
+    def on_ext_changed(self, selection: str) -> None:
+        var = self.field_vars.get("ext")
+        if var is not None:
+            var.set(selection)
+        self._update_jpeg_quality_state()
+
     def _apply_preset_defaults(self, preset_value: str) -> None:
         preset_defaults: Dict[str, Dict[str, Any]] = {
             "fisheyelike": {"count": 10, "focal_mm": 17.0},
             "2views": {"size": 3600, "focal_mm": 6.0},
-            "fisheyeXY": {"count": 8},
+            "fisheyeXY": {"count": 8, "size": 3600, "hfov": 180.0},
         }
         values = preset_defaults.get(preset_value)
         if not values:
@@ -2735,6 +2815,8 @@ class PreviewApp:
 
         if getattr(self.current_args, "add_topdown", False):
             parts.append("--add-topdown")
+        if getattr(self.current_args, "jpeg_quality_95", False):
+            parts.append("--jpeg-quality-95")
         if self.source_is_video and getattr(self.current_args, "keep_rec709", False):
             parts.append("--keep-rec709")
         if getattr(self.current_args, "dry_run", False):
@@ -2745,6 +2827,7 @@ class PreviewApp:
     def refresh_overlays(self, initial: bool = False) -> None:
         if not self.in_dir or not self.files:
             return
+        cutter.stop_event.clear()
         source_is_video = bool(self.source_is_video)
         if source_is_video:
             video_path = self.files[0]
@@ -2980,6 +3063,7 @@ class PreviewApp:
             self.execute_button.configure(state="normal")
         if self.preview_stop_button is not None:
             self.preview_stop_button.configure(state="disabled")
+        cutter.stop_event.clear()
         summary = f"[EXEC] Done: succeeded={ok}, failed={fail}, total={total}"
         self.append_log_line(summary)
         for line in errors:
