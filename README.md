@@ -69,7 +69,7 @@ The **rs2ps_360GUI** provides a launch pad for each CLI stage, letting you previ
 - **rs2ps_PlyOptimizer** — Prepares RealityScan PLY point clouds (exported after the **Reconstruction → Colorize → PLY** sequence) for PostShot/3DGS by reporting statistics, voxel-downsampling to a target point count, optionally merging additional clouds, and exporting binary little-endian files. In addition to the voxel strategy, an adaptive octree-based downsampler is available for evaluation when you need detail that follows geometry more closely before pushing splats into 3DGS.
   - Example: `python rs2ps_PlyOptimizer.py --input realityscan_output.ply --output optimized.ply --target-points 100000`
 - **rs2ps_HumanMaskTool** — Batch-detects people with Mask R-CNN to generate binary mattes, RGBA cut-outs, or inpainted plates before photogrammetry. Supports optional CUDA inference and shadow expansion to keep reflected silhouettes intact.
-  - Example: `python rs2ps_HumanMaskTool.py --in frames/360_selected --mode alpha --include_shadow`
+  - Example: `python rs2ps_HumanMaskTool.py --in frames/360_selected --mode mask --include_shadow`
 
 Feed the optimised PLY and RealityScan camera CSV into PostShot to finish the 3DGS pipeline.
 
