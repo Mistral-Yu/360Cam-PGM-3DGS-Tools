@@ -23,10 +23,10 @@ A consolidated toolkit for turning 360° video captures into RealityScan-friendl
    ```
 2. **Create and activate a Conda environment**
    ```bash
-   conda create -n rs2ps python=3.10
+   conda create -n rs2ps python=3.7
    conda activate rs2ps
    ```
-   > **Tip:** pick any supported Python version (3.7+) that matches your GPU drivers/CUDA toolkits. The example above pins **Python 3.10**.
+   > **Tip:** pick any supported Python version (3.7+) that matches your GPU drivers/CUDA toolkits.
 3. **Install Python dependencies**
    ```bash
    pip install -r requirements.txt
