@@ -1037,8 +1037,8 @@ def main():
         "-n",
         "--segment_size",
         type=positive_int,
-        default=None,
-        help="Number of consecutive frames considered per segment (required unless --apply_csv).",
+        default=10,
+        help="Number of consecutive frames considered per segment (default: 10, required only with --apply_csv).",
     )
     ap.add_argument(
         "-d",
@@ -1102,8 +1102,16 @@ def main():
     )
     ap.add_argument(
         "--augment_gaps",
+        dest="augment_gaps",
         action="store_true",
-        help="Enable gap backfill augmentation step after initial selection.",
+        default=True,
+        help="Enable gap backfill augmentation step after initial selection (default: enabled).",
+    )
+    ap.add_argument(
+        "--no_augment_gaps",
+        dest="augment_gaps",
+        action="store_false",
+        help="Disable the gap backfill augmentation step.",
     )
     ap.add_argument(
         "--augment_lowlight",
@@ -1129,10 +1137,6 @@ def main():
     if args.reselect_csv:
         args.dry_run = True
 
-    if not args.apply_csv and args.segment_size is None:
-        print("--segment_size is required unless --apply_csv is provided.")
-        sys.exit(1)
-
     try:
         signal.signal(signal.SIGINT, _handle_sigint)
     except (ValueError, AttributeError):
@@ -1146,10 +1150,7 @@ def main():
     if not (0.0 < crop_ratio <= 1.0):
         raise SystemExit("--crop_ratio must be in (0, 1]")
     if args.min_spacing_frames is None:
-        if args.segment_size is None:
-            base_spacing_frames = 0
-        else:
-            base_spacing_frames = max(0, round_half_up(args.segment_size * MIN_DIFF_FRAMES_RATIO))
+        base_spacing_frames = max(0, round_half_up(args.segment_size * MIN_DIFF_FRAMES_RATIO))
     else:
         base_spacing_frames = max(0, args.min_spacing_frames)
 
