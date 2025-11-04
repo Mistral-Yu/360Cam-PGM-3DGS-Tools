@@ -135,13 +135,13 @@ SORTERS = {
     "mtime": sort_key_mtime,
 }
 
-def positive_int(value):
+def segment_size_arg(value):
     try:
         ivalue = int(value)
     except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError("--segment_size must be a positive integer")
-    if ivalue <= 0:
-        raise argparse.ArgumentTypeError("--segment_size must be a positive integer")
+        raise argparse.ArgumentTypeError("--segment_size must be an integer >= 0")
+    if ivalue < 0:
+        raise argparse.ArgumentTypeError("--segment_size must be an integer >= 0")
     return ivalue
 
 
@@ -163,6 +163,16 @@ def ratio_in_0_1(value):
         raise argparse.ArgumentTypeError("value must be a float in (0, 1]")
     if not (0.0 < fvalue <= 1.0):
         raise argparse.ArgumentTypeError("value must be a float in (0, 1]")
+    return fvalue
+
+
+def percent_0_100(value):
+    try:
+        fvalue = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("value must be a percentage in [0, 100]")
+    if not (0.0 <= fvalue <= 100.0):
+        raise argparse.ArgumentTypeError("value must be a percentage in [0, 100]")
     return fvalue
 
 HYBRID_LAPVAR_WEIGHT = 0.6
@@ -303,6 +313,28 @@ def downscale_gray(gray, max_long):
     nh = max(1, int(h * scale))
     return cv2.resize(gray, (nw, nh), interpolation=cv2.INTER_AREA)
 
+
+def downscale_gray_and_mask(gray, mask, max_long):
+    """
+    Downscale grayscale image and accompanying binary mask together.
+    """
+    if not max_long or max_long <= 0:
+        return gray, mask
+    h, w = gray.shape[:2]
+    long_side = max(h, w)
+    if long_side <= max_long:
+        return gray, mask
+    scale = float(max_long) / float(long_side)
+    nw = max(1, int(w * scale))
+    nh = max(1, int(h * scale))
+    resized_gray = cv2.resize(gray, (nw, nh), interpolation=cv2.INTER_AREA)
+    if mask is None:
+        return resized_gray, None
+    mask_uint8 = (mask > 0).astype(np.uint8)
+    resized_mask = cv2.resize(mask_uint8, (nw, nh), interpolation=cv2.INTER_NEAREST)
+    resized_mask = (resized_mask > 0).astype(np.uint8)
+    return resized_gray, resized_mask
+
 def crop_by_ratio_gray(gray, crop_ratio):
 
     """
@@ -327,20 +359,48 @@ def crop_by_ratio_gray(gray, crop_ratio):
     y1 = min(h, y0 + nh)
     return gray[y0:y1, :]
 
-def lapvar32(gray):
-    lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
-    # var = (std)^2
-    _, std = cv2.meanStdDev(lap)
-    return float(std[0,0] * std[0,0])
 
-def tenengrad32(gray):
+def crop_by_ratio_gray_and_mask(gray, mask, crop_ratio):
+    """
+    Crop grayscale image (and mask if provided) using the same central band.
+    """
+    if crop_ratio is None or abs(crop_ratio - 1.0) < 1e-6:
+        return gray, mask
+    if not (0.0 < crop_ratio <= 1.0):
+        raise ValueError("crop_ratio must be in (0, 1]")
+    h, w = gray.shape[:2]
+    nh = max(1, int(h * crop_ratio))
+    y0 = max(0, (h - nh) // 2)
+    y1 = min(h, y0 + nh)
+    cropped_gray = gray[y0:y1, :]
+    if mask is None:
+        return cropped_gray, None
+    cropped_mask = mask[y0:y1, :]
+    return cropped_gray, cropped_mask
+
+def lapvar32(gray, mask=None):
+    lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
+    if mask is not None and np.any(mask):
+        mask_u8 = (mask > 0).astype(np.uint8) * 255
+        if np.count_nonzero(mask_u8):
+            _, std = cv2.meanStdDev(lap, mask=mask_u8)
+            return float(std[0, 0] * std[0, 0])
+    _, std = cv2.meanStdDev(lap)
+    return float(std[0, 0] * std[0, 0])
+
+
+def tenengrad32(gray, mask=None):
     gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     mag2 = cv2.multiply(gx, gx) + cv2.multiply(gy, gy)
-    m = cv2.mean(mag2)[0]
-    return float(m)
+    if mask is not None and np.any(mask):
+        mask_u8 = (mask > 0).astype(np.uint8) * 255
+        if np.count_nonzero(mask_u8):
+            return float(cv2.mean(mag2, mask=mask_u8)[0])
+    return float(cv2.mean(mag2)[0])
 
-def fft_energy_fast(gray):
+
+def fft_energy_fast(gray, mask=None):
     """
     Estimate sharpness from the mean magnitude of high-frequency FFT components.
     
@@ -350,7 +410,24 @@ def fft_energy_fast(gray):
     Returns:
         float: Mean magnitude of the clipped FFT spectrum.
     """
-    g = downscale_gray(gray, 512)
+    g_mask = None
+    if mask is not None:
+        mask_uint8 = (mask > 0).astype(np.uint8)
+    else:
+        mask_uint8 = None
+
+    if max(gray.shape) > 512:
+        scale = float(512) / float(max(gray.shape))
+        nw = max(1, int(gray.shape[1] * scale))
+        nh = max(1, int(gray.shape[0] * scale))
+        g = cv2.resize(gray, (nw, nh), interpolation=cv2.INTER_AREA)
+        if mask_uint8 is not None:
+            g_mask = cv2.resize(mask_uint8, (nw, nh), interpolation=cv2.INTER_NEAREST)
+            g_mask = (g_mask > 0).astype(np.uint8)
+    else:
+        g = gray
+        g_mask = mask_uint8 if mask_uint8 is not None else None
+
     f = np.fft.fft2(g.astype(np.float32))
     fshift = np.fft.fftshift(f)
     h, w = g.shape
@@ -361,7 +438,13 @@ def fft_energy_fast(gray):
     dist2 = (yy - cy)**2 + (xx - cx)**2
     mask = (dist2 >= r*r).astype(np.float32)
     hf = fshift * mask
-    return float(np.mean(np.abs(hf)))
+    hf_abs = np.abs(hf)
+    if g_mask is not None and np.any(g_mask):
+        valid = (g_mask > 0).astype(np.float32)
+        total = np.sum(valid)
+        if total > 0:
+            return float(np.sum(hf_abs * valid) / total)
+    return float(np.mean(hf_abs))
 
 def score_one_file(
         fp,
@@ -369,16 +452,59 @@ def score_one_file(
         crop_ratio,
         max_long,
         augment_motion,
+        ignore_highlights,
 ):
     """Compute the sharpness score and ancillary metrics for one frame."""
     try:
-        gray = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
-        if gray is None:
+        image = cv2.imread(fp, cv2.IMREAD_UNCHANGED)
+        if image is None:
             return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
-        gray = downscale_gray(gray, max_long)
-        gray = crop_by_ratio_gray(gray, crop_ratio)
+        if image.ndim == 3:
+            try:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            except cv2.error:
+                image = cv2.cvtColor(image[..., :3], cv2.COLOR_BGR2GRAY)
+
+        if image.dtype == np.uint16:
+            gray = image.astype(np.float32) * (255.0 / 65535.0)
+        elif image.dtype == np.uint8:
+            gray = image.astype(np.float32)
+        elif image.dtype in (np.float32, np.float64):
+            max_val = float(np.max(image))
+            if max_val <= 0:
+                max_val = 1.0
+            gray = image.astype(np.float32) * (255.0 / max_val)
+        else:
+            info = np.iinfo(image.dtype) if np.issubdtype(image.dtype, np.integer) else None
+            max_val = float(info.max) if info else float(np.max(image))
+            if max_val <= 0:
+                max_val = 1.0
+            gray = image.astype(np.float32) * (255.0 / max_val)
+
+        gray = np.clip(gray, 0.0, 255.0, out=None)
+
+        valid_mask = None
+        p255 = 0.0
+        if ignore_highlights:
+            highlight_threshold = 0.95 * 255.0
+            highlight_mask = gray >= highlight_threshold
+            if highlight_mask.size:
+                p255 = float(np.mean(highlight_mask))
+            if 0.0 < p255 < 1.0:
+                valid_mask = (~highlight_mask).astype(np.uint8)
+            elif p255 >= 1.0:
+                valid_mask = None
+
+        gray, valid_mask = downscale_gray_and_mask(gray, valid_mask, max_long)
+        gray, valid_mask = crop_by_ratio_gray_and_mask(gray, valid_mask, crop_ratio)
+        gray = gray.astype(np.float32, copy=False)
+        np.clip(gray, 0.0, 255.0, out=gray)
 
         brightness_mean = float(np.mean(gray) / 255.0)
+        if valid_mask is not None and np.any(valid_mask):
+            mask_u8 = (valid_mask > 0).astype(np.uint8) * 255
+            if np.count_nonzero(mask_u8):
+                brightness_mean = float(cv2.mean(gray, mask=mask_u8)[0] / 255.0)
         brightness_weight = 1.0
         lap_feature = None
         ten_feature = None
@@ -386,21 +512,21 @@ def score_one_file(
         motion_factor = 1.0
 
         if metric == "lapvar":
-            lap_score = lapvar32(gray)
+            lap_score = lapvar32(gray, valid_mask)
             sharp = lap_score
             lap_feature = lap_score * lap_score
         elif metric == "tenengrad":
-            ten_score = tenengrad32(gray)
+            ten_score = tenengrad32(gray, valid_mask)
             sharp = ten_score
             ten_feature = ten_score
         elif metric == "fft":
-            fft_score = fft_energy_fast(gray)
+            fft_score = fft_energy_fast(gray, valid_mask)
             sharp = fft_score
             fft_feature = fft_score
         elif metric == "hybrid":
-            lap_score = lapvar32(gray)
-            ten_score = tenengrad32(gray)
-            fft_score = fft_energy_fast(gray)
+            lap_score = lapvar32(gray, valid_mask)
+            ten_score = tenengrad32(gray, valid_mask)
+            fft_score = fft_energy_fast(gray, valid_mask)
             lap_energy = lap_score * lap_score
             lap_feature = lap_energy
             ten_feature = ten_score
@@ -432,7 +558,7 @@ def score_one_file(
         else:
             motion_factor = 1.0
 
-        p0, p255 = 0.0, 0.0
+        p0 = 0.0
 
         return (
             sharp,
@@ -1036,9 +1162,9 @@ def main():
     ap.add_argument(
         "-n",
         "--segment_size",
-        type=positive_int,
+        type=segment_size_arg,
         default=10,
-        help="Number of consecutive frames considered per segment (default: 10, required only with --apply_csv).",
+        help="Number of consecutive frames considered per segment (default: 10). Use 0 or 1 to enable per-frame sharpness mode.",
     )
     ap.add_argument(
         "-d",
@@ -1124,9 +1250,28 @@ def main():
         help="Enable motion-driven augmentation that adds frames in high-motion segments.",
     )
     ap.add_argument(
+        "--blur-percent",
+        type=percent_0_100,
+        default=1.0,
+        help="Percentage of lowest scores to mark as blur when segment size is 0 or 1 (default: 1.0).",
+    )
+    ap.add_argument(
         "--prune_motion",
         action="store_true",
         help="Remove the lowest-motion frames based on optical flow (bottom 20%%).",
+    )
+    ap.add_argument(
+        "--ignore-highlights",
+        dest="ignore_highlights",
+        action="store_true",
+        default=True,
+        help="Ignore pixels above 95% brightness when computing sharpness (default: enabled).",
+    )
+    ap.add_argument(
+        "--no-ignore-highlights",
+        dest="ignore_highlights",
+        action="store_false",
+        help="Include clipped highlights when computing sharpness.",
     )
 
     args = ap.parse_args()
@@ -1287,7 +1432,8 @@ def main():
                 ex.submit(
                     score_one_file, files[i],
                     args.metric, crop_ratio,
-                    MAX_LONG, args.augment_motion
+                    MAX_LONG, args.augment_motion,
+                    args.ignore_highlights,
                 ): i for i in range(n)
             }
             completed = 0
@@ -1398,60 +1544,90 @@ def main():
             ]
         )
     if not args.apply_csv and not cancelled:
-        # Grouping and initial selection
-        group_infos = []
-        for grp_start in range(0, total, args.segment_size):
-            grp_end = min(total, grp_start + args.segment_size)
-            valid_idx = []
-            group_sum = 0.0
-            for i in range(grp_start, grp_end):
-                s = scores[i]
-                if s is None:
-                    continue
-                valid_idx.append(i)
-                if s > 0.0:
-                    brightness_factor = brightness_arr[i] * (max(brightness_mean_arr[i], 1e-6) ** GROUP_BRIGHTNESS_POWER)
-                    group_sum += s * brightness_factor
-            for idx_in_group in range(grp_start, grp_end):
-                group_score_arr[idx_in_group] = group_sum
-            group_infos.append(
-                {
-                    "start": grp_start,
-                    "end": grp_end,
-                    "valid_idx": valid_idx,
-                    "group_sum": group_sum,
-                }
-            )
-
-        initial_selected = set()
-        for info in group_infos:
-            grp_start = info["start"]
-            grp_end = info["end"]
-            group_range = range(grp_start, grp_end)
+        if args.segment_size <= 1:
+            blur_percent = getattr(args, "blur_percent", 1.0)
+            blur_percent = max(0.0, min(float(blur_percent), 100.0))
+            blur_fraction = blur_percent / 100.0
             existing_indices = [
-                i for i in group_range if os.path.isfile(files[i])
+                i for i in range(total) if os.path.isfile(files[i])
             ]
             valid_indices = [
-                i for i in existing_indices if scores[i] is not None
+                i
+                for i in existing_indices
+                if scores[i] is not None and math.isfinite(scores[i])
             ]
-
-            chosen_idx = None
             if valid_indices:
-                chosen_idx = max(
+                sorted_valid = sorted(
                     valid_indices,
-                    key=lambda idx: (scores[idx], -idx),
+                    key=lambda idx: (scores[idx], idx),
                 )
-            elif existing_indices:
-                chosen_idx = existing_indices[0]
+                blur_count = 0
+                if blur_fraction > 0.0:
+                    blur_count = round_half_up(len(sorted_valid) * blur_fraction)
+                blur_count = max(0, min(len(sorted_valid), blur_count))
+                final_selected = set(sorted_valid[blur_count:])
+            else:
+                final_selected = set()
+            initial_selected = set(final_selected)
+            group_infos = []
+            args.augment_gaps = False
+            args.augment_lowlight = False
+            args.augment_motion = False
+        else:
+            # Grouping and initial selection
+            group_infos = []
+            for grp_start in range(0, total, args.segment_size):
+                grp_end = min(total, grp_start + args.segment_size)
+                valid_idx = []
+                group_sum = 0.0
+                for i in range(grp_start, grp_end):
+                    s = scores[i]
+                    if s is None:
+                        continue
+                    valid_idx.append(i)
+                    if s > 0.0:
+                        brightness_factor = brightness_arr[i] * (max(brightness_mean_arr[i], 1e-6) ** GROUP_BRIGHTNESS_POWER)
+                        group_sum += s * brightness_factor
+                for idx_in_group in range(grp_start, grp_end):
+                    group_score_arr[idx_in_group] = group_sum
+                group_infos.append(
+                    {
+                        "start": grp_start,
+                        "end": grp_end,
+                        "valid_idx": valid_idx,
+                        "group_sum": group_sum,
+                    }
+                )
 
-            if chosen_idx is not None:
-                initial_selected.add(chosen_idx)
+            initial_selected = set()
+            for info in group_infos:
+                grp_start = info["start"]
+                grp_end = info["end"]
+                group_range = range(grp_start, grp_end)
+                existing_indices = [
+                    i for i in group_range if os.path.isfile(files[i])
+                ]
+                valid_indices = [
+                    i for i in existing_indices if scores[i] is not None
+                ]
 
-        existing_indices = [
-            i for i in range(total) if os.path.isfile(files[i])
-        ]
-        initial_selected &= set(existing_indices)
-        final_selected = set(initial_selected)
+                chosen_idx = None
+                if valid_indices:
+                    chosen_idx = max(
+                        valid_indices,
+                        key=lambda idx: (scores[idx], -idx),
+                    )
+                elif existing_indices:
+                    chosen_idx = existing_indices[0]
+
+                if chosen_idx is not None:
+                    initial_selected.add(chosen_idx)
+
+            existing_indices = [
+                i for i in range(total) if os.path.isfile(files[i])
+            ]
+            initial_selected &= set(existing_indices)
+            final_selected = set(initial_selected)
 
     if (
         args.prune_motion
