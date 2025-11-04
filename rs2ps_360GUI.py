@@ -8,6 +8,7 @@ import copy
 import itertools
 import math
 import pathlib
+import os
 from collections import defaultdict
 from pathlib import Path
 import re
@@ -570,6 +571,15 @@ class PreviewApp:
         self.ply_append_text: Optional[tk.Text] = None
         self.ply_adaptive_weight_entry: Optional[tk.Entry] = None
         self.ply_keep_menu: Optional[ttk.Combobox] = None
+        self.ply_target_mode_var = tk.StringVar(value="Target points")
+        self._ply_target_value_entry: Optional[tk.Entry] = None
+        self._ply_target_value_label: Optional[tk.Label] = None
+        self._ply_target_var_map: Dict[str, tk.StringVar] = {}
+        self._ply_mode_key_map: Dict[str, str] = {
+            "Target points": "points",
+            "Target percent": "percent",
+            "Voxel size": "voxel",
+        }
 
         self.video_stop_button: Optional[tk.Button] = None
         self.selector_stop_button: Optional[tk.Button] = None
@@ -1257,6 +1267,7 @@ class PreviewApp:
             "augment_gap": tk.BooleanVar(value=True),
             "augment_lowlight": tk.BooleanVar(value=False),
             "augment_motion": tk.BooleanVar(value=False),
+            "ignore_highlights": tk.BooleanVar(value=True),
         }
 
         self.selector_vars["csv_mode"].trace_add("write", self._on_selector_csv_mode_changed)
@@ -1356,6 +1367,7 @@ class PreviewApp:
         tk.Checkbutton(final_frame, text="Prune motion", variable=self.selector_vars["prune_motion"]).pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(final_frame, text="Crop ratio").pack(side=tk.LEFT, padx=(0, 4))
         tk.Entry(final_frame, textvariable=self.selector_vars["crop_ratio"], width=10).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Checkbutton(final_frame, text="Ignore clipped highlights", variable=self.selector_vars["ignore_highlights"]).pack(side=tk.LEFT, padx=(12, 0))
 
         for col in range(3):
             params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
@@ -1375,7 +1387,7 @@ class PreviewApp:
             command=self._run_frame_selector,
         )
         self.selector_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
-        self.selector_count_var = tk.StringVar(value="5")
+        self.selector_count_var = tk.StringVar(value="1")
         count_entry = tk.Entry(actions, textvariable=self.selector_count_var, width=6)
         count_entry.pack(side=tk.LEFT, padx=(4, 0), pady=4)
         tk.Label(actions, text="%").pack(side=tk.LEFT, padx=(0, 4), pady=4)
@@ -1529,14 +1541,19 @@ class PreviewApp:
         self.ply_vars = {
             "input": tk.StringVar(),
             "output": tk.StringVar(),
-            "target_points": tk.StringVar(),
-            "target_percent": tk.StringVar(),
-            "voxel_size": tk.StringVar(),
+            "target_points": tk.StringVar(value="100000"),
+            "target_percent": tk.StringVar(value="10"),
+            "voxel_size": tk.StringVar(value="1"),
             "adaptive": tk.BooleanVar(value=False),
             "adaptive_weight": tk.StringVar(value="1.0"),
             "keep_strategy": tk.StringVar(value="centroid"),
         }
         self.ply_vars["adaptive"].trace_add("write", self._update_ply_adaptive_state)
+        self._ply_target_var_map = {
+            "points": self.ply_vars["target_points"],
+            "percent": self.ply_vars["target_percent"],
+            "voxel": self.ply_vars["voxel_size"],
+        }
 
         row = 0
         tk.Label(params, text="Input PLY").grid(row=row, column=0, sticky="e", padx=4, pady=4)
@@ -1544,7 +1561,12 @@ class PreviewApp:
         tk.Button(
             params,
             text="Browse...",
-            command=lambda: self._select_file(self.ply_vars["input"], title="Select input PLY", filetypes=[("PLY files", "*.ply"), ("All files", "*.*")]),
+            command=lambda: self._select_file(
+                self.ply_vars["input"],
+                title="Select input PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+                on_select=self._on_ply_input_selected,
+            ),
         ).grid(row=row, column=2, padx=4, pady=4)
 
         row += 1
@@ -1557,14 +1579,30 @@ class PreviewApp:
         ).grid(row=row, column=2, padx=4, pady=4)
 
         row += 1
-        numbers_frame = tk.Frame(params)
-        numbers_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Label(numbers_frame, text="Target points").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(numbers_frame, textvariable=self.ply_vars["target_points"], width=12).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(numbers_frame, text="Target percent").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(numbers_frame, textvariable=self.ply_vars["target_percent"], width=10).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(numbers_frame, text="Voxel size").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(numbers_frame, textvariable=self.ply_vars["voxel_size"], width=10).pack(side=tk.LEFT, padx=(0, 4))
+        target_frame = tk.Frame(params)
+        target_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
+        tk.Label(target_frame, text="Downsample mode").pack(side=tk.LEFT, padx=(0, 4))
+        mode_labels = tuple(self._ply_mode_key_map.keys())
+        mode_combo = ttk.Combobox(
+            target_frame,
+            textvariable=self.ply_target_mode_var,
+            values=mode_labels,
+            state="readonly",
+            width=18,
+        )
+        mode_combo.pack(side=tk.LEFT, padx=(0, 12))
+        mode_combo.bind("<<ComboboxSelected>>", self._on_ply_target_mode_changed)
+        self._ply_target_value_label = tk.Label(target_frame, text="Points")
+        self._ply_target_value_label.pack(side=tk.LEFT, padx=(0, 4))
+        current_mode_key = self._ply_mode_key_map.get(self.ply_target_mode_var.get(), "points")
+        current_var = self._ply_target_var_map.get(current_mode_key, self.ply_vars["target_points"])
+        self._ply_target_value_entry = tk.Entry(
+            target_frame,
+            textvariable=current_var,
+            width=12,
+        )
+        self._ply_target_value_entry.pack(side=tk.LEFT, padx=(0, 4))
+        self._update_ply_target_value_widgets()
 
         row += 1
         adaptive_frame = tk.Frame(params)
@@ -1581,18 +1619,16 @@ class PreviewApp:
             textvariable=self.ply_vars["adaptive_weight"],
             width=8,
         )
-        self.ply_adaptive_weight_entry.pack(side=tk.LEFT, padx=(0, 4))
-
-        row += 1
-        tk.Label(params, text="Keep strategy").grid(row=row, column=0, sticky="e", padx=4, pady=4)
+        self.ply_adaptive_weight_entry.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(adaptive_frame, text="Keep strategy").pack(side=tk.LEFT, padx=(0, 4))
         self.ply_keep_menu = ttk.Combobox(
-            params,
+            adaptive_frame,
             textvariable=self.ply_vars["keep_strategy"],
             values=("centroid", "center", "first", "random"),
             state="readonly",
-            width=10,
+            width=12,
         )
-        self.ply_keep_menu.grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        self.ply_keep_menu.pack(side=tk.LEFT, padx=(0, 4))
 
         params.grid_columnconfigure(1, weight=1)
 
@@ -1789,7 +1825,7 @@ class PreviewApp:
         reset_btn.grid(row=0, column=3, padx=4, pady=2)
         self._bind_help(reset_btn, "ffmpeg")
 
-        jobs_label = tk.Label(ffmpeg_frame, text="jobs")
+        jobs_label = tk.Label(ffmpeg_frame, text="Workers")
         jobs_label.grid(row=1, column=0, padx=4, pady=2, sticky="e")
         self._bind_help(jobs_label, "jobs")
         jobs_entry = tk.Entry(ffmpeg_frame, textvariable=self.jobs_var, width=10)
@@ -2162,25 +2198,45 @@ class PreviewApp:
             in_dir,
         ]
 
-        segment_size = self.selector_vars["segment_size"].get().strip()
-        if segment_size:
-            try:
-                int(segment_size)
-            except ValueError:
-                messagebox.showerror("rs2ps_FrameSelector", "Segment size must be an integer.")
-                return
-            cmd.extend(["-n", segment_size])
+        segment_text = self.selector_vars["segment_size"].get().strip()
+        if not segment_text:
+            messagebox.showerror(
+                "rs2ps_FrameSelector",
+                "Segment size is required. Enter a positive integer or 0/1 for per-frame mode.",
+            )
+            return
+        try:
+            segment_value = int(segment_text)
+        except ValueError:
+            messagebox.showerror("rs2ps_FrameSelector", "Segment size must be an integer.")
+            return
+        if segment_value < 0:
+            messagebox.showerror("rs2ps_FrameSelector", "Segment size must be zero or greater.")
+            return
+        cmd.extend(["-n", str(segment_value)])
 
         dry_run_required = bool(self.selector_vars["dry_run"].get())
 
         workers_text = self.selector_vars["workers"].get().strip()
-        if workers_text and workers_text.lower() != "auto":
-            try:
-                int(workers_text)
-            except ValueError:
-                messagebox.showerror("rs2ps_FrameSelector", "Workers must be an integer or 'auto'.")
-                return
-            cmd.extend(["-w", workers_text])
+        auto_workers = self._auto_frame_selector_workers()
+        max_workers = max(1, auto_workers * 2)
+        if workers_text:
+            if workers_text.lower() != "auto":
+                try:
+                    worker_value = int(workers_text)
+                except ValueError:
+                    messagebox.showerror("rs2ps_FrameSelector", "Workers must be an integer or 'auto'.")
+                    return
+                if worker_value <= 0:
+                    messagebox.showerror("rs2ps_FrameSelector", "Workers must be a positive integer.")
+                    return
+                if worker_value > max_workers:
+                    messagebox.showerror(
+                        "rs2ps_FrameSelector",
+                        f"Workers must be <= {max_workers} (auto={auto_workers}).",
+                    )
+                    return
+                cmd.extend(["-w", str(worker_value)])
 
         ext_choice = self.selector_vars["ext"].get().strip()
         if ext_choice:
@@ -2238,6 +2294,18 @@ class PreviewApp:
             cmd.append("--augment_lowlight")
         if bool(self.selector_vars["augment_motion"].get()):
             cmd.append("--augment_motion")
+        if not bool(self.selector_vars["ignore_highlights"].get()):
+            cmd.append("--no-ignore-highlights")
+
+        blur_percent_text = self.selector_count_var.get().strip() if self.selector_count_var is not None else ""
+        blur_percent_text = blur_percent_text.rstrip("%")
+        try:
+            blur_percent_value = float(blur_percent_text) if blur_percent_text else 1.0
+        except ValueError:
+            messagebox.showerror("rs2ps_FrameSelector", "Check Selection Blur must be a numeric percentage.")
+            return
+        blur_percent_value = max(0.0, min(blur_percent_value, 100.0))
+        cmd.extend(["--blur-percent", f"{blur_percent_value}"])
 
         self._run_cli_command(
             cmd,
@@ -2261,9 +2329,56 @@ class PreviewApp:
         menu = self.ply_keep_menu
         if menu is not None:
             try:
-                menu.configure(state="readonly" if active else "disabled")
+                menu.configure(state="readonly")
             except tk.TclError:
                 pass
+
+    @staticmethod
+    def _auto_frame_selector_workers() -> int:
+        cpu = os.cpu_count()
+        if cpu is None or cpu <= 0:
+            cpu = 4
+        return max(1, min(8, cpu))
+
+    @staticmethod
+    def _auto_preview_jobs() -> int:
+        cores = os.cpu_count()
+        if cores is None or cores <= 0:
+            cores = 1
+        return max(1, cores // 2)
+
+    def _update_ply_target_value_widgets(self) -> None:
+        mode_label = self.ply_target_mode_var.get()
+        mode_key = self._ply_mode_key_map.get(mode_label, "points")
+        target_var = self._ply_target_var_map.get(mode_key)
+        if target_var is None or self._ply_target_value_entry is None:
+            return
+        label_map = {
+            "points": "Points",
+            "percent": "Percent (%)",
+            "voxel": "Voxel size",
+        }
+        if self._ply_target_value_label is not None:
+            self._ply_target_value_label.configure(text=label_map.get(mode_key, "Value"))
+        try:
+            self._ply_target_value_entry.configure(textvariable=target_var)
+        except tk.TclError:
+            pass
+
+    def _on_ply_target_mode_changed(self, _event=None) -> None:
+        self._update_ply_target_value_widgets()
+
+    def _on_ply_input_selected(self, selected_path: str) -> None:
+        try:
+            path_obj = Path(selected_path).expanduser()
+        except Exception:
+            return
+        suffix = path_obj.suffix if path_obj.suffix else ".ply"
+        try:
+            default_path = path_obj.with_name(f"{path_obj.stem}_output{suffix}")
+        except Exception:
+            return
+        self.ply_vars["output"].set(str(default_path))
 
     def _run_ply_optimizer(self) -> None:
         if not self.ply_vars:
@@ -2284,32 +2399,32 @@ class PreviewApp:
         if output_path:
             cmd.extend(["-o", output_path])
 
-        target_points = self.ply_vars["target_points"].get().strip()
-        if target_points:
+        mode_label = self.ply_target_mode_var.get()
+        mode_key = self._ply_mode_key_map.get(mode_label, "points")
+        target_var = self._ply_target_var_map.get(mode_key)
+        target_value = target_var.get().strip() if target_var is not None else ""
+
+        if mode_key == "points" and target_value:
             try:
-                int(target_points)
+                int(target_value)
             except ValueError:
                 messagebox.showerror("rs2ps_PlyOptimizer", "Target points must be an integer.")
                 return
-            cmd.extend(["-t", target_points])
-
-        target_percent = self.ply_vars["target_percent"].get().strip()
-        if target_percent:
+            cmd.extend(["-t", target_value])
+        elif mode_key == "percent" and target_value:
             try:
-                float(target_percent)
+                float(target_value)
             except ValueError:
                 messagebox.showerror("rs2ps_PlyOptimizer", "Target percent must be numeric.")
                 return
-            cmd.extend(["-r", target_percent])
-
-        voxel_size = self.ply_vars["voxel_size"].get().strip()
-        if voxel_size:
+            cmd.extend(["-r", target_value])
+        elif mode_key == "voxel" and target_value:
             try:
-                float(voxel_size)
+                float(target_value)
             except ValueError:
                 messagebox.showerror("rs2ps_PlyOptimizer", "Voxel size must be numeric.")
                 return
-            cmd.extend(["-v", voxel_size])
+            cmd.extend(["-v", target_value])
 
         adaptive_enabled = bool(self.ply_vars["adaptive"].get())
         if adaptive_enabled:
@@ -2349,6 +2464,7 @@ class PreviewApp:
         var: tk.Variable,
         title: str = "Select file",
         filetypes: Optional[Sequence[Tuple[str, str]]] = None,
+        on_select: Optional[Callable[[str], None]] = None,
     ) -> None:
         current = var.get().strip() if hasattr(var, "get") else ""
         initialdir = Path(current).parent if current else self.base_dir
@@ -2363,6 +2479,11 @@ class PreviewApp:
         )
         if path:
             var.set(path)
+            if on_select is not None:
+                try:
+                    on_select(path)
+                except Exception:
+                    pass
 
     def _on_selector_csv_mode_changed(self, *_args) -> None:
         mode = self.selector_vars.get("csv_mode")
@@ -2680,7 +2801,19 @@ class PreviewApp:
         total = len(rows)
         bar_width = max(1.0, width / float(total))
         suspect_set = set(suspect_indices)
-        for idx, (frame_idx, selected_flag, _score_val) in enumerate(rows):
+        score_values = [
+            score
+            for _, _, score in rows
+            if score is not None and math.isfinite(score)
+        ]
+        if score_values:
+            score_min = min(score_values)
+            score_max = max(score_values)
+        else:
+            score_min = 0.0
+            score_max = 0.0
+        score_range = score_max - score_min
+        for idx, (frame_idx, selected_flag, score_val) in enumerate(rows):
             x0 = idx * bar_width
             x1 = x0 + bar_width
             color = "#d0d0d0"
@@ -2688,7 +2821,17 @@ class PreviewApp:
                 color = "#4ecdc4"
             if frame_idx in suspect_set:
                 color = "#ff6b6b"
-            canvas.create_rectangle(x0, 0, x1, height, fill=color, outline="")
+            if score_val is not None and math.isfinite(score_val):
+                if score_range > 1e-9:
+                    norm = (score_val - score_min) / score_range
+                else:
+                    norm = 1.0
+            else:
+                norm = 0.0
+            norm = max(0.0, min(1.0, norm))
+            rect_height = max(1.0, norm * height)
+            y0 = height - rect_height
+            canvas.create_rectangle(x0, y0, x1, height, fill=color, outline="")
         canvas.create_rectangle(0, 0, bar_width * total, height, outline="#808080")
 
     def _select_directory(
@@ -3074,6 +3217,25 @@ class PreviewApp:
         jobs_value = self.jobs_var.get().strip()
         if not jobs_value:
             jobs_value = str(getattr(self.defaults, "jobs", "auto"))
+        jobs_lower = jobs_value.lower()
+        if jobs_lower != "auto":
+            try:
+                jobs_int = int(jobs_value)
+            except ValueError:
+                messagebox.showerror("Input Error", "Workers must be an integer or 'auto'.")
+                return None
+            if jobs_int <= 0:
+                messagebox.showerror("Input Error", "Workers must be a positive integer.")
+                return None
+            auto_jobs = self._auto_preview_jobs()
+            max_jobs = max(1, auto_jobs * 2)
+            if jobs_int > max_jobs:
+                messagebox.showerror(
+                    "Input Error",
+                    f"Workers must be <= {max_jobs} (auto={auto_jobs}).",
+                )
+                return None
+            jobs_value = str(jobs_int)
         updated.jobs = jobs_value
         self.jobs_var.set(jobs_value)
 
