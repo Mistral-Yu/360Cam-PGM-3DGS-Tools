@@ -590,6 +590,10 @@ class PreviewApp:
         self._process_lock = threading.Lock()
         self._active_processes: Dict[str, subprocess.Popen] = {}
         self._process_ui: Dict[str, Dict[str, Any]] = {}
+        self._queued_cli_commands: Dict[
+            str,
+            List[Tuple[List[str], Optional[Path], bool, Optional[str]]],
+        ] = defaultdict(list)
 
         self._video_output_auto = True
         self._video_last_auto_output = ""
@@ -664,6 +668,7 @@ class PreviewApp:
             "end": tk.StringVar(),
             "keep_rec709": tk.BooleanVar(value=False),
             "overwrite": tk.BooleanVar(value=False),
+            "fisheye_experimental": tk.BooleanVar(value=False),
         }
 
         self.video_vars["video"].trace_add("write", self._on_video_input_changed)
@@ -728,6 +733,13 @@ class PreviewApp:
             flags_frame,
             text="Overwrite output",
             variable=self.video_vars["overwrite"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            flags_frame,
+            text=(
+                "Experimental: Fisheye extraction (raw video input)"
+            ),
+            variable=self.video_vars["fisheye_experimental"],
         ).pack(side=tk.LEFT, padx=(0, 12))
 
         for col in range(3):
@@ -1262,8 +1274,7 @@ class PreviewApp:
             "csv_mode": tk.StringVar(value="write"),
             "csv_path": tk.StringVar(),
             "crop_ratio": tk.StringVar(value="0.8"),
-            "min_spacing_frames": tk.StringVar(),
-            "prune_motion": tk.BooleanVar(value=False),
+            "min_spacing_frames": tk.StringVar(value="auto"),
             "augment_gap": tk.BooleanVar(value=True),
             "augment_lowlight": tk.BooleanVar(value=False),
             "augment_motion": tk.BooleanVar(value=False),
@@ -1339,7 +1350,7 @@ class PreviewApp:
         selector_csv_combo = ttk.Combobox(
             csv_frame,
             textvariable=self.selector_vars["csv_mode"],
-            values=("none", "write", "apply", "reselect"),
+            values=("write", "reselect", "apply", "none"),
             state="readonly",
             width=10,
         )
@@ -1364,10 +1375,13 @@ class PreviewApp:
         row += 1
         final_frame = tk.Frame(params)
         final_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Checkbutton(final_frame, text="Prune motion", variable=self.selector_vars["prune_motion"]).pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(final_frame, text="Crop ratio").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(final_frame, textvariable=self.selector_vars["crop_ratio"], width=10).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Checkbutton(final_frame, text="Ignore clipped highlights", variable=self.selector_vars["ignore_highlights"]).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Entry(final_frame, textvariable=self.selector_vars["crop_ratio"], width=10).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            final_frame,
+            text="Ignore clipped highlights",
+            variable=self.selector_vars["ignore_highlights"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
 
         for col in range(3):
             params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
@@ -1406,13 +1420,23 @@ class PreviewApp:
             anchor="w",
         )
         self.selector_summary_label.pack(fill="x", padx=6, pady=(4, 2))
+        score_canvas_container = tk.Frame(summary_frame)
+        score_canvas_container.pack(fill="x", expand=True, padx=6, pady=(0, 4))
         self.selector_score_canvas = tk.Canvas(
-            summary_frame,
-            height=36,
+            score_canvas_container,
+            height=64,
             bg="#f4f4f4",
             highlightthickness=0,
+            xscrollincrement=1,
         )
-        self.selector_score_canvas.pack(fill="x", expand=True, padx=6, pady=(0, 4))
+        self.selector_score_canvas.pack(fill="x", expand=True, side=tk.TOP)
+        score_scrollbar = tk.Scrollbar(
+            score_canvas_container,
+            orient="horizontal",
+            command=self.selector_score_canvas.xview,
+        )
+        score_scrollbar.pack(fill="x", side=tk.TOP)
+        self.selector_score_canvas.configure(xscrollcommand=score_scrollbar.set)
         tk.Label(
             summary_frame,
             text="Legend: selected = teal, suspect = red, others = gray",
@@ -1920,6 +1944,7 @@ class PreviewApp:
         process_key: str,
         stop_button: Optional[tk.Button] = None,
         cwd: Optional[Path] = None,
+        clear_log: bool = True,
     ) -> None:
         if log_widget is None:
             return
@@ -1932,7 +1957,10 @@ class PreviewApp:
                 return
 
         command_text = "CLI> " + " ".join(shlex.quote(str(token)) for token in cmd)
-        self._set_text_widget(log_widget, command_text)
+        if clear_log:
+            self._set_text_widget(log_widget, command_text)
+        else:
+            self._append_text_widget(log_widget, command_text)
 
         if run_button is not None:
             run_button.configure(state="disabled")
@@ -1991,7 +2019,9 @@ class PreviewApp:
         run_button = info.get("run")
         stop_button = info.get("stop")
         log_widget = info.get("log")
-        if run_button is not None:
+        queue = self._queued_cli_commands.get(key)
+        should_continue = bool(queue) and not stopped and rc == 0
+        if not should_continue and run_button is not None:
             run_button.configure(state="normal")
         if stop_button is not None:
             stop_button.configure(state="disabled")
@@ -2003,6 +2033,28 @@ class PreviewApp:
                 process.terminate()
             except Exception:
                 pass
+        if should_continue and queue is not None:
+            next_cmd, next_cwd, clear_log, label = queue.pop(0)
+            if not queue:
+                self._queued_cli_commands.pop(key, None)
+            if run_button is not None:
+                run_button.configure(state="disabled")
+            if stop_button is not None:
+                stop_button.configure(state="disabled")
+            if log_widget is not None and label:
+                self._append_text_widget(log_widget, label)
+            self._run_cli_command(
+                next_cmd,
+                log_widget,
+                run_button,
+                process_key=key,
+                stop_button=stop_button,
+                cwd=next_cwd,
+                clear_log=clear_log,
+            )
+            return
+        else:
+            self._queued_cli_commands.pop(key, None)
         if key == "selector":
             pending = self.selector_auto_fetch_pending
             self.selector_auto_fetch_pending = False
@@ -2121,7 +2173,7 @@ class PreviewApp:
 
         fps_formatted = self._format_fps_for_output(fps_value) or f"{fps_float}"
 
-        cmd: List[str] = [
+        base_cmd: List[str] = [
             sys.executable,
             str(self.base_dir / "rs2ps_Video2Frames.py"),
             "-i",
@@ -2132,17 +2184,17 @@ class PreviewApp:
 
         output_dir = self.video_vars["output"].get().strip()
         if output_dir:
-            cmd.extend(["-o", output_dir])
+            base_cmd.extend(["-o", output_dir])
 
         ext_value = self.video_vars["ext"].get().strip()
         if ext_value:
-            cmd.extend(["--ext", ext_value])
+            base_cmd.extend(["--ext", ext_value])
 
         prefix_value = self.video_vars.get("prefix")
         if prefix_value is not None:
             prefix_text = prefix_value.get().strip()
             if prefix_text:
-                cmd.extend(["--prefix", prefix_text])
+                base_cmd.extend(["--prefix", prefix_text])
 
         start_value = self.video_vars["start"].get().strip()
         if start_value:
@@ -2151,7 +2203,7 @@ class PreviewApp:
             except ValueError:
                 messagebox.showerror("rs2ps_Video2Frames", "Start time must be numeric.")
                 return
-            cmd.extend(["--start", start_value])
+            base_cmd.extend(["--start", start_value])
 
         end_value = self.video_vars["end"].get().strip()
         if end_value:
@@ -2160,19 +2212,49 @@ class PreviewApp:
             except ValueError:
                 messagebox.showerror("rs2ps_Video2Frames", "End time must be numeric.")
                 return
-            cmd.extend(["--end", end_value])
+            base_cmd.extend(["--end", end_value])
 
         if bool(self.video_vars["keep_rec709"].get()):
-            cmd.append("--keep-rec709")
+            base_cmd.append("--keep-rec709")
         if bool(self.video_vars["overwrite"].get()):
-            cmd.append("--overwrite")
+            base_cmd.append("--overwrite")
 
         ffmpeg_path = self.ffmpeg_path_var.get().strip()
         if ffmpeg_path:
-            cmd.extend(["--ffmpeg", ffmpeg_path])
+            base_cmd.extend(["--ffmpeg", ffmpeg_path])
+
+        fisheye_enabled = bool(self.video_vars["fisheye_experimental"].get())
+        if fisheye_enabled:
+            cmd_primary = list(base_cmd)
+            cmd_secondary = list(base_cmd)
+            cmd_primary.extend(
+                ["--map-stream", "0:v:0", "--name-suffix", "_X"]
+            )
+            cmd_secondary.extend(
+                ["--map-stream", "0:v:1", "--name-suffix", "_Y"]
+            )
+            self._queued_cli_commands.pop("video", None)
+            self._queued_cli_commands["video"] = [
+                (
+                    cmd_secondary,
+                    self.base_dir,
+                    False,
+                    "[next] Experimental fisheye (map 0:v:1)",
+                ),
+            ]
+            self._run_cli_command(
+                cmd_primary,
+                self.video_log,
+                self.video_run_button,
+                process_key="video",
+                stop_button=self.video_stop_button,
+                cwd=self.base_dir,
+                clear_log=True,
+            )
+            return
 
         self._run_cli_command(
-            cmd,
+            base_cmd,
             self.video_log,
             self.video_run_button,
             process_key="video",
@@ -2278,6 +2360,8 @@ class PreviewApp:
             cmd.extend(["--crop_ratio", crop_ratio])
 
         min_spacing = self.selector_vars["min_spacing_frames"].get().strip()
+        if min_spacing.lower() == "auto":
+            min_spacing = ""
         if min_spacing:
             try:
                 int(min_spacing)
@@ -2286,8 +2370,6 @@ class PreviewApp:
                 return
             cmd.extend(["--min_spacing_frames", min_spacing])
 
-        if bool(self.selector_vars["prune_motion"].get()):
-            cmd.append("--prune_motion")
         if bool(self.selector_vars["augment_gap"].get()):
             cmd.append("--augment_gap")
         if bool(self.selector_vars["augment_lowlight"].get()):
@@ -2509,6 +2591,8 @@ class PreviewApp:
                 self.selector_vars["dry_run"].set(False)
                 self.selector_dry_run_check.configure(state="disabled")
             else:
+                if mode_value == "write":
+                    self.selector_vars["dry_run"].set(True)
                 self.selector_dry_run_check.configure(state="normal")
         csv_var = self.selector_vars.get("csv_path")
         in_dir_var = self.selector_vars.get("in_dir")
@@ -2790,16 +2874,21 @@ class PreviewApp:
             return
 
         canvas.update_idletasks()
-        width = canvas.winfo_width()
-        if width <= 1:
-            width = int(canvas.cget("width") or 600)
-            if width <= 1:
-                width = 600
-            canvas.configure(width=width)
-        height = int(canvas.cget("height") or 36)
-
+        view_width = canvas.winfo_width()
+        if view_width <= 1:
+            view_width = int(canvas.cget("width") or 600)
+            if view_width <= 1:
+                view_width = 600
+            canvas.configure(width=view_width)
         total = len(rows)
-        bar_width = max(1.0, width / float(total))
+        height = int(canvas.cget("height") or 64)
+        label_height = 18
+        bar_area_height = max(20, height - label_height)
+        approx_width = view_width / float(total) if total > 0 else view_width
+        bar_width = max(4.0, min(40.0, approx_width))
+        total_width = max(bar_width * total, view_width)
+        canvas.configure(scrollregion=(0, 0, total_width, height))
+        canvas.xview_moveto(0.0)
         suspect_set = set(suspect_indices)
         score_values = [
             score
@@ -2829,10 +2918,37 @@ class PreviewApp:
             else:
                 norm = 0.0
             norm = max(0.0, min(1.0, norm))
-            rect_height = max(1.0, norm * height)
-            y0 = height - rect_height
-            canvas.create_rectangle(x0, y0, x1, height, fill=color, outline="")
-        canvas.create_rectangle(0, 0, bar_width * total, height, outline="#808080")
+            rect_height = max(1.0, norm * bar_area_height)
+            y0 = bar_area_height - rect_height
+            canvas.create_rectangle(x0, y0, x1, bar_area_height, fill=color, outline="")
+        canvas.create_rectangle(0, 0, bar_width * total, bar_area_height, outline="#808080")
+
+        tick_total = 10 if total > 1 else 1
+        used_indices: List[int] = []
+        if total <= tick_total:
+            used_indices = list(range(total))
+        else:
+            steps = tick_total - 1 if tick_total > 1 else 1
+            seen = set()
+            for i in range(tick_total):
+                position = int(round((total - 1) * (i / steps)))
+                if position in seen:
+                    continue
+                seen.add(position)
+                used_indices.append(position)
+        tick_y0 = bar_area_height
+        text_y = bar_area_height + (label_height / 2)
+        for idx in used_indices:
+            frame_idx, _, _ = rows[idx]
+            x = idx * bar_width + (bar_width / 2.0)
+            canvas.create_line(x, tick_y0, x, tick_y0 + 4, fill="#808080")
+            canvas.create_text(
+                x,
+                text_y,
+                text=str(frame_idx),
+                fill="#333333",
+                font=("TkDefaultFont", 8),
+            )
 
     def _select_directory(
         self,
