@@ -10,6 +10,7 @@ and writes the result as a binary little-endian PLY file.
 from __future__ import annotations
 import argparse
 import heapq
+import math
 import os
 from dataclasses import dataclass
 from itertools import count
@@ -18,6 +19,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 from plyfile import PlyData, PlyElement
 
+SKY_AXIS_CHOICES = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
 
 # ------------------------------ Utilities ------------------------------
 
@@ -123,6 +125,117 @@ def _find_vertex_data(ply: PlyData):
         if names and all(k in names for k in ("x", "y", "z")):
             return data
     return None
+
+
+def _axis_direction(label: str) -> Optional[np.ndarray]:
+    mapping = {
+        "+X": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        "-X": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+        "+Y": np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        "-Y": np.array([0.0, -1.0, 0.0], dtype=np.float32),
+        "+Z": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        "-Z": np.array([0.0, 0.0, -1.0], dtype=np.float32),
+    }
+    vec = mapping.get((label or "").upper())
+    if vec is None:
+        return None
+    norm = np.linalg.norm(vec)
+    return vec / norm if norm > 0 else None
+
+
+def _rotation_matrix_from_axis(axis: np.ndarray, angle: float) -> np.ndarray:
+    axis = axis / max(np.linalg.norm(axis), 1e-6)
+    x, y, z = axis
+    c = math.cos(angle)
+    s = math.sin(angle)
+    C = 1.0 - c
+    return np.array(
+        [
+            [c + x * x * C, x * y * C - z * s, x * z * C + y * s],
+            [y * x * C + z * s, c + y * y * C, y * z * C - x * s],
+            [z * x * C - y * s, z * y * C + x * s, c + z * z * C],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _rotation_matrix_from_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    src = source / max(np.linalg.norm(source), 1e-6)
+    tgt = target / max(np.linalg.norm(target), 1e-6)
+    c = float(np.dot(src, tgt))
+    if c > 0.9999:
+        return np.eye(3, dtype=np.float32)
+    if c < -0.9999:
+        axis = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        if abs(src[0]) > 0.9:
+            axis = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        axis -= axis.dot(src) * src
+        axis /= max(np.linalg.norm(axis), 1e-6)
+        return _rotation_matrix_from_axis(axis, math.pi)
+    v = np.cross(src, tgt)
+    s = np.linalg.norm(v)
+    vx = np.array(
+        [
+            [0.0, -v[2], v[1]],
+            [v[2], 0.0, -v[0]],
+            [-v[1], v[0], 0.0],
+        ],
+        dtype=np.float32,
+    )
+    r = np.eye(3, dtype=np.float32) + vx + (vx @ vx) * ((1.0 - c) / (s * s))
+    return r.astype(np.float32)
+
+
+def _sample_hemisphere_points(count: int) -> np.ndarray:
+    idx = np.arange(count, dtype=np.float32)
+    phi = math.pi * (3.0 - math.sqrt(5.0))
+    z = 1.0 - idx / count
+    radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    x = np.cos(phi * idx) * radius
+    y = np.sin(phi * idx) * radius
+    return np.stack((x, y, z), axis=1)
+
+
+def _generate_sky_points(
+    center: np.ndarray,
+    axis_vec: np.ndarray,
+    scale: float,
+    count: int,
+    color: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    samples = _sample_hemisphere_points(count) * float(scale)
+    rot = _rotation_matrix_from_vectors(
+        np.array([0.0, 0.0, 1.0], dtype=np.float32), axis_vec
+    )
+    oriented = samples @ rot.T
+    world = oriented + center
+    colors = np.tile(color.astype(np.uint8, copy=False), (world.shape[0], 1))
+    return world.astype(np.float32, copy=False), colors
+
+
+def _parse_sky_color(text: Optional[str]) -> np.ndarray:
+    default = np.array([135, 206, 250], dtype=np.uint8)
+    if not text:
+        return default
+    value = text.strip()
+    if not value:
+        return default
+    if "," in value:
+        parts = [p.strip() for p in value.split(",")]
+        if len(parts) != 3:
+            raise ValueError("expected R,G,B components")
+        comps = [int(float(p)) for p in parts]
+    elif value.startswith("#"):
+        hexval = value[1:]
+        if len(hexval) == 3:
+            hexval = "".join(ch * 2 for ch in hexval)
+        if len(hexval) != 6:
+            raise ValueError("hex color must be #RGB or #RRGGBB")
+        comps = [int(hexval[i : i + 2], 16) for i in (0, 2, 4)]
+    else:
+        raise ValueError("use #RRGGBB or R,G,B format")
+    clamped = [max(0, min(255, int(c))) for c in comps]
+    return np.array(clamped, dtype=np.uint8)
 
 
 def _extract_xyz_rgb_from_structured(v) -> Tuple[np.ndarray, np.ndarray]:
@@ -847,10 +960,47 @@ def main(argv: Optional[List[str]] = None) -> int:
             "random=random point per voxel."
         ),
     )
+    ap.add_argument(
+        "--sky-axis",
+        choices=SKY_AXIS_CHOICES,
+        default=None,
+        help=(
+            "Add a synthetic hemispherical sky point cloud from this axis "
+            "direction (e.g., +Z). Requires --out."
+        ),
+    )
+    ap.add_argument(
+        "--sky-scale",
+        type=float,
+        default=100.0,
+        help="Radius of the generated sky hemisphere (same units as the PLY).",
+    )
+    ap.add_argument(
+        "--sky-count",
+        type=int,
+        default=4000,
+        help="Number of points to generate for the sky hemisphere.",
+    )
+    ap.add_argument(
+        "--sky-color",
+        type=str,
+        default="#87cefa",
+        help="Sky color as #RRGGBB or R,G,B (0-255).",
+    )
     args = ap.parse_args(argv)
 
     if args.target_points is not None and args.target_points <= 0:
         ap.error("--target-points must be greater than 0")
+    sky_color = None
+    if args.sky_axis:
+        if args.sky_scale is None or args.sky_scale <= 0:
+            ap.error("--sky-scale must be > 0 when --sky-axis is set")
+        if args.sky_count is None or args.sky_count <= 0:
+            ap.error("--sky-count must be > 0 when --sky-axis is set")
+        try:
+            sky_color = _parse_sky_color(args.sky_color)
+        except ValueError as exc:
+            ap.error(f"--sky-color {exc}")
 
     base_path = os.path.expanduser(args.input)
     if not os.path.isabs(base_path):
@@ -976,6 +1126,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     if total_added > 0:
         print(f"[append] total added: {total_added:,}")
+
+    if args.sky_axis:
+        axis_vec = _axis_direction(args.sky_axis)
+        if axis_vec is None:
+            ap.error(f"Invalid --sky-axis value: {args.sky_axis}")
+        stats_after = compute_point_cloud_stats(xyz)
+        center = (stats_after.xyz_min + stats_after.xyz_max) * 0.5
+        sky_points, sky_colors = _generate_sky_points(
+            center.astype(np.float32, copy=False),
+            axis_vec,
+            float(args.sky_scale),
+            int(args.sky_count),
+            sky_color if sky_color is not None else np.array([135, 206, 250], dtype=np.uint8),
+        )
+        xyz = np.concatenate([xyz, sky_points], axis=0)
+        rgb = np.concatenate([rgb, sky_colors], axis=0)
+        print(
+            f"[sky] axis={args.sky_axis} scale={args.sky_scale:.6g} "
+            f"count={sky_points.shape[0]:,} -> total {xyz.shape[0]:,}"
+        )
 
     # 4) Save
     out_path = os.path.expanduser(args.output)
