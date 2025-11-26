@@ -375,6 +375,19 @@ def main() -> None:
     if suffix_text:
         suffix_text = re.sub(r'\s+', '_', suffix_text)
     pattern = out_dir / f'{frame_prefix}_%07d{suffix_text}.{ext}'
+    if not args.overwrite:
+        glob_pattern = f"{frame_prefix}_*{suffix_text}.{ext}"
+        existing = next(out_dir.glob(glob_pattern), None)
+        if existing is not None:
+            print(
+                f"Output exists and overwrite is disabled. First match: {existing.name}",
+                file=sys.stderr,
+            )
+            print(
+                "Enable --overwrite to replace existing frames.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     inferred_bits = detect_input_bit_depth(in_path)
     out_bit_depth = 8 if inferred_bits <= 8 else 16
