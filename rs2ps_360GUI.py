@@ -175,9 +175,19 @@ FIELD_HELP_TEXT = {
     "jobs": "Number of parallel ffmpeg processes. 'auto' uses approximately half the CPU cores.",
     "ffthreads": "Internal ffmpeg threads per process. Set greater than 1 for multi-threaded encoding.",
     "fps": "Frame extraction rate (fps) required when processing a video source.",
-    "keep_rec709": "Keep Rec.709 transfer characteristics for video inputs instead of converting to sRGB.",
+    "keep_rec709": "Convert Rec.709 to sRGB (unchecked = keep Rec.709).",
     "jpeg_quality_95": "When checked, save JPG outputs with approximately 95% quality rather than maximum quality.",
 }
+
+# Override legacy text with clarified wording.
+FIELD_HELP_TEXT.update(
+    {
+        "count": "Number of evenly spaced horizontal cameras (360 deg / count determines yaw step).",
+        "add_top": "Enable an additional top view at pitch +90 deg.",
+        "add_bottom": "Enable an additional bottom view at pitch -90 deg.",
+        "keep_rec709": "Convert Rec.709 to sRGB (uncheck to keep Rec.709).",
+    }
+)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -481,7 +491,7 @@ class PreviewApp:
         },
         {
             "name": "keep_rec709",
-            "label": "Keep Rec.709",
+            "label": "Convert Rec.709 to sRGB",
             "type": "bool",
             "video_only": True,
             "align_with": "ext",
@@ -527,7 +537,7 @@ class PreviewApp:
         self.is_executing = False
         self.source_is_video = False
         self._video_preview_signature: Optional[Tuple[pathlib.Path, bool]] = None
-        self.video_persist_state: Dict[str, Any] = {"fps": 2.0, "keep_rec709": False}
+        self.video_persist_state: Dict[str, Any] = {"fps": 2.0, "keep_rec709": True}
 
         self.scale_override = args.scale
         self.max_width_limit = int(args.max_width)
@@ -568,6 +578,7 @@ class PreviewApp:
         self.canvas_offset_y = 0.0
         self.folder_path_var = tk.StringVar()
         self.output_path_var = tk.StringVar()
+        self._out_dir_custom = False
         self._tooltips: List[ToolTip] = []
         self.ffmpeg_path_var = tk.StringVar(value=str(getattr(self.current_args, "ffmpeg", "ffmpeg")))
         self.ffthreads_var = tk.StringVar(value=str(getattr(self.current_args, "ffthreads", "1")))
@@ -642,7 +653,9 @@ class PreviewApp:
         self._ply_view_yaw = 35.0
         self._ply_view_pitch = 25.0
         self._ply_view_zoom = 1.0
+        self._ply_view_pan: Tuple[float, float] = (0.0, 0.0)
         self._ply_drag_last: Optional[Tuple[int, int]] = None
+        self._ply_pan_last: Optional[Tuple[int, int]] = None
         self._ply_view_is_loading = False
         self._ply_view_load_token: Optional[object] = None
         self._ply_loader_thread: Optional[threading.Thread] = None
@@ -746,7 +759,7 @@ class PreviewApp:
             "ext": tk.StringVar(value="jpg"),
             "start": tk.StringVar(),
             "end": tk.StringVar(),
-            "keep_rec709": tk.BooleanVar(value=False),
+            "keep_rec709": tk.BooleanVar(value=True),
             "overwrite": tk.BooleanVar(value=False),
             "fisheye_experimental": tk.BooleanVar(value=False),
             "fisheye_perspective": tk.BooleanVar(value=False),
@@ -807,17 +820,40 @@ class PreviewApp:
         row += 1
         range_frame = tk.Frame(params)
         range_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Label(range_frame, text="Start (s)").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(range_frame, textvariable=self.video_vars["start"], width=10).pack(side=tk.LEFT, padx=(0, 16))
-        tk.Label(range_frame, text="End (s)").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(range_frame, textvariable=self.video_vars["end"], width=10).pack(side=tk.LEFT, padx=(0, 4))
+        range_frame.columnconfigure(1, weight=0)
+        range_frame.columnconfigure(3, weight=0)
+        range_frame.columnconfigure(5, weight=2)
+        tk.Label(range_frame, text="Start (s)").grid(row=0, column=0, sticky="e", padx=(0, 4))
+        tk.Entry(
+            range_frame,
+            textvariable=self.video_vars["start"],
+            width=10,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12))
+        tk.Label(range_frame, text="End (s)").grid(row=0, column=2, sticky="e", padx=(0, 4))
+        tk.Entry(
+            range_frame,
+            textvariable=self.video_vars["end"],
+            width=10,
+        ).grid(row=0, column=3, sticky="w", padx=(0, 12))
+        ffmpeg_label = tk.Label(range_frame, text="ffmpeg path")
+        ffmpeg_label.grid(row=0, column=4, sticky="e", padx=(0, 4))
+        self._bind_help(ffmpeg_label, "ffmpeg")
+        ffmpeg_entry = tk.Entry(range_frame, textvariable=self.ffmpeg_path_var, width=28)
+        ffmpeg_entry.grid(row=0, column=5, sticky="we", padx=(0, 4))
+        self._bind_help(ffmpeg_entry, "ffmpeg")
+        browse_btn = tk.Button(range_frame, text="Browse...", command=self.browse_ffmpeg)
+        browse_btn.grid(row=0, column=6, padx=(4, 4))
+        self._bind_help(browse_btn, "ffmpeg")
+        reset_btn = tk.Button(range_frame, text="Reset", command=self.reset_ffmpeg_path)
+        reset_btn.grid(row=0, column=7, padx=(0, 4))
+        self._bind_help(reset_btn, "ffmpeg")
 
         row += 1
         flags_frame = tk.Frame(params)
         flags_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
         tk.Checkbutton(
             flags_frame,
-            text="Keep Rec.709",
+            text="Convert Rec.709 to sRGB",
             variable=self.video_vars["keep_rec709"],
         ).pack(side=tk.LEFT, padx=(0, 12))
         tk.Checkbutton(
@@ -879,7 +915,7 @@ class PreviewApp:
         actions.pack(fill="x", padx=8, pady=(0, 8))
         self.video_inspect_button = tk.Button(
             actions,
-            text="Inspect video",
+            text="Inspect video (set FPS)",
             command=self._inspect_video_metadata,
             state="disabled",
         )
@@ -1161,6 +1197,30 @@ class PreviewApp:
         h = total_minutes // 60
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
+    def _apply_detected_video_fps(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not metadata:
+            return None
+        fps_value = metadata.get("frame_rate")
+        fps_text_raw = metadata.get("frame_rate_text")
+        detected = None
+        if fps_value is not None:
+            try:
+                detected = float(fps_value)
+            except (TypeError, ValueError):
+                detected = None
+        if detected is None and fps_text_raw:
+            detected = self._parse_fps_from_stream(str(fps_text_raw))
+        if detected is None or detected <= 0.0:
+            return None
+        formatted = self._format_fps_for_output(f"{detected}")
+        if not formatted:
+            return None
+        fps_var = self.video_vars.get("fps") if self.video_vars else None
+        if fps_var is None:
+            return None
+        fps_var.set(formatted)
+        return formatted
+
     def _inspect_video_metadata(self) -> None:
         if not self.video_vars:
             return
@@ -1180,11 +1240,16 @@ class PreviewApp:
             messagebox.showerror("Video metadata", f"Failed to resolve video path:\n{exc}")
             return
 
-        lines = self._collect_video_metadata_lines(video_path, "Video metadata")
-        if not lines:
+        result = self._collect_video_metadata_lines(video_path, "Video metadata")
+        if not result:
             return
+        lines, metadata = result
+        self._set_text_widget(self.video_log, "")
         for line in lines:
             self._append_text_widget(self.video_log, line)
+        fps_updated = self._apply_detected_video_fps(metadata)
+        if fps_updated:
+            self._append_text_widget(self.video_log, f"[fps] Updated FPS to detected value ({fps_updated})")
 
     def _inspect_preview_video_metadata(self) -> None:
         if not self.source_is_video:
@@ -1205,9 +1270,10 @@ class PreviewApp:
             messagebox.showerror("Preview video metadata", f"Failed to resolve video path:\n{exc}")
             return
 
-        lines = self._collect_video_metadata_lines(video_path, "Preview video metadata")
-        if not lines:
+        result = self._collect_video_metadata_lines(video_path, "Preview video metadata")
+        if not result:
             return
+        lines, _metadata = result
         for line in lines:
             self._append_text_widget(self.log_text, line)
 
@@ -1215,7 +1281,7 @@ class PreviewApp:
         self,
         video_path: Path,
         dialog_title: str,
-    ) -> Optional[List[str]]:
+    ) -> Optional[Tuple[List[str], Dict[str, Any]]]:
         ffmpeg_path = self._resolve_ffmpeg_path()
         cmd = [
             ffmpeg_path,
@@ -1372,6 +1438,7 @@ class PreviewApp:
         video_streams = [parse_video_stream(info) for info in stream_infos if info["type"] == "Video"]
 
         lines: List[str] = [f"[inspect] {video_path.name}"]
+        primary_metadata: Dict[str, Any] = {}
 
         duration_match = re.search(r"Duration:\s*(\d{2}:\d{2}:\d{2}\.\d+)", combined_output)
         duration_seconds: Optional[float] = None
@@ -1380,6 +1447,10 @@ class PreviewApp:
 
         if video_streams:
             video = video_streams[0]
+            primary_metadata = {
+                "frame_rate": video.get("frame_rate"),
+                "frame_rate_text": video.get("frame_rate_text"),
+            }
             lines.append("Video stream:")
             stream_label = f"#{video['id']}"
             if video["lang"]:
@@ -1399,12 +1470,12 @@ class PreviewApp:
             if video["bitrate"]:
                 lines.append(f"  Bit rate: {video['bitrate']}")
             if video["frame_rate"]:
-                lines.append(f"  Frame rate: {video['frame_rate']:.3f} fps")
+                lines.append(f"  Frame rate: **{video['frame_rate']:.3f}** fps")
             elif video["frame_rate_text"]:
-                lines.append(f"  Frame rate: {video['frame_rate_text']}")
+                lines.append(f"  Frame rate: **{video['frame_rate_text']}**")
             if video["frame_rate"] and duration_seconds is not None:
                 estimated_frames = int(round(duration_seconds * video["frame_rate"]))
-                lines.append(f"  Estimated frames: {estimated_frames}")
+                lines.append(f"  Estimated frames: **{estimated_frames}**")
             if video["color_tags"]:
                 clean_color = [tag.rstrip(")") for tag in video["color_tags"]]
                 lines.append(f"  Color: {', '.join(clean_color)}")
@@ -1422,7 +1493,7 @@ class PreviewApp:
         if result.returncode != 0 and "At least one output file must be specified" not in combined_output:
             lines.append(f"[warn] ffmpeg exited with code {result.returncode}")
 
-        return lines
+        return lines, primary_metadata
 
 
     def _build_frame_selector_tab(self, parent: tk.Widget) -> None:
@@ -1587,6 +1658,7 @@ class PreviewApp:
             summary_frame,
             text="No CSV loaded.",
             anchor="w",
+            font=("TkDefaultFont", 10, "bold"),
         )
         self.selector_summary_label.pack(fill="x", padx=6, pady=(4, 2))
         score_canvas_container = tk.Frame(summary_frame)
@@ -2422,7 +2494,8 @@ class PreviewApp:
                 return
             base_cmd.extend(["--end", end_value])
 
-        if bool(self.video_vars["keep_rec709"].get()):
+        convert_to_srgb = bool(self.video_vars["keep_rec709"].get())
+        if not convert_to_srgb:
             base_cmd.append("--keep-rec709")
         if bool(self.video_vars["overwrite"].get()):
             base_cmd.append("--overwrite")
@@ -3022,6 +3095,9 @@ class PreviewApp:
             canvas.bind("<ButtonPress-1>", self._on_ply_drag_start)
             canvas.bind("<B1-Motion>", self._on_ply_drag_move)
             canvas.bind("<ButtonRelease-1>", self._on_ply_drag_end)
+            canvas.bind("<ButtonPress-3>", self._on_ply_pan_start)
+            canvas.bind("<B3-Motion>", self._on_ply_pan_move)
+            canvas.bind("<ButtonRelease-3>", self._on_ply_pan_end)
             canvas.bind("<Leave>", self._on_ply_drag_end)
             canvas.bind("<MouseWheel>", self._on_ply_zoom)
             canvas.bind("<Button-4>", self._on_ply_zoom)
@@ -3158,6 +3234,8 @@ class PreviewApp:
         self._ply_view_pitch = 25.0
         self._ply_view_zoom = 1.0
         self._ply_drag_last = None
+        self._ply_pan_last = None
+        self._ply_view_pan = (0.0, 0.0)
 
     def _redraw_ply_canvas(self) -> None:
         canvas = self._ply_view_canvas
@@ -3183,6 +3261,26 @@ class PreviewApp:
 
     def _on_ply_drag_end(self, _event=None) -> None:
         self._ply_drag_last = None
+        self._ply_pan_last = None
+
+    def _on_ply_pan_start(self, event: tk.Event) -> None:
+        if self._ply_view_points_centered is None:
+            return
+        self._ply_pan_last = (event.x, event.y)
+
+    def _on_ply_pan_move(self, event: tk.Event) -> None:
+        if self._ply_pan_last is None or self._ply_view_points_centered is None:
+            return
+        last_x, last_y = self._ply_pan_last
+        dx = event.x - last_x
+        dy = event.y - last_y
+        pan_x, pan_y = self._ply_view_pan
+        self._ply_view_pan = (pan_x + dx, pan_y + dy)
+        self._ply_pan_last = (event.x, event.y)
+        self._redraw_ply_canvas()
+
+    def _on_ply_pan_end(self, _event=None) -> None:
+        self._ply_pan_last = None
 
     def _on_ply_zoom(self, event: tk.Event) -> Optional[str]:
         if self._ply_view_points_centered is None:
@@ -3663,6 +3761,7 @@ class PreviewApp:
         ortho_scale = self._compute_ortho_scale(width, height)
         projection_mode = (self._ply_projection_mode.get() or "").lower()
         is_orthographic = projection_mode.startswith("ortho")
+        pan_x, pan_y = self._ply_view_pan
         x = points[:, 0]
         y = points[:, 1]
         z = points[:, 2]
@@ -3673,14 +3772,14 @@ class PreviewApp:
         depth = z2 + depth_offset
         if is_orthographic:
             valid = np.ones_like(depth, dtype=bool)
-            sx = width / 2.0 + x1 * ortho_scale
-            sy = height / 2.0 - y1 * ortho_scale
+            sx = width / 2.0 + x1 * ortho_scale + pan_x
+            sy = height / 2.0 - y1 * ortho_scale + pan_y
         else:
             valid = depth > 1e-4
             scale = np.zeros_like(depth)
             scale[valid] = proj_scale / depth[valid]
-            sx = width / 2.0 + x1 * scale
-            sy = height / 2.0 - y1 * scale
+            sx = width / 2.0 + x1 * scale + pan_x
+            sy = height / 2.0 - y1 * scale + pan_y
         ix = np.rint(sx).astype(np.int32)
         iy = np.rint(sy).astype(np.int32)
         valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
@@ -3714,6 +3813,8 @@ class PreviewApp:
             proj_scale,
             ortho_scale,
             is_orthographic,
+            pan_x,
+            pan_y,
         )
         photo = ImageTk.PhotoImage(image=image)
         self._ply_canvas_photo = photo
@@ -3743,6 +3844,8 @@ class PreviewApp:
         proj_scale: float,
         ortho_scale: float,
         is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
     ) -> None:
         axis_len = max(self._ply_view_max_extent * 0.25, 1e-3)
         origin = (0.0, 0.0, 0.0)
@@ -3763,6 +3866,8 @@ class PreviewApp:
             proj_scale,
             ortho_scale,
             is_orthographic,
+            pan_x,
+            pan_y,
         )
         if screen_origin is None:
             return
@@ -3785,6 +3890,8 @@ class PreviewApp:
                 proj_scale,
                 ortho_scale,
                 is_orthographic,
+                pan_x,
+                pan_y,
             )
             if screen_point is None:
                 continue
@@ -3827,6 +3934,8 @@ class PreviewApp:
         proj_scale: float,
         ortho_scale: float,
         is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
     ) -> Optional[Tuple[float, float]]:
         px, py, pz = point
         x1 = px * cos_y + pz * sin_y
@@ -3840,8 +3949,8 @@ class PreviewApp:
             if depth <= 1e-4:
                 return None
             scale = proj_scale / depth
-        sx = width / 2.0 + x1 * scale
-        sy = height / 2.0 - y1 * scale
+        sx = width / 2.0 + x1 * scale + pan_x
+        sy = height / 2.0 - y1 * scale + pan_y
         return sx, sy
 
     def _select_file(
@@ -4470,8 +4579,11 @@ class PreviewApp:
             if field_type == "bool":
                 var = self.field_vars[name]
                 assert isinstance(var, tk.BooleanVar)
-                var.set(bool(value))
-                self.form_snapshot[name] = str(int(bool(value)))
+                flag_value = bool(value)
+                if name == "keep_rec709":
+                    flag_value = not flag_value
+                var.set(flag_value)
+                self.form_snapshot[name] = str(int(flag_value))
                 continue
             if field_type == "choice":
                 var = self.field_vars[name]
@@ -4544,7 +4656,10 @@ class PreviewApp:
             if field_type == "bool":
                 var = self.field_vars[name]
                 assert isinstance(var, tk.BooleanVar)
-                setattr(updated, name, bool(var.get()))
+                value = bool(var.get())
+                if name == "keep_rec709":
+                    value = not value
+                setattr(updated, name, value)
                 continue
             if field_type == "choice":
                 var = self.field_vars[name]
@@ -4610,6 +4725,8 @@ class PreviewApp:
                     else:
                         setattr(updated, name, raw)
                         self.form_snapshot[name] = raw
+                if name in {"addcam", "delcam"}:
+                    setattr(updated, f"{name}_explicit", True)
             except ValueError as exc:
                 messagebox.showerror("Input Error", f"{definition['label']}: {exc}")
                 return None
@@ -4658,17 +4775,26 @@ class PreviewApp:
         updated.jobs = jobs_value
         self.jobs_var.set(jobs_value)
 
+        default_out = self._default_output_path()
         out_dir_text = self.output_path_var.get().strip()
         if out_dir_text:
             out_dir_path = Path(out_dir_text).expanduser()
+            auto_match = False
+            if default_out is not None:
+                try:
+                    auto_match = out_dir_path.resolve() == default_out.resolve()
+                except Exception:
+                    auto_match = False
             self.out_dir = out_dir_path
             normalized = str(out_dir_path)
             updated.out_dir = normalized
             self.output_path_var.set(normalized)
+            self._out_dir_custom = self._out_dir_custom or not auto_match
         else:
             self.out_dir = None
             updated.out_dir = None
             self.output_path_var.set("")
+            self._out_dir_custom = False
 
         return updated
 
@@ -4680,7 +4806,7 @@ class PreviewApp:
 
     def _apply_preset_defaults(self, preset_value: str) -> None:
         preset_defaults: Dict[str, Dict[str, Any]] = {
-            "fisheyelike": {"count": 10, "focal_mm": 17.0},
+            "fisheyelike": {"count": 10, "focal_mm": 17.0, "delcam": "A,C,D,F,H,I", "addcam": "A,F"},
             "2views": {"size": 3600, "focal_mm": 6.0},
             "fisheyeXY": {"count": 8, "size": 3600, "hfov": 180.0},
         }
@@ -4728,7 +4854,7 @@ class PreviewApp:
         if getattr(self.current_args, "input_is_video", False) or self.source_is_video:
             fps_current = self.current_args.fps if getattr(self.current_args, "fps", None) else self.video_persist_state.get("fps", 2.0)
             self.field_vars["fps"].set(str(fps_current))
-            self.field_vars["keep_rec709"].set(bool(self.current_args.keep_rec709))
+            self.field_vars["keep_rec709"].set(not bool(self.current_args.keep_rec709))
         updated = self.collect_updated_args()
         if updated is None:
             return
@@ -4746,8 +4872,7 @@ class PreviewApp:
             if self.out_dir:
                 self.output_path_var.set(str(self.out_dir))
             elif self.in_dir:
-                default_out = self._default_output_path()
-                self.output_path_var.set(str(default_out) if default_out is not None else "")
+                self._update_default_output_path()
 
     def browse_ffmpeg(self) -> None:
         filename = filedialog.askopenfilename(
@@ -4775,6 +4900,23 @@ class PreviewApp:
             self.out_dir = path_obj
             self.current_args.out_dir = str(path_obj)
             self.output_path_var.set(str(path_obj))
+            self._out_dir_custom = True
+
+    def _update_default_output_path(self) -> None:
+        default_out = self._default_output_path()
+        if self._out_dir_custom:
+            if self.out_dir:
+                self.output_path_var.set(str(self.out_dir))
+            elif default_out is not None:
+                self.output_path_var.set(str(default_out))
+            return
+        self.out_dir = default_out
+        if default_out is not None:
+            self.current_args.out_dir = str(default_out)
+            self.output_path_var.set(str(default_out))
+        else:
+            self.current_args.out_dir = None
+            self.output_path_var.set("")
 
     def prompt_for_directory(self, initial: bool = False) -> None:
         initial_path = self.in_dir
@@ -4828,7 +4970,7 @@ class PreviewApp:
             cutter.detect_input_bit_depth(video_path),
         )
         default_out = self._default_output_path()
-        if getattr(self.current_args, "out_dir", None):
+        if self._out_dir_custom and getattr(self.current_args, "out_dir", None):
             try:
                 self.out_dir = pathlib.Path(self.current_args.out_dir).expanduser().resolve()
             except Exception:
@@ -4839,6 +4981,9 @@ class PreviewApp:
             self.out_dir = default_out
             if self.out_dir is not None:
                 self.current_args.out_dir = str(self.out_dir)
+            else:
+                self.current_args.out_dir = None
+            self._out_dir_custom = False
         fps_current = getattr(self.current_args, "fps", None)
         if fps_current is None or fps_current <= 0:
             self.current_args.fps = 2.0
@@ -4854,6 +4999,10 @@ class PreviewApp:
         self.source_is_video = True
         self.folder_path_var.set(str(video_path))
         self._set_video_mode_controls(True)
+        if self.out_dir:
+            self.output_path_var.set(str(self.out_dir))
+        else:
+            self._update_default_output_path()
         self.set_form_values()
         return True
 
@@ -4890,13 +5039,21 @@ class PreviewApp:
         setattr(self.current_args, "input_is_video", False)
         setattr(self.current_args, "video_bit_depth", 8)
 
-        if getattr(self.current_args, "out_dir", None):
-            self.out_dir = pathlib.Path(self.current_args.out_dir).expanduser().resolve()
+        default_out = self._default_output_path()
+        if self._out_dir_custom and getattr(self.current_args, "out_dir", None):
+            try:
+                self.out_dir = pathlib.Path(self.current_args.out_dir).expanduser().resolve()
+            except Exception:
+                self.out_dir = default_out
+                if self.out_dir is not None:
+                    self.current_args.out_dir = str(self.out_dir)
         else:
-            default_out = self._default_output_path()
             self.out_dir = default_out
             if self.out_dir is not None:
                 self.current_args.out_dir = str(self.out_dir)
+            else:
+                self.current_args.out_dir = None
+            self._out_dir_custom = False
 
         if image_hint:
             hint_path = path / pathlib.Path(image_hint).name
@@ -4907,6 +5064,10 @@ class PreviewApp:
         self.folder_path_var.set(str(self.in_dir))
         self._set_video_mode_controls(False)
         self.load_image()
+        if self.out_dir:
+            self.output_path_var.set(str(self.out_dir))
+        else:
+            self._update_default_output_path()
         self.set_form_values()
         return True
 
@@ -5409,4 +5570,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
  
