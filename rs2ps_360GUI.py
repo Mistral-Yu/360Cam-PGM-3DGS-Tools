@@ -2101,6 +2101,17 @@ class PreviewApp:
                     col = anchor_pos[1] + int(definition.get("col_shift", 2))
             field_positions[name] = (row, col)
             video_only = bool(definition.get("video_only"))
+            # Defer video-only fps/keep_rec709 layout to custom frame below.
+            if name == "fps":
+                var = tk.StringVar()
+                self.field_vars[name] = var
+                self.field_widgets[name] = None
+                continue
+            if name == "keep_rec709":
+                var = tk.BooleanVar(value=False)
+                self.field_vars[name] = var
+                self.field_widgets[name] = None
+                continue
             if field_type == "bool":
                 var = tk.BooleanVar(value=False)
                 widget = tk.Checkbutton(controls, text=definition["label"], variable=var, anchor="w")
@@ -2155,19 +2166,46 @@ class PreviewApp:
         for col in range(max_col_index + 2):
             controls.grid_columnconfigure(col, weight=1 if col % 2 else 0)
 
-        # CSV for selected frames (video only)
-        csv_row = max(pos[0] for pos in field_positions.values()) + 1 if field_positions else 0
-        csv_frame = tk.Frame(controls)
-        csv_frame.grid(row=csv_row, column=0, columnspan=max_col_index + 2, sticky="we", padx=4, pady=4)
-        tk.Label(csv_frame, text="CSV (selected frames)").pack(side=tk.LEFT, padx=(0, 4))
-        self.preview_csv_entry = tk.Entry(csv_frame, textvariable=self.preview_csv_var, width=32)
-        self.preview_csv_entry.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 4))
+        video_frame = tk.LabelFrame(controls, text="Video (direct export)")
+        video_frame.grid(
+            row=max(pos[0] for pos in field_positions.values()) + 1 if field_positions else 0,
+            column=0,
+            columnspan=max_col_index + 2,
+            sticky="we",
+            padx=4,
+            pady=(6, 4),
+        )
+        video_frame.columnconfigure(1, weight=1)
+        video_frame.columnconfigure(3, weight=1)
+
+        tk.Label(video_frame, text="FPS").grid(row=0, column=0, sticky="e", padx=4, pady=2)
+        fps_var = self.field_vars.get("fps")
+        fps_entry = self.field_widgets.get("fps")
+        if fps_var is not None and fps_entry is None:
+            fps_entry = tk.Entry(video_frame, textvariable=fps_var, width=8)
+            self.field_widgets["fps"] = fps_entry
+        if fps_entry is not None:
+            fps_entry.grid(row=0, column=1, sticky="we", padx=4, pady=2)
+
+        keep_var = self.field_vars.get("keep_rec709")
+        keep_chk = self.field_widgets.get("keep_rec709")
+        if keep_var is not None and keep_chk is None:
+            keep_chk = tk.Checkbutton(video_frame, text="Convert Rec.709 to sRGB", variable=keep_var, anchor="w")
+            keep_chk.configure(width=20)
+            self.field_widgets["keep_rec709"] = keep_chk
+        if keep_chk is not None:
+            keep_chk.grid(row=0, column=2, columnspan=2, sticky="w", padx=4, pady=2)
+
+        tk.Label(video_frame, text="CSV (selected frames)").grid(row=1, column=0, sticky="e", padx=4, pady=2)
+        self.preview_csv_entry = tk.Entry(video_frame, textvariable=self.preview_csv_var, width=28)
+        self.preview_csv_entry.grid(row=1, column=1, sticky="we", padx=4, pady=2)
         self.preview_csv_button = tk.Button(
-            csv_frame,
+            video_frame,
             text="Browse...",
             command=self._browse_preview_csv,
+            width=10,
         )
-        self.preview_csv_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.preview_csv_button.grid(row=1, column=2, columnspan=2, sticky="w", padx=4, pady=2)
         try:
             self.preview_csv_var.trace_add("write", lambda *_args: self._update_preview_csv_state())
         except Exception:
