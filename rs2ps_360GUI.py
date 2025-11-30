@@ -587,6 +587,11 @@ class PreviewApp:
         self.help_text: Optional[tk.Text] = None
         self.update_button: Optional[tk.Button] = None
         self.execute_button: Optional[tk.Button] = None
+        self.preview_csv_var = tk.StringVar()
+        self.preview_csv_entry: Optional[tk.Entry] = None
+        self.preview_csv_button: Optional[tk.Button] = None
+        self._preview_estimated_frames: Optional[int] = None
+        self._video_estimated_cache: Dict[str, int] = {}
         self.right_inner: Optional[tk.Frame] = None
         self.notebook: Optional[ttk.Notebook] = None
 
@@ -779,6 +784,7 @@ class PreviewApp:
         self.video_vars["fisheye_perspective"].trace_add(
             "write", self._on_fisheye_perspective_changed
         )
+        self.video_set_fps_var = tk.BooleanVar(value=True)
 
         row = 0
         tk.Label(params, text="Input video").grid(row=row, column=0, sticky="e", padx=4, pady=4)
@@ -915,11 +921,17 @@ class PreviewApp:
         actions.pack(fill="x", padx=8, pady=(0, 8))
         self.video_inspect_button = tk.Button(
             actions,
-            text="Inspect video (set FPS)",
+            text="Inspect video",
             command=self._inspect_video_metadata,
             state="disabled",
         )
         self.video_inspect_button.pack(side=tk.LEFT, padx=4, pady=4)
+        self.video_set_fps_check = tk.Checkbutton(
+            actions,
+            text="Set FPS",
+            variable=self.video_set_fps_var,
+        )
+        self.video_set_fps_check.pack(side=tk.LEFT, padx=4, pady=4)
         self.video_stop_button = tk.Button(
             actions,
             text="Stop",
@@ -1100,7 +1112,11 @@ class PreviewApp:
         except Exception:
             button.configure(state="disabled")
             return
-        button.configure(state="normal" if path.exists() else "disabled")
+        enabled = path.exists() and path.is_file()
+        button.configure(state="normal" if enabled else "disabled")
+        checkbox = getattr(self, "video_set_fps_check", None)
+        if checkbox is not None:
+            checkbox.configure(state="normal" if enabled else "disabled")
 
     def _update_preview_inspect_state(self) -> None:
         button = self.preview_inspect_button
@@ -1108,6 +1124,7 @@ class PreviewApp:
             return
         if not self.source_is_video:
             button.configure(state="disabled")
+            self._update_preview_csv_state()
             return
         video_path = None
         if self.files:
@@ -1121,12 +1138,14 @@ class PreviewApp:
                     video_path = None
         if video_path is None:
             button.configure(state="disabled")
+            self._update_preview_csv_state()
             return
         try:
             exists = video_path.exists()
         except Exception:
             exists = False
         button.configure(state="normal" if exists else "disabled")
+        self._update_preview_csv_state()
 
     def _resolve_ffmpeg_path(self) -> str:
         ffmpeg_value = self.ffmpeg_path_var.get().strip()
@@ -1197,9 +1216,43 @@ class PreviewApp:
         h = total_minutes // 60
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
-    def _apply_detected_video_fps(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _store_estimated_frames(self, video_path: Path, metadata: Optional[Dict[str, Any]]) -> None:
         if not metadata:
+            return
+        estimated = metadata.get("estimated_frames")
+        if estimated is None:
+            return
+        try:
+            est_int = int(estimated)
+        except Exception:
+            return
+        key = str(Path(video_path).expanduser().resolve())
+        self._video_estimated_cache[key] = est_int
+        self._preview_estimated_frames = est_int
+
+    def _get_estimated_frames(self, video_path: Path) -> Optional[int]:
+        key = None
+        try:
+            key = str(Path(video_path).expanduser().resolve())
+        except Exception:
+            key = str(video_path)
+        if key and key in self._video_estimated_cache:
+            return self._video_estimated_cache.get(key)
+        result = self._collect_video_metadata_lines(video_path, "Frame count probe")
+        if not result:
             return None
+        _lines, metadata = result
+        self._store_estimated_frames(video_path, metadata)
+        if metadata:
+            try:
+                return int(metadata.get("estimated_frames"))
+            except Exception:
+                return None
+        return None
+
+    def _apply_detected_video_fps(self, metadata: Optional[Dict[str, Any]]) -> Tuple[Optional[str], bool]:
+        if not metadata:
+            return None, False
         fps_value = metadata.get("frame_rate")
         fps_text_raw = metadata.get("frame_rate_text")
         detected = None
@@ -1211,15 +1264,23 @@ class PreviewApp:
         if detected is None and fps_text_raw:
             detected = self._parse_fps_from_stream(str(fps_text_raw))
         if detected is None or detected <= 0.0:
-            return None
+            return None, False
         formatted = self._format_fps_for_output(f"{detected}")
         if not formatted:
-            return None
+            return None, False
         fps_var = self.video_vars.get("fps") if self.video_vars else None
         if fps_var is None:
-            return None
-        fps_var.set(formatted)
-        return formatted
+            return None, False
+        should_apply = True
+        if hasattr(self, "video_set_fps_var") and self.video_set_fps_var is not None:
+            try:
+                should_apply = bool(self.video_set_fps_var.get())
+            except Exception:
+                should_apply = True
+        if should_apply:
+            fps_var.set(formatted)
+            return formatted, True
+        return formatted, False
 
     def _inspect_video_metadata(self) -> None:
         if not self.video_vars:
@@ -1247,9 +1308,16 @@ class PreviewApp:
         self._set_text_widget(self.video_log, "")
         for line in lines:
             self._append_text_widget(self.video_log, line)
-        fps_updated = self._apply_detected_video_fps(metadata)
+        fps_updated, applied = self._apply_detected_video_fps(metadata)
+        self._store_estimated_frames(video_path, metadata)
         if fps_updated:
-            self._append_text_widget(self.video_log, f"[fps] Updated FPS to detected value ({fps_updated})")
+            if applied:
+                self._append_text_widget(self.video_log, f"[fps] Updated FPS to detected value ({fps_updated})")
+            else:
+                self._append_text_widget(
+                    self.video_log,
+                    f"[fps] Detected FPS {fps_updated} (Set FPS unchecked; entry left unchanged)",
+                )
 
     def _inspect_preview_video_metadata(self) -> None:
         if not self.source_is_video:
@@ -1276,6 +1344,7 @@ class PreviewApp:
         lines, _metadata = result
         for line in lines:
             self._append_text_widget(self.log_text, line)
+        self._store_estimated_frames(video_path, _metadata)
 
     def _collect_video_metadata_lines(
         self,
@@ -1444,6 +1513,7 @@ class PreviewApp:
         duration_seconds: Optional[float] = None
         if duration_match:
             duration_seconds = self._parse_duration_text(duration_match.group(1))
+        estimated_frames: Optional[int] = None
 
         if video_streams:
             video = video_streams[0]
@@ -1489,6 +1559,8 @@ class PreviewApp:
                 lines.append("  Side data:")
                 for item in video["side"]:
                     lines.append(f"    {item}")
+            if estimated_frames is not None:
+                primary_metadata["estimated_frames"] = estimated_frames
 
         if result.returncode != 0 and "At least one output file must be specified" not in combined_output:
             lines.append(f"[warn] ffmpeg exited with code {result.returncode}")
@@ -2083,6 +2155,25 @@ class PreviewApp:
         for col in range(max_col_index + 2):
             controls.grid_columnconfigure(col, weight=1 if col % 2 else 0)
 
+        # CSV for selected frames (video only)
+        csv_row = max(pos[0] for pos in field_positions.values()) + 1 if field_positions else 0
+        csv_frame = tk.Frame(controls)
+        csv_frame.grid(row=csv_row, column=0, columnspan=max_col_index + 2, sticky="we", padx=4, pady=4)
+        tk.Label(csv_frame, text="CSV (selected frames)").pack(side=tk.LEFT, padx=(0, 4))
+        self.preview_csv_entry = tk.Entry(csv_frame, textvariable=self.preview_csv_var, width=32)
+        self.preview_csv_entry.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 4))
+        self.preview_csv_button = tk.Button(
+            csv_frame,
+            text="Browse...",
+            command=self._browse_preview_csv,
+        )
+        self.preview_csv_button.pack(side=tk.LEFT, padx=(0, 4))
+        try:
+            self.preview_csv_var.trace_add("write", lambda *_args: self._update_preview_csv_state())
+        except Exception:
+            pass
+        self._update_preview_csv_state()
+
         ffmpeg_frame = tk.LabelFrame(self.right_inner, text="ffmpeg Options")
         ffmpeg_frame.pack(fill="x", pady=(4, 4))
         ffmpeg_frame.columnconfigure(1, weight=1)
@@ -2631,7 +2722,6 @@ class PreviewApp:
             return
 
         self.selector_auto_fetch_pending = False
-
         in_dir = self.selector_vars["in_dir"].get().strip()
         if not in_dir:
             messagebox.showerror("rs2ps_FrameSelector", "Input folder is required.")
@@ -2662,6 +2752,7 @@ class PreviewApp:
         cmd.extend(["-n", str(segment_value)])
 
         dry_run_required = bool(self.selector_vars["dry_run"].get())
+        augment_motion_enabled = bool(self.selector_vars["augment_motion"].get())
 
         workers_text = self.selector_vars["workers"].get().strip()
         auto_workers = self._auto_frame_selector_workers()
@@ -2698,6 +2789,16 @@ class PreviewApp:
 
         csv_mode = self.selector_vars["csv_mode"].get().strip()
         csv_path = self.selector_vars["csv_path"].get().strip()
+        flow_recompute_needed = False
+        if augment_motion_enabled and csv_mode in {"apply", "reselect"} and csv_path:
+            flow_zero = self._csv_flow_motion_all_zero(csv_path, base_dir=in_dir)
+            if flow_zero:
+                flow_recompute_needed = True
+                csv_mode = "write"
+                self._append_text_widget(
+                    self.selector_log,
+                    "[info] flow_motion values are zero; recomputing metrics with motion before selection.",
+                )
         if csv_mode and csv_mode != "none":
             if not csv_path:
                 messagebox.showerror("rs2ps_FrameSelector", "CSV path is required for the selected mode.")
@@ -2740,7 +2841,7 @@ class PreviewApp:
             cmd.append("--no_augment_gaps")
         if bool(self.selector_vars["augment_lowlight"].get()):
             cmd.append("--augment_lowlight")
-        if bool(self.selector_vars["augment_motion"].get()):
+        if augment_motion_enabled:
             cmd.append("--augment_motion")
         if not bool(self.selector_vars["ignore_highlights"].get()):
             cmd.append("--no-ignore-highlights")
@@ -2787,6 +2888,83 @@ class PreviewApp:
         if cpu is None or cpu <= 0:
             cpu = 4
         return max(1, min(8, cpu))
+
+    def _csv_flow_motion_all_zero(self, csv_path: str, base_dir: Optional[str] = None) -> Optional[bool]:
+        """Return True when flow_motion exists and all numeric values are zero."""
+        try:
+            path_obj = Path(csv_path).expanduser()
+            if not path_obj.is_absolute() and base_dir:
+                path_obj = Path(base_dir).expanduser() / path_obj
+            if not path_obj.exists():
+                return None
+            with path_obj.open("r", newline="") as f:
+                reader = csv.DictReader(f)
+                if not reader.fieldnames:
+                    return None
+                field_map = {name.lower(): name for name in reader.fieldnames}
+                flow_key = field_map.get("flow_motion")
+                if not flow_key:
+                    return None
+                any_values = False
+                for row in reader:
+                    raw = row.get(flow_key)
+                    if raw is None:
+                        continue
+                    text = str(raw).strip()
+                    if not text:
+                        continue
+                    any_values = True
+                    try:
+                        if float(text) != 0.0:
+                            return False
+                    except ValueError:
+                        return False
+                if any_values:
+                    return True
+                return None
+        except Exception:
+            return None
+
+    def _load_selected_frames_from_csv(self, csv_path: Path) -> Tuple[List[int], int]:
+        """Load selected frame indices and total rows from CSV."""
+        indices: List[int] = []
+        total_rows = 0
+        path_obj = csv_path.expanduser()
+        if not path_obj.exists():
+            raise FileNotFoundError(f"CSV not found: {path_obj}")
+        with path_obj.open("r", newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames or []
+            field_map = {name.lower(): name for name in headers if name}
+            selected_key = field_map.get("selected(1=keep)") or field_map.get("selected")
+            index_key = field_map.get("index")
+            filename_key = field_map.get("filename")
+            if not selected_key:
+                raise ValueError("CSV must contain 'selected(1=keep)' or 'selected' column.")
+            for row_idx, row in enumerate(reader):
+                total_rows += 1
+                flag_text = str(row.get(selected_key, "")).strip().lower()
+                selected = flag_text in {"1", "true", "yes", "keep"}
+                if not selected:
+                    continue
+                if index_key and row.get(index_key) not in (None, ""):
+                    try:
+                        idx = int(row[index_key])
+                    except (TypeError, ValueError):
+                        idx = row_idx
+                else:
+                    idx = row_idx
+                indices.append(idx)
+        # Ensure stable ordering and uniqueness
+        seen: Set[int] = set()
+        unique_indices: List[int] = []
+        for idx in indices:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            unique_indices.append(idx)
+        unique_indices.sort()
+        return unique_indices, total_rows
 
     @staticmethod
     def _auto_preview_jobs() -> int:
@@ -4442,6 +4620,7 @@ class PreviewApp:
             setattr(self.current_args, "keep_rec709", False)
             self._video_preview_signature = None
         self._update_preview_inspect_state()
+        self._update_preview_csv_state()
 
     def _on_show_seam_toggle(self, var: tk.BooleanVar) -> None:
         value = bool(var.get())
@@ -4635,6 +4814,47 @@ class PreviewApp:
             return
         if not enabled:
             quality_var.set(False)
+
+    def _update_preview_csv_state(self) -> None:
+        enabled = bool(self.source_is_video)
+        entry = self.preview_csv_entry
+        button = self.preview_csv_button
+        state = "normal" if enabled else "disabled"
+        try:
+            if entry is not None:
+                entry.configure(state=state)
+            if button is not None:
+                button.configure(state=state)
+        except tk.TclError:
+            pass
+        fps_widget = self.field_widgets.get("fps")
+        if fps_widget is not None:
+            csv_filled = bool(self.preview_csv_var.get().strip()) if self.preview_csv_var is not None else False
+            fps_state = "disabled"
+            if self.source_is_video and not csv_filled:
+                fps_state = "normal"
+            try:
+                fps_widget.configure(state=fps_state)
+            except tk.TclError:
+                pass
+
+    def _browse_preview_csv(self) -> None:
+        if not self.source_is_video:
+            return
+        current = self.preview_csv_var.get().strip()
+        initial_dir = Path(current).expanduser().parent if current else (self.in_dir.parent if self.in_dir else self.base_dir)
+        try:
+            if not initial_dir.exists():
+                initial_dir = self.base_dir
+        except Exception:
+            initial_dir = self.base_dir
+        path = filedialog.askopenfilename(
+            title="Select selection CSV",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialdir=str(initial_dir),
+        )
+        if path:
+            self.preview_csv_var.set(path)
 
     def collect_updated_args(self) -> Optional[argparse.Namespace]:
         updated = clone_namespace(self.current_args)
@@ -5369,6 +5589,45 @@ class PreviewApp:
             return
         self.current_args = updated
         ensure_explicit_flags(self.current_args)
+        self._selected_frame_indices = None
+        if self.source_is_video:
+            csv_path_text = self.preview_csv_var.get().strip()
+            if csv_path_text:
+                try:
+                    indices, total_rows = self._load_selected_frames_from_csv(Path(csv_path_text))
+                except FileNotFoundError as exc:
+                    messagebox.showerror("Selection CSV", str(exc))
+                    return
+                except Exception as exc:
+                    messagebox.showerror("Selection CSV", f"Failed to read CSV:\n{exc}")
+                    return
+                if total_rows <= 0:
+                    messagebox.showerror("Selection CSV", "CSV has no rows.")
+                    return
+                if not indices:
+                    messagebox.showerror("Selection CSV", "No rows with selected=1 were found.")
+                    return
+                video_path = Path(self.in_dir) if self.in_dir else None
+                estimate = None
+                if video_path is not None:
+                    estimate = self._get_estimated_frames(video_path)
+                if estimate is not None:
+                    delta = abs(total_rows - estimate)
+                    if delta > 1:
+                        messagebox.showerror(
+                            "Selection CSV",
+                            f"CSV rows ({total_rows}) do not match estimated frames ({estimate}).\n"
+                            "Frame selection aborted.",
+                        )
+                        return
+                    if delta == 1:
+                        self.append_log_line(
+                            f"[warn] CSV rows ({total_rows}) differ from estimated frames ({estimate}) by 1; proceeding."
+                        )
+                else:
+                    self.append_log_line("[info] Estimated frame count unavailable; proceeding without count check.")
+                self._selected_frame_indices = indices
+                self.append_log_line(f"[select] Using {len(indices)} selected frames from CSV ({total_rows} rows).")
         self.result = None
         if self.result is None or not self.result.jobs:
             self.refresh_overlays()
@@ -5392,12 +5651,44 @@ class PreviewApp:
             self.preview_stop_button.configure(state="normal")
         self.append_log_line("[EXEC] Starting export...")
         jobs_snapshot = list(self.result.jobs)
+        if getattr(self.current_args, "input_is_video", False):
+            selected_indices = getattr(self, "_selected_frame_indices", None)
+            if selected_indices:
+                jobs_snapshot = self._apply_frame_selection_to_jobs(jobs_snapshot, selected_indices)
         thread = threading.Thread(
             target=self._run_execute_jobs,
             args=(jobs_snapshot,),
             daemon=True,
         )
         thread.start()
+
+    def _apply_frame_selection_to_jobs(
+        self,
+        jobs: List[Tuple[List[str], str, str]],
+        indices: Sequence[int],
+    ) -> List[Tuple[List[str], str, str]]:
+        if not indices:
+            return jobs
+        clauses = [f"eq(n\\,{idx})" for idx in indices]
+        select_filter = "select='" + "+".join(clauses) + "'"
+        updated: List[Tuple[List[str], str, str]] = []
+        for cmd, src, dst in jobs:
+            if "-vf" in cmd:
+                vf_idx = cmd.index("-vf")
+                if vf_idx + 1 < len(cmd):
+                    filters = cmd[vf_idx + 1]
+                    new_filters = select_filter
+                    if filters:
+                        if filters.startswith("fps="):
+                            remainder = filters.split(",", 1)[1] if "," in filters else ""
+                            if remainder:
+                                new_filters = f"{select_filter},{remainder}"
+                        else:
+                            new_filters = f"{select_filter},{filters}"
+                    cmd = list(cmd)
+                    cmd[vf_idx + 1] = new_filters
+            updated.append((cmd, src, dst))
+        return updated
 
     def _run_execute_jobs(self, jobs: List[Tuple[List[str], str, str]]) -> None:
         workers = cutter.parse_jobs(getattr(self.current_args, "jobs", "auto"))
