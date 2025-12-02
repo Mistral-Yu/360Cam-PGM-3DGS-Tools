@@ -4,6 +4,11 @@
 """
 rs2ps_360PerspCut converts 360-degree panoramas into perspective or fisheye crops
 by orchestrating ffmpeg runs.
+It accepts files or directories, derives camera orientations from presets or
+manual modifiers, and emits view images with optional fisheye/top-down outputs.
+Field-of-view math is resolved from sensor and focal parameters, while ffmpeg
+jobs run in parallel with progress reporting and graceful cleanup.
+Cancellation uses the default Ctrl+C (SIGINT) handler for graceful shutdowns.
 """
 
 import argparse, json, math, pathlib, subprocess, sys, os, signal, threading, shlex, re, shutil
@@ -281,12 +286,14 @@ def parse_setcam_spec(spec: str, default_deg: float):
 def build_ffmpeg_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
                      w: int, h: int, yaw: float, pitch: float,
                      hfov: float, vfov: float, interp_v360: str,
-                     ext: str, ffthreads: str, *,
+                     ext: str, *,
                      video_mode: bool = False,
                      fps: Optional[float] = None,
                      keep_rec709: bool = False,
                      bit_depth: int = 8,
-                     jpeg_quality_95: bool = False) -> List[str]:
+                     jpeg_quality_95: bool = False,
+                     start_time: Optional[float] = None,
+                     end_time: Optional[float] = None) -> List[str]:
     ext_lower = ext.lower()
     filters: List[str] = []
     if video_mode:
@@ -305,9 +312,14 @@ def build_ffmpeg_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
         f":w={w}:h={h}:yaw={yaw}:pitch={pitch}:roll=0"
         f":h_fov={hfov}:v_fov={vfov}:interp={interp_v360}"
     )
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", ",".join(filters)]
-    if str(ffthreads).lower() != "auto":
-        cmd += ["-threads", str(int(ffthreads))]
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    if video_mode and start_time is not None:
+        cmd += ["-ss", f"{max(0.0, float(start_time))}"]
+    cmd += ["-i", str(inp)]
+    if video_mode and end_time is not None:
+        cmd += ["-to", f"{max(0.0, float(end_time))}"]
+    cmd += ["-vf", ",".join(filters)]
+    cmd += ["-threads", "1"]
     if video_mode:
         cmd += ["-vsync", "vfr", "-start_number", "0"]
     else:
@@ -339,12 +351,14 @@ def build_ffmpeg_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
 def build_ffmpeg_equisolid_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path,
                                w: int, h: int, yaw: float, pitch: float,
                                fov_deg: float, interp_v360: str,
-                               ext: str, ffthreads: str, *,
+                               ext: str, *,
                                video_mode: bool = False,
                                fps: Optional[float] = None,
                                keep_rec709: bool = False,
                                bit_depth: int = 8,
-                               jpeg_quality_95: bool = False) -> List[str]:
+                               jpeg_quality_95: bool = False,
+                               start_time: Optional[float] = None,
+                               end_time: Optional[float] = None) -> List[str]:
     ext_lower = ext.lower()
     filters: List[str] = []
     if video_mode:
@@ -363,9 +377,14 @@ def build_ffmpeg_equisolid_cmd(ffmpeg: str, inp: pathlib.Path, out: pathlib.Path
         f":w={w}:h={h}:yaw={yaw}:pitch={pitch}:roll=0"
         f":d_fov={fov_deg}:interp={interp_v360}"
     )
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(inp), "-vf", ",".join(filters)]
-    if str(ffthreads).lower() != "auto":
-        cmd += ["-threads", str(int(ffthreads))]
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    if video_mode and start_time is not None:
+        cmd += ["-ss", f"{max(0.0, float(start_time))}"]
+    cmd += ["-i", str(inp)]
+    if video_mode and end_time is not None:
+        cmd += ["-to", f"{max(0.0, float(end_time))}"]
+    cmd += ["-vf", ",".join(filters)]
+    cmd += ["-threads", "1"]
     if video_mode:
         cmd += ["-vsync", "vfr", "-start_number", "0"]
     else:
@@ -475,6 +494,14 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help="Frame extraction rate (fps) when input is a video file"
     )
     ap.add_argument(
+        "--start", type=float, default=None,
+        help="Optional start time in seconds when input is a video file"
+    )
+    ap.add_argument(
+        "--end", type=float, default=None,
+        help="Optional end time in seconds when input is a video file"
+    )
+    ap.add_argument(
         "--keep-rec709", action="store_true",
         help="Keep Rec.709 transfer characteristics for video inputs (default: convert to sRGB)"
     )
@@ -495,7 +522,6 @@ def create_arg_parser() -> argparse.ArgumentParser:
         "-j", "--jobs", default="auto",
         help="Concurrent ffmpeg processes (number or 'auto'=physical cores/2)"
     )
-    ap.add_argument("--ffthreads", default="1", help="Internal ffmpeg threads per process (number or 'auto')")
     ap.add_argument(
         "--print-cmd", choices=["once", "none", "all"], default="once",
         help="How many ffmpeg commands to print: once/none/all"
@@ -573,6 +599,8 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
     fps_value = getattr(args, "fps", None)
     keep_rec709 = bool(getattr(args, "keep_rec709", False))
     video_bit_depth = int(getattr(args, "video_bit_depth", 8))
+    start_time = getattr(args, "start", None)
+    end_time = getattr(args, "end", None)
 
     even_pitch_all = None
     even_pitch_map: Dict[int, float] = {}
@@ -692,6 +720,8 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
         keep_rec709=keep_rec709,
         bit_depth=video_bit_depth,
         jpeg_quality_95=args.jpeg_quality_95,
+        start_time=start_time,
+        end_time=end_time,
     )
 
     def make_out_path(view_id: str) -> pathlib.Path:
@@ -780,7 +810,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                 if out_path.name not in existing_names:
                     cmd = build_ffmpeg_cmd(
                         ffmpeg, img, out_path, w, h, yaw, pitch,
-                        hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                        hfov_deg, vfov_deg, interp_v360, ext_dot,
                         **ffmpeg_common_kwargs,
                     )
                     jobs_list.append((cmd, img.name, out_path.name))
@@ -796,7 +826,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                     if out_path2.name not in existing_names:
                         cmd2 = build_ffmpeg_cmd(
                             ffmpeg, img, out_path2, w, h, yaw, p2,
-                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                        hfov_deg, vfov_deg, interp_v360, ext_dot,
                             **ffmpeg_common_kwargs,
                         )
                         jobs_list.append((cmd2, img.name, out_path2.name))
@@ -812,7 +842,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                     if out_path3.name not in existing_names:
                         cmd3 = build_ffmpeg_cmd(
                             ffmpeg, img, out_path3, w, h, yaw, p3,
-                            hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                        hfov_deg, vfov_deg, interp_v360, ext_dot,
                             **ffmpeg_common_kwargs,
                         )
                         jobs_list.append((cmd3, img.name, out_path3.name))
@@ -826,7 +856,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                     continue
                 cmd_xy = build_ffmpeg_equisolid_cmd(
                     ffmpeg, img, out_path_xy, fisheye_size, fisheye_size,
-                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot, args.ffthreads,
+                    yaw_xy, pitch_xy, fisheye_fov_deg, interp_v360, ext_dot,
                     **ffmpeg_common_kwargs,
                 )
                 jobs_list.append((cmd_xy, img.name, out_path_xy.name))
@@ -855,7 +885,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                     continue
                 cmd_td = build_ffmpeg_cmd(
                     ffmpeg, img, out_path_td, w, h, 0.0, pitch_td,
-                    hfov_deg, vfov_deg, interp_v360, ext_dot, args.ffthreads,
+                    hfov_deg, vfov_deg, interp_v360, ext_dot,
                     **ffmpeg_common_kwargs,
                 )
                 jobs_list.append((cmd_td, img.name, out_path_td.name))
@@ -901,16 +931,16 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
                 )
             else:
                 sensor_line = f"[INFO] Sensor={args.sensor_mm} mm | size={w}x{h}"
-                focal_segment = f"focal length=**{f_used_mm:.3f}**mm"
+                focal_segment = f"focal length=  {f_used_mm:.3f} mm"
                 if focal_35mm_equiv is not None:
-                    focal_segment += f" (35mm eq=**{focal_35mm_equiv:.3f}**mm)"
+                    focal_segment += f" (35mm eq=  {focal_35mm_equiv:.3f} mm)"
                 realityscan_line = f"[INFO] For RealityScan: {focal_segment}"
                 if w > 0:
                     pixel_size_mm = sensor_w_mm / float(w)
                     if pixel_size_mm > 0:
                         focal_px = f_used_mm / pixel_size_mm
                         metashape_line = (
-                            "[INFO] For Metashape: Precalibrated f=**{:.5f}** | pixel_size=**{:.4f}** mm".format(
+                            "[INFO] For Metashape: Precalibrated f=  {:.5f}  | pixel_size=  {:.4f} mm".format(
                                 focal_px, pixel_size_mm
                             )
                         )
@@ -984,7 +1014,7 @@ def main():
     jobs = parse_jobs(args.jobs)
     last_progress_pct = -1
     progress_label = "Progress"
-    print(f"[INFO] parallel jobs: {jobs} / ffthreads: {args.ffthreads} / total: {total}")
+    print(f"[INFO] parallel jobs: {jobs} / total: {total}")
     if result.preview_views_line:
         print(result.preview_views_line)
         if result.sensor_line:
@@ -1037,4 +1067,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
