@@ -1369,11 +1369,15 @@ def main():
     motion_pruned_indices = set()
     motion_prune_threshold = None
 
-    workers = (
-        args.workers
-        if (args.workers and args.workers > 0)
-        else min(8, (os.cpu_count() or 4))
-    )
+    auto_workers = max(1, min(8, (os.cpu_count() or 4)))
+    max_workers = max(1, auto_workers * 4)
+    if args.workers and args.workers > 0:
+        if args.workers > max_workers:
+            print(f"[ERR] workers must be <= {max_workers} (auto={auto_workers}).")
+            sys.exit(1)
+        workers = args.workers
+    else:
+        workers = auto_workers
 
     if args.apply_csv:
         apply_csv_path = args.apply_csv
