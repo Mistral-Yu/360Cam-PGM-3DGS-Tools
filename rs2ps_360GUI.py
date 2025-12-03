@@ -2838,7 +2838,7 @@ class PreviewApp:
 
         workers_text = self.selector_vars["workers"].get().strip()
         auto_workers = self._auto_frame_selector_workers()
-        max_workers = max(1, auto_workers * 3)
+        max_workers = max(1, auto_workers * 4)
         if workers_text:
             if workers_text.lower() != "auto":
                 try:
@@ -3047,6 +3047,14 @@ class PreviewApp:
             unique_indices.append(idx)
         unique_indices.sort()
         return unique_indices, total_rows
+
+    def _count_selected_frames_quiet(self, csv_path: Path) -> Optional[int]:
+        """Return selected count from CSV without showing message boxes."""
+        try:
+            indices, _total = self._load_selected_frames_from_csv(csv_path)
+            return len(indices)
+        except Exception:
+            return None
 
     @staticmethod
     def _auto_preview_jobs() -> int:
@@ -5146,7 +5154,7 @@ class PreviewApp:
 
     def _apply_preset_defaults(self, preset_value: str) -> None:
         preset_defaults: Dict[str, Dict[str, Any]] = {
-            "fisheyelike": {"count": 10, "focal_mm": 17.0, "delcam": "A,C,D,F,H,I", "addcam": "A,F"},
+            "fisheyelike": {"count": 10, "focal_mm": 17.0, "delcam": "C,D,H,I", "addcam": "A,F"},
             "2views": {"size": 3600, "focal_mm": 6.0},
             "fisheyeXY": {"count": 8, "size": 3600, "hfov": 180.0},
         }
@@ -5707,8 +5715,19 @@ class PreviewApp:
             jobs_parallel = self._effective_jobs()
         except Exception:
             jobs_parallel = self.current_args.jobs
+        total_units = len(self.result.jobs)
+        if self.source_is_video:
+            selected_count: Optional[int] = None
+            if self.preview_csv_var is not None:
+                csv_text = self.preview_csv_var.get().strip()
+                if csv_text:
+                    selected_count = self._count_selected_frames_quiet(Path(csv_text))
+            frames_per_job = self._estimate_frames_per_job(selected_count)
+            if frames_per_job is None or frames_per_job <= 0:
+                frames_per_job = 1
+            total_units = frames_per_job * len(self.result.jobs)
         info_lines.append(
-            f"[INFO] parallel jobs: {jobs_parallel} / total: {len(self.result.jobs)}"
+            f"[INFO] parallel jobs: {jobs_parallel} / total outputs: {total_units}"
         )
         if self.result.preview_views_line:
             info_lines.append(self.result.preview_views_line)
@@ -5851,33 +5870,100 @@ class PreviewApp:
         select_filter = "select='" + "+".join(clauses) + "'"
         updated: List[Tuple[List[str], str, str]] = []
         for cmd, src, dst in jobs:
+            cmd = list(cmd)
+            # Normalize seek args: move -ss/-to after input for CSV selection to preserve timestamps.
+            input_idx = cmd.index("-i") if "-i" in cmd else None
+            seek_args: List[str] = []
+            def _pull_flag(flag: str) -> None:
+                while flag in cmd:
+                    idx_flag = cmd.index(flag)
+                    cmd.pop(idx_flag)
+                    if idx_flag < len(cmd):
+                        seek_args.append(flag)
+                        seek_args.append(cmd.pop(idx_flag))
+            _pull_flag("-ss")
+            _pull_flag("-to")
             if "-vf" in cmd:
                 vf_idx = cmd.index("-vf")
                 if vf_idx + 1 < len(cmd):
                     filters = cmd[vf_idx + 1]
                     new_filters = select_filter
                     if filters:
-                        if filters.startswith("fps="):
-                            remainder = filters.split(",", 1)[1] if "," in filters else ""
-                            if remainder:
-                                new_filters = f"{select_filter},{remainder}"
+                        parts = filters.split(",")
+                        fps_parts = [p for p in parts if p.strip().startswith("fps=")]
+                        other_parts = [p for p in parts if not p.strip().startswith("fps=")]
+                        # When using CSV selection, drop fps filter to avoid double sub-sampling.
+                        if other_parts:
+                            new_filters = f"{select_filter},{','.join(other_parts)}"
                         else:
-                            new_filters = f"{select_filter},{filters}"
-                    cmd = list(cmd)
+                            new_filters = select_filter
                     cmd[vf_idx + 1] = new_filters
             # Preserve original frame numbers in filenames when using CSV selection.
             if "-frame_pts" not in cmd:
-                cmd = list(cmd)
                 insert_at = max(1, len(cmd) - 1)
                 cmd.insert(insert_at, "1")
                 cmd.insert(insert_at, "-frame_pts")
+            # Remove start_number to allow frame_pts-driven numbering.
+            while "-start_number" in cmd:
+                idx = cmd.index("-start_number")
+                cmd.pop(idx)  # flag
+                if idx < len(cmd):
+                    cmd.pop(idx)  # value
             if "-vsync" not in cmd:
-                cmd = list(cmd)
                 insert_at = max(1, len(cmd) - 1)
                 cmd.insert(insert_at, "vfr")
                 cmd.insert(insert_at, "-vsync")
+            if "-copyts" not in cmd:
+                insert_at = 1
+                cmd.insert(insert_at, "-copyts")
+            if input_idx is not None:
+                # Recompute input index after prior modifications.
+                try:
+                    input_idx = cmd.index("-i")
+                except ValueError:
+                    input_idx = None
+            if input_idx is not None and seek_args:
+                insert_at = input_idx + 2  # after "-i" and path
+                cmd[insert_at:insert_at] = seek_args
             updated.append((cmd, src, dst))
         return updated
+
+    def _estimate_frames_per_job(self, selected_count: Optional[int] = None) -> Optional[int]:
+        if not self.source_is_video:
+            return 1
+        frames_per_job: Optional[int] = selected_count
+        if frames_per_job is None:
+            video_path = None
+            if self.files:
+                try:
+                    video_path = Path(self.files[0])
+                except Exception:
+                    video_path = None
+            if video_path is not None:
+                frames_est, fps_in = self._get_estimated_frames_info(video_path)
+                fps_out = getattr(self.current_args, "fps", None)
+                if frames_est is not None:
+                    frames_effective = frames_est
+                    if fps_in and fps_in > 0:
+                        duration_est = frames_est / float(fps_in)
+                        start_val = getattr(self.current_args, "start", None)
+                        end_val = getattr(self.current_args, "end", None)
+                        start_sec = max(0.0, float(start_val)) if start_val is not None else 0.0
+                        end_limit = duration_est
+                        if end_val is not None:
+                            try:
+                                end_limit = max(0.0, min(float(end_val), duration_est))
+                            except Exception:
+                                end_limit = max(0.0, duration_est)
+                        trimmed = max(end_limit - start_sec, 0.0)
+                        frames_effective = int(round(trimmed * float(fps_in)))
+                    frames_effective = max(frames_effective, 1)
+                    if fps_out and fps_in and fps_in > 0:
+                        ratio = float(fps_out) / float(fps_in)
+                        frames_per_job = max(1, int(round(frames_effective * ratio)))
+                    else:
+                        frames_per_job = frames_effective
+        return frames_per_job
 
     def _run_execute_jobs(self, jobs: List[Tuple[List[str], str, str]]) -> None:
         try:
@@ -5890,41 +5976,8 @@ class PreviewApp:
             return
         # For video direct export, scale progress by estimated frame count (or selection count) per view.
         if self.source_is_video:
-            frames_per_job: Optional[int] = None
             selected = getattr(self, "_selected_frame_indices", None)
-            if selected:
-                frames_per_job = len(selected)
-            if frames_per_job is None:
-                video_path = None
-                if self.files:
-                    try:
-                        video_path = Path(self.files[0])
-                    except Exception:
-                        video_path = None
-                if video_path is not None:
-                    frames_est, fps_in = self._get_estimated_frames_info(video_path)
-                    fps_out = getattr(self.current_args, "fps", None)
-                    if frames_est is not None:
-                        frames_effective = frames_est
-                        if fps_in and fps_in > 0:
-                            duration_est = frames_est / float(fps_in)
-                            start_val = getattr(self.current_args, "start", None)
-                            end_val = getattr(self.current_args, "end", None)
-                            start_sec = max(0.0, float(start_val)) if start_val is not None else 0.0
-                            end_limit = duration_est
-                            if end_val is not None:
-                                try:
-                                    end_limit = max(0.0, min(float(end_val), duration_est))
-                                except Exception:
-                                    end_limit = max(0.0, duration_est)
-                            trimmed = max(end_limit - start_sec, 0.0)
-                            frames_effective = int(round(trimmed * float(fps_in)))
-                        frames_effective = max(frames_effective, 1)
-                        if fps_out and fps_in and fps_in > 0:
-                            ratio = float(fps_out) / float(fps_in)
-                            frames_per_job = max(1, int(round(frames_effective * ratio)))
-                        else:
-                            frames_per_job = frames_effective
+            frames_per_job = len(selected) if selected else self._estimate_frames_per_job(None)
             if frames_per_job is None or frames_per_job <= 0:
                 frames_per_job = 1
             progress_units_per_job = frames_per_job
@@ -5934,8 +5987,8 @@ class PreviewApp:
             progress_units_per_job = 1
             progress_total_units = total_jobs
             progress_label = "jobs"
-        ok = 0
-        fail = 0
+        ok_units = 0
+        fail_units = 0
         errors: List[str] = []
         done_units = 0
         last_pct = -1
@@ -5948,9 +6001,9 @@ class PreviewApp:
                 rc, err = future.result()
                 done_units = min(progress_total_units, done_units + progress_units_per_job)
                 if rc == 0:
-                    ok += 1
+                    ok_units += progress_units_per_job
                 else:
-                    fail += 1
+                    fail_units += progress_units_per_job
                     err_text = (err or "").strip()
                     if err_text:
                         errors.append(err_text)
@@ -5958,7 +6011,7 @@ class PreviewApp:
                 if pct == 100 or last_pct < 0 or (pct - last_pct) >= cutter.PROGRESS_INTERVAL:
                     last_pct = pct
                     self.root.after(0, self._log_progress, pct, done_units, progress_total_units, progress_label)
-        self.root.after(0, self._on_execute_finished, ok, fail, len(jobs), errors)
+        self.root.after(0, self._on_execute_finished, ok_units, fail_units, progress_total_units, errors, progress_label)
 
     def _log_progress(self, pct: int, done: int, total: int, label: str = "jobs") -> None:
         suffix = f" {label}" if label else ""
@@ -5970,6 +6023,7 @@ class PreviewApp:
         fail: int,
         total: int,
         errors: List[str],
+        label: str = "jobs",
     ) -> None:
         self.is_executing = False
         if self.update_button is not None:
@@ -5979,7 +6033,8 @@ class PreviewApp:
         if self.preview_stop_button is not None:
             self.preview_stop_button.configure(state="disabled")
         cutter.stop_event.clear()
-        summary = f"[EXEC] Done: succeeded={ok}, failed={fail}, total={total}"
+        units_label = label if label else "items"
+        summary = f"[EXEC] Done: succeeded={ok}, failed={fail}, total={total} ({units_label})"
         self.append_log_line(summary)
         for line in errors:
             self.append_log_line(line)
