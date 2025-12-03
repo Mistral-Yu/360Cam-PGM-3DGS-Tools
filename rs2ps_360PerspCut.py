@@ -646,7 +646,7 @@ def build_view_jobs(args, files: List[pathlib.Path], out_dir: pathlib.Path) -> B
     )
     if preset_fisheyelike:
         if not user_delcam_supplied:
-            for ch in ("A", "C", "D", "F", "H", "I"):
+            for ch in ("C", "D", "H", "I"):
                 del_set.add(letter_to_index1(ch))
         if not user_addcam_supplied:
             for ch in ("A", "F"):
