@@ -2281,7 +2281,7 @@ class PreviewApp:
         browse_btn.grid(row=0, column=2, padx=4, pady=2)
         self._bind_help(browse_btn, "ffmpeg")
 
-        jobs_label = tk.Label(ffmpeg_frame, text="Workers")
+        jobs_label = tk.Label(ffmpeg_frame, text="Parallel jobs")
         jobs_label.grid(row=1, column=0, padx=4, pady=2, sticky="e")
         self._bind_help(jobs_label, "jobs")
         jobs_entry = tk.Entry(ffmpeg_frame, textvariable=self.jobs_var, width=10)
@@ -5106,17 +5106,17 @@ class PreviewApp:
             try:
                 jobs_int = int(jobs_value)
             except ValueError:
-                messagebox.showerror("Input Error", "Workers must be an integer or 'auto'.")
+                messagebox.showerror("Input Error", "Parallel jobs must be an integer or 'auto'.")
                 return None
             if jobs_int <= 0:
-                messagebox.showerror("Input Error", "Workers must be a positive integer.")
+                messagebox.showerror("Input Error", "Parallel jobs must be a positive integer.")
                 return None
             auto_jobs = self._auto_preview_jobs()
             max_jobs = max(1, auto_jobs * 3)
             if jobs_int > max_jobs:
                 messagebox.showerror(
                     "Input Error",
-                    f"Workers must be <= {max_jobs} (auto={auto_jobs}).",
+                    f"Parallel jobs must be <= {max_jobs} (auto={auto_jobs}).",
                 )
                 return None
             jobs_value = str(jobs_int)
@@ -5155,7 +5155,9 @@ class PreviewApp:
     def _apply_preset_defaults(self, preset_value: str) -> None:
         preset_defaults: Dict[str, Dict[str, Any]] = {
             "fisheyelike": {"count": 10, "focal_mm": 17.0, "delcam": "C,D,H,I", "addcam": "A,F"},
-            "2views": {"size": 3600, "focal_mm": 6.0},
+            "2views": {"size": 3600, "focal_mm": 6.0, "delcam": "B,C,D,F,G,H"},
+            "evenMinus30": {"setcam": "B:D30,D:D30,F:D30,H:D30"},
+            "evenPlus30": {"setcam": "B:U30,D:U30,F:U30,H:U30"},
             "fisheyeXY": {"count": 8, "size": 3600, "hfov": 180.0},
         }
         values = preset_defaults.get(preset_value)
@@ -5186,6 +5188,11 @@ class PreviewApp:
         self.current_args.ffmpeg = current_ffmpeg
         self.current_args.jobs = current_jobs
         self.current_args.show_seam_overlay = seam_prev
+        # Keep video flags when a video source is loaded.
+        if self.source_is_video:
+            setattr(self.current_args, "input_is_video", True)
+            if hasattr(self.current_args, "video_bit_depth"):
+                setattr(self.current_args, "video_bit_depth", getattr(self.current_args, "video_bit_depth"))
         self._apply_preset_defaults(preset_value)
         if getattr(self.current_args, "input_is_video", False) or self.source_is_video:
             fps_value = video_prev_values.get("fps")
@@ -5848,7 +5855,7 @@ class PreviewApp:
             self.preview_stop_button.configure(state="normal")
         self.append_log_line("[EXEC] Starting export...")
         jobs_snapshot = list(self.result.jobs)
-        if getattr(self.current_args, "input_is_video", False):
+        if self.source_is_video:
             selected_indices = getattr(self, "_selected_frame_indices", None)
             if selected_indices:
                 jobs_snapshot = self._apply_frame_selection_to_jobs(jobs_snapshot, selected_indices)
@@ -5982,11 +5989,11 @@ class PreviewApp:
                 frames_per_job = 1
             progress_units_per_job = frames_per_job
             progress_total_units = progress_units_per_job * total_jobs
-            progress_label = "frames"
+            progress_label = "images"
         else:
             progress_units_per_job = 1
             progress_total_units = total_jobs
-            progress_label = "jobs"
+            progress_label = "images"
         ok_units = 0
         fail_units = 0
         errors: List[str] = []
