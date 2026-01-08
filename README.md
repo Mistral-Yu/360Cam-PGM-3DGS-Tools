@@ -59,9 +59,9 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 4. Under **Video (direct export)**, set the FPS.
 5. Click **Run Export** to write the images.
 6. **RealityScan**: launch the app, import images, then select all.
-   Set Prior Calibration -> Prior to Fixed, and change Focal Length to the value shown in the gs360 log
+   Set Prior Calibration -> Prior to Fixed or Prior to Approximate, and change Focal Length to the value shown in the gs360 log
    (default: 12, full360coverage: 14).
-   Set Prior Lens Distortion -> Prior to Fixed or Prior to Approximate.
+   Set Prior Lens Distortion -> Prior to Fixed.
    Or, **Metashape**: launch the app, import images, then go to Tools -> Camera Calibration (Initial tab).
    Set Type to Precalibration and update f to the value shown in the gs360 log
    (default: 533.33333, full360coverage: 622.22222).
