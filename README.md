@@ -52,10 +52,26 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 5. Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
 6. `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with `PlyOptimizer`.
 
-### Example Photogrammetry → 3DGS Flow (RealityScan + PostShot)
-- After RealityScan completes **Reconstruction** and **Colorize**, export the colorized mesh as a PLY and the camera **CSV**; that pairing feeds best into the `PlyOptimizer` tab.
+### Quick Workflow (GUI)
+1. Launch `gs360_360GUI.py`.
+2. In the `360PerspCut` tab, click **Browse Video** and select a video file.
+3. Choose a preset.
+4. Under **Video (direct export)**, set the FPS.
+5. Click **Run Export** to write the images.
+6. **RealityScan**: launch the app, import images, then select all.
+   Set Prior Calibration -> Prior to Fixed, and change Focal Length to the value shown in the gs360 log
+   (default: 12, full360coverage: 14).
+   Set Prior Lens Distortion -> Prior to Fixed or Prior to Approximate.
+   Or, **Metashape**: launch the app, import images, then go to Tools -> Camera Calibration (Initial tab).
+   Set Type to Precalibration and update f to the value shown in the gs360 log
+   (default: 533.33333, full360coverage: 622.22222).
+   Next, click the Fixed parameters Select button and Check all or check distortion parameters except f.
+7. Bring the RealityScan or Metashape alignment results into a 3DGS tool such as PostShot.
+
+### Recommended Workflow and Tips
+- In RealityScan, run **Reconstruction** and **Colorize**, then export the colorized mesh as a PLY and the camera **CSV**; that pairing feeds best into the `PlyOptimizer` tab.
 - Start with a conservative `--target-points` value around **100,000** to keep PostShot responsive; rerun the optimizer with higher counts if needed.
-- Other photogrammetry suites (Metashape, RealityCapture, etc.) work similarly. Use the **focal-length** lines printed by the `360PerspCut` tab as a starting point for camera intrinsics.
+- Photogrammetry suites (Metashape, RealityScan, etc.) work similarly. Use the **focal-length** lines printed by the `360PerspCut` tab as a starting point for camera intrinsics.
 
 ---
 
