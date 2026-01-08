@@ -1,6 +1,7 @@
-# 360Cam-RealityScan-Postshot-Tools
+# 360Cam-PGM-3DGS-Tools
 
-A consolidated toolkit for turning 360° video captures into RealityScan-friendly datasets and optimized point clouds that seed PostShot/3D Gaussian Splatting (3DGS) projects. The scripts cover every stage from frame extraction to PLY refinement, and the desktop GUI orchestrates the full flow.
+A consolidated toolkit for turning 360° video captures into Photogrammetry Software-friendly datasets and optimized point clouds that seed 3D Gaussian Splatting (3DGS) projects. 
+The scripts cover every stage from frame extraction to PLY refinement, and the desktop GUI orchestrates the full flow.
 
 > **Project status:** actively edited and expanded. Expect interface polish, richer presets, and additional documentation updates in upcoming revisions.
 > The code in this repository was generated with the assistance of OpenAI Codex.
@@ -14,7 +15,8 @@ A consolidated toolkit for turning 360° video captures into RealityScan-friendl
 - `pip` for installing Python packages
 - [FFmpeg](https://ffmpeg.org/)  available on your `PATH`
 - [PyTorch](https://pytorch.org/get-started/locally/) (`torch` **1.10+** and matching `torchvision` build) for the human masking tool
-- A GPU is not required, but fast storage/CPU cores benefit multi-threaded exports. CUDA acceleration is optional for masking but speeds up large batches.
+- GPU, CUDA Toolkit is not required, but CUDA acceleration is optional for masking but speeds up large batches.
+
 
 ### Setup Steps
 1. **Clone the repository**
