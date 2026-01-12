@@ -60,11 +60,11 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 5. Click **Run Export** to write the images.
 6. **RealityScan**: launch the app, import images, then select all.
    Set Prior Calibration -> Prior to **Fixed** or Prior to Approximate, and change **Focal Length** to the value shown in the `360PerspCut` log
-   (`360PerspCut` Preset default: 12 mm, fisheyelike: 17mm, full360coverage: 14 mm).
+   (Preset default: 12 mm, fisheyelike: 17mm, full360coverage: 14 mm).
    Set Prior Lens Distortion -> Prior to **Fixed**.
 7. Or **Metashape**: launch the app, import images, then go to Tools -> **Camera Calibration (Initial tab)**.
    Set Type to **Precalibration** and update **f** to the value shown in the `360PerspCut` log
-   (`360PerspCut` Preset default: 533.33333, fisheyelike: 755.55556, full360coverage: 622.22222).
+   (Preset default: 533.33333, fisheyelike: 755.55556, full360coverage: 622.22222).
    Next, click the **Fixed parameters** Select button and **Check all** or check distortion parameters except f.
 8. Bring the RealityScan or Metashape alignment results into a 3DGS tool such as PostShot.
 
