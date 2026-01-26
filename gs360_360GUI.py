@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """GUI preview and execution tool for gs360_360PerspCut."""
 
@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,7 +52,7 @@ COLOR_CYCLE = [
 
 PRESET_CHOICES = ["default", "fisheyelike", "full360coverage", "2views", "evenMinus30", "evenPlus30", "fisheyeXY"]
 
-HUMAN_MODE_CHOICES = ["mask", "alpha", "cutout", "keep_person", "remove_person", "inpaint"]
+HUMAN_MODE_CHOICES = ["mask", "alpha", "inpaint"]
 
 DEFAULT_SELECTOR_CSV_NAME = "selected_image_list.csv"
 
@@ -708,6 +709,7 @@ class PreviewApp:
         self._process_lock = threading.Lock()
         self._active_processes: Dict[str, subprocess.Popen] = {}
         self._process_ui: Dict[str, Dict[str, Any]] = {}
+        self._process_start_times: Dict[str, float] = {}
         self._queued_cli_commands: Dict[
             str,
             List[Tuple[List[str], Optional[Path], bool, Optional[str]]],
@@ -728,6 +730,8 @@ class PreviewApp:
         self.selector_csv_entry: Optional[tk.Entry] = None
         self.selector_dry_run_check: Optional[tk.Checkbutton] = None
         self.selector_csv_button: Optional[tk.Button] = None
+        self._selector_duration_message: Optional[str] = None
+        self._selector_duration_pending = False
 
         self._preview_frame_padding = 0
         self._controls_frame_padding = 0
@@ -762,16 +766,19 @@ class PreviewApp:
         preview_tab = tk.Frame(self.notebook)
         human_tab = tk.Frame(self.notebook)
         ply_tab = tk.Frame(self.notebook)
+        config_tab = tk.Frame(self.notebook)
 
         self.notebook.add(video_tab, text="Video2Frames")
         self.notebook.add(selector_tab, text="FrameSelector")
         self.notebook.add(preview_tab, text="360PerspCut")
         self.notebook.add(human_tab, text="HumanMaskTool")
         self.notebook.add(ply_tab, text="PlyOptimizer")
+        self.notebook.add(config_tab, text="Config")
 
         self._build_video_tab(video_tab)
         self._build_frame_selector_tab(selector_tab)
         self._build_preview_tab(preview_tab)
+        self._build_config_tab(config_tab)
         self._build_human_mask_tab(human_tab)
         self._build_ply_tab(ply_tab)
 
@@ -856,7 +863,6 @@ class PreviewApp:
         range_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
         range_frame.columnconfigure(1, weight=0)
         range_frame.columnconfigure(3, weight=0)
-        range_frame.columnconfigure(5, weight=2)
         tk.Label(range_frame, text="Start (s)").grid(row=0, column=0, sticky="e", padx=(0, 4))
         tk.Entry(
             range_frame,
@@ -869,18 +875,6 @@ class PreviewApp:
             textvariable=self.video_vars["end"],
             width=10,
         ).grid(row=0, column=3, sticky="w", padx=(0, 12))
-        ffmpeg_label = tk.Label(range_frame, text="ffmpeg path")
-        ffmpeg_label.grid(row=0, column=4, sticky="e", padx=(0, 4))
-        self._bind_help(ffmpeg_label, "ffmpeg")
-        ffmpeg_entry = tk.Entry(range_frame, textvariable=self.ffmpeg_path_var, width=28)
-        ffmpeg_entry.grid(row=0, column=5, sticky="we", padx=(0, 4))
-        self._bind_help(ffmpeg_entry, "ffmpeg")
-        browse_btn = tk.Button(range_frame, text="Browse...", command=self.browse_ffmpeg)
-        browse_btn.grid(row=0, column=6, padx=(4, 4))
-        self._bind_help(browse_btn, "ffmpeg")
-        reset_btn = tk.Button(range_frame, text="Reset", command=self.reset_ffmpeg_path)
-        reset_btn.grid(row=0, column=7, padx=(0, 4))
-        self._bind_help(reset_btn, "ffmpeg")
 
         row += 1
         flags_frame = tk.Frame(params)
@@ -1593,7 +1587,7 @@ class PreviewApp:
         except FileNotFoundError:
             messagebox.showerror(
                 dialog_title,
-                f"ffmpeg not found: {ffmpeg_path}\nAdjust the ffmpeg path in the Controls panel.",
+                f"ffmpeg not found: {ffmpeg_path}\nAdjust the ffmpeg path in the Config tab.",
             )
             return None
         except Exception as exc:
@@ -1807,7 +1801,7 @@ class PreviewApp:
             "workers": tk.StringVar(value="auto"),
             "ext": tk.StringVar(value="all"),
             "sort": tk.StringVar(value="lastnum"),
-            "metric": tk.StringVar(value="hybrid"),
+            "score_backend": tk.StringVar(value="opencv"),
             "csv_mode": tk.StringVar(value="write"),
             "csv_path": tk.StringVar(),
             "crop_ratio": tk.StringVar(value="0.8"),
@@ -1870,15 +1864,15 @@ class PreviewApp:
             width=10,
         )
         selector_sort_combo.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(esm_frame, text="Metric").pack(side=tk.LEFT, padx=(0, 4))
-        selector_metric_combo = ttk.Combobox(
+        tk.Label(esm_frame, text="Sharpness analysis backend").pack(side=tk.LEFT, padx=(0, 4))
+        selector_score_combo = ttk.Combobox(
             esm_frame,
-            textvariable=self.selector_vars["metric"],
-            values=("hybrid", "lapvar", "tenengrad", "fft"),
+            textvariable=self.selector_vars["score_backend"],
+            values=("ffmpeg", "opencv"),
             state="readonly",
             width=10,
         )
-        selector_metric_combo.pack(side=tk.LEFT, padx=(0, 4))
+        selector_score_combo.pack(side=tk.LEFT, padx=(0, 12))
 
         row += 1
         csv_frame = tk.Frame(params)
@@ -2498,26 +2492,15 @@ class PreviewApp:
             pass
         self._update_preview_csv_state()
 
-        ffmpeg_frame = tk.LabelFrame(self.right_inner, text="ffmpeg Options")
+        ffmpeg_frame = tk.LabelFrame(self.right_inner, text="ffmpeg Jobs")
         ffmpeg_frame.pack(fill="x", pady=(4, 4))
         ffmpeg_frame.columnconfigure(1, weight=1)
-        ffmpeg_frame.columnconfigure(4, weight=0)
-
-        ffmpeg_label = tk.Label(ffmpeg_frame, text="ffmpeg path")
-        ffmpeg_label.grid(row=0, column=0, padx=4, pady=2, sticky="e")
-        self._bind_help(ffmpeg_label, "ffmpeg")
-        ffmpeg_entry = tk.Entry(ffmpeg_frame, textvariable=self.ffmpeg_path_var, width=30)
-        ffmpeg_entry.grid(row=0, column=1, padx=4, pady=2, sticky="we")
-        self._bind_help(ffmpeg_entry, "ffmpeg")
-        browse_btn = tk.Button(ffmpeg_frame, text="Browse...", width=14, command=self.browse_ffmpeg)
-        browse_btn.grid(row=0, column=2, padx=4, pady=2)
-        self._bind_help(browse_btn, "ffmpeg")
 
         jobs_label = tk.Label(ffmpeg_frame, text="Parallel jobs")
-        jobs_label.grid(row=1, column=0, padx=4, pady=2, sticky="e")
+        jobs_label.grid(row=0, column=0, padx=4, pady=2, sticky="e")
         self._bind_help(jobs_label, "jobs")
         jobs_entry = tk.Entry(ffmpeg_frame, textvariable=self.jobs_var, width=10)
-        jobs_entry.grid(row=1, column=1, padx=4, pady=2, sticky="we")
+        jobs_entry.grid(row=0, column=1, padx=4, pady=2, sticky="we")
         self._bind_help(jobs_entry, "jobs")
 
         self.preview_inspect_button = tk.Button(
@@ -2527,7 +2510,7 @@ class PreviewApp:
             state="disabled",
             width=14,
         )
-        self.preview_inspect_button.grid(row=1, column=2, padx=4, pady=2, sticky="e")
+        self.preview_inspect_button.grid(row=0, column=2, padx=4, pady=2, sticky="e")
 
         buttons_frame = tk.LabelFrame(self.right_inner, text="Actions")
         buttons_frame.pack(fill="x", pady=(8, 12), ipady=6)
@@ -2576,6 +2559,27 @@ class PreviewApp:
         self._update_jpeg_quality_state()
         self._update_preview_inspect_state()
         self._sync_panel_heights()
+
+    def _build_config_tab(self, parent: tk.Widget) -> None:
+        container = tk.Frame(parent)
+        container.pack(fill="both", expand=True)
+
+        params = tk.LabelFrame(container, text="ffmpeg")
+        params.pack(fill="x", padx=8, pady=8)
+        params.columnconfigure(1, weight=1)
+
+        ffmpeg_label = tk.Label(params, text="ffmpeg path")
+        ffmpeg_label.grid(row=0, column=0, padx=4, pady=4, sticky="e")
+        self._bind_help(ffmpeg_label, "ffmpeg")
+        ffmpeg_entry = tk.Entry(params, textvariable=self.ffmpeg_path_var, width=52)
+        ffmpeg_entry.grid(row=0, column=1, padx=4, pady=4, sticky="we")
+        self._bind_help(ffmpeg_entry, "ffmpeg")
+        browse_btn = tk.Button(params, text="Browse...", command=self.browse_ffmpeg)
+        browse_btn.grid(row=0, column=2, padx=(4, 0), pady=4)
+        self._bind_help(browse_btn, "ffmpeg")
+        reset_btn = tk.Button(params, text="Reset", command=self.reset_ffmpeg_path)
+        reset_btn.grid(row=0, column=3, padx=(4, 4), pady=4)
+        self._bind_help(reset_btn, "ffmpeg")
 
     def _set_text_widget(self, widget: Optional[tk.Text], text: str) -> None:
         if widget is None:
@@ -2650,6 +2654,7 @@ class PreviewApp:
                     line = raw.rstrip("\n")
                     self.root.after(0, lambda l=line: self._append_text_widget(log_widget, l))
 
+            start_time = time.perf_counter()
             with self._process_lock:
                 self._active_processes[process_key] = process
                 self._process_ui[process_key] = {
@@ -2657,6 +2662,7 @@ class PreviewApp:
                     "stop": stop_button,
                     "log": log_widget,
                 }
+                self._process_start_times[process_key] = start_time
 
             if stop_button is not None:
                 self.root.after(0, lambda: stop_button.configure(state="normal"))
@@ -2674,6 +2680,7 @@ class PreviewApp:
         with self._process_lock:
             process = self._active_processes.pop(key, None)
             info = self._process_ui.pop(key, {})
+            start_time = self._process_start_times.pop(key, None)
         run_button = info.get("run")
         stop_button = info.get("stop")
         log_widget = info.get("log")
@@ -2714,6 +2721,10 @@ class PreviewApp:
         else:
             self._queued_cli_commands.pop(key, None)
         if key == "selector":
+            duration_message = None
+            if start_time is not None:
+                elapsed = max(0.0, time.perf_counter() - start_time)
+                duration_message = f"[time] FrameSelector elapsed: {elapsed:.2f}s"
             pending = self.selector_auto_fetch_pending
             self.selector_auto_fetch_pending = False
             mode_now = "none"
@@ -2722,12 +2733,17 @@ class PreviewApp:
                 if mode_var is not None:
                     mode_now = mode_var.get().strip()
             if pending and not stopped and rc == 0 and mode_now in {"write", "apply", "reselect"}:
+                if duration_message:
+                    self._selector_duration_message = duration_message
+                    self._selector_duration_pending = True
                 if mode_now.lower() == "write" and self.selector_vars:
                     csv_mode_var = self.selector_vars.get("csv_mode")
                     if csv_mode_var is not None:
                         csv_mode_var.set("reselect")
                         self._on_selector_csv_mode_changed()
                 self.root.after(100, self._show_selector_scores)
+            elif duration_message and log_widget is not None:
+                self._append_text_widget(log_widget, duration_message)
 
     def _stop_cli_process(self, key: str) -> None:
         with self._process_lock:
@@ -3027,6 +3043,8 @@ class PreviewApp:
         if not self.selector_vars:
             return
 
+        self._selector_duration_message = None
+        self._selector_duration_pending = False
         self.selector_auto_fetch_pending = False
         in_dir = self.selector_vars["in_dir"].get().strip()
         if not in_dir:
@@ -3096,9 +3114,9 @@ class PreviewApp:
         if sort_choice:
             cmd.extend(["-s", sort_choice])
 
-        metric_choice = self.selector_vars["metric"].get().strip()
-        if metric_choice:
-            cmd.extend(["-m", metric_choice])
+        score_backend = self.selector_vars["score_backend"].get().strip()
+        if score_backend:
+            cmd.extend(["--score_backend", score_backend])
 
         csv_mode = self.selector_vars["csv_mode"].get().strip()
         csv_path = self.selector_vars["csv_path"].get().strip()
@@ -3116,6 +3134,20 @@ class PreviewApp:
             if not csv_path:
                 messagebox.showerror("gs360_FrameSelector", "CSV path is required for the selected mode.")
                 return
+            if csv_mode == "write":
+                try:
+                    csv_path_obj = Path(csv_path).expanduser()
+                    if not csv_path_obj.is_absolute():
+                        csv_path_obj = Path(in_dir).expanduser() / csv_path_obj
+                except Exception:
+                    csv_path_obj = None
+                if csv_path_obj is not None and csv_path_obj.exists():
+                    proceed = messagebox.askokcancel(
+                        "FrameSelector CSV",
+                        f"CSV already exists:\n{csv_path_obj}\nOverwrite it?",
+                    )
+                    if not proceed:
+                        return
             if csv_mode == "write":
                 cmd.extend(["-c", csv_path])
             elif csv_mode == "apply":
@@ -4681,113 +4713,122 @@ class PreviewApp:
         self._update_selector_csv_default(selected_path)
 
     def _show_selector_scores(self) -> None:
-        if not self.selector_vars:
-            return
-        csv_var = self.selector_vars.get("csv_path")
-        csv_path_raw = csv_var.get().strip() if csv_var is not None else ""
-        if not csv_path_raw:
-            messagebox.showerror("FrameSelector", "Select a CSV file in the Path field.")
-            return
-        csv_path = Path(csv_path_raw).expanduser()
+        duration_message = None
+        if self._selector_duration_pending:
+            duration_message = self._selector_duration_message
+            self._selector_duration_message = None
+            self._selector_duration_pending = False
         try:
-            with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                headers = reader.fieldnames or []
-                field_map = {name.lower(): name for name in headers if name}
-                selected_key = field_map.get("selected(1=keep)") or field_map.get("selected")
-                score_key = field_map.get("score")
-                filename_key = field_map.get("filename")
-                index_key = field_map.get("index")
-                if not selected_key or not score_key:
-                    raise ValueError("CSV must contain 'selected(1=keep)' (or 'selected') and 'score' columns.")
-                all_entries: List[Tuple[int, bool, Optional[float]]] = []
-                selected_entries: List[Tuple[float, str, str, int]] = []
-                row_counter = 0
-                for row in reader:
-                    if not row:
-                        continue
-                    flag = str(row.get(selected_key, "")).strip().lower()
-                    if flag not in {"1", "true", "yes", "keep"}:
-                        selected_flag = False
-                    else:
-                        selected_flag = True
-                    score_raw = row.get(score_key)
-                    try:
-                        score_val = float(score_raw)
-                    except (TypeError, ValueError):
-                        score_val = None
-                    if score_val is not None and not math.isfinite(score_val):
-                        score_val = None
-                    if index_key:
-                        idx_raw = row.get(index_key, "")
-                    else:
-                        idx_raw = ""
-                    try:
-                        frame_idx = int(idx_raw)
-                    except (TypeError, ValueError):
-                        frame_idx = row_counter
-                    row_counter += 1
-                    all_entries.append((frame_idx, selected_flag, score_val))
-                    if selected_flag and score_val is not None:
-                        fname = row.get(filename_key, "") if filename_key else ""
-                        idx_text = row.get(index_key, "") if index_key else ""
-                        selected_entries.append((score_val, fname, idx_text, frame_idx))
-        except FileNotFoundError:
-            messagebox.showerror("FrameSelector", f"CSV file not found:\n{csv_path}")
-            self._update_selector_score_view([], set())
-            return
-        except ValueError as exc:
-            messagebox.showerror("FrameSelector", str(exc))
-            self._update_selector_score_view([], set())
-            return
-        except Exception as exc:  # pragma: no cover - unexpected CSV error
-            messagebox.showerror("FrameSelector", f"Failed to read CSV:\n{exc}")
-            self._update_selector_score_view([], set())
-            return
+            if not self.selector_vars:
+                return
+            csv_var = self.selector_vars.get("csv_path")
+            csv_path_raw = csv_var.get().strip() if csv_var is not None else ""
+            if not csv_path_raw:
+                messagebox.showerror("FrameSelector", "Select a CSV file in the Path field.")
+                return
+            csv_path = Path(csv_path_raw).expanduser()
+            try:
+                with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+                    headers = reader.fieldnames or []
+                    field_map = {name.lower(): name for name in headers if name}
+                    selected_key = field_map.get("selected(1=keep)") or field_map.get("selected")
+                    score_key = field_map.get("score")
+                    filename_key = field_map.get("filename")
+                    index_key = field_map.get("index")
+                    if not selected_key or not score_key:
+                        raise ValueError("CSV must contain 'selected(1=keep)' (or 'selected') and 'score' columns.")
+                    all_entries: List[Tuple[int, bool, Optional[float]]] = []
+                    selected_entries: List[Tuple[float, str, str, int]] = []
+                    row_counter = 0
+                    for row in reader:
+                        if not row:
+                            continue
+                        flag = str(row.get(selected_key, "")).strip().lower()
+                        if flag not in {"1", "true", "yes", "keep"}:
+                            selected_flag = False
+                        else:
+                            selected_flag = True
+                        score_raw = row.get(score_key)
+                        try:
+                            score_val = float(score_raw)
+                        except (TypeError, ValueError):
+                            score_val = None
+                        if score_val is not None and not math.isfinite(score_val):
+                            score_val = None
+                        if index_key:
+                            idx_raw = row.get(index_key, "")
+                        else:
+                            idx_raw = ""
+                        try:
+                            frame_idx = int(idx_raw)
+                        except (TypeError, ValueError):
+                            frame_idx = row_counter
+                        row_counter += 1
+                        all_entries.append((frame_idx, selected_flag, score_val))
+                        if selected_flag and score_val is not None:
+                            fname = row.get(filename_key, "") if filename_key else ""
+                            idx_text = row.get(index_key, "") if index_key else ""
+                            selected_entries.append((score_val, fname, idx_text, frame_idx))
+            except FileNotFoundError:
+                messagebox.showerror("FrameSelector", f"CSV file not found:\n{csv_path}")
+                self._update_selector_score_view([], set())
+                return
+            except ValueError as exc:
+                messagebox.showerror("FrameSelector", str(exc))
+                self._update_selector_score_view([], set())
+                return
+            except Exception as exc:  # pragma: no cover - unexpected CSV error
+                messagebox.showerror("FrameSelector", f"Failed to read CSV:\n{exc}")
+                self._update_selector_score_view([], set())
+                return
 
-        # Sort selected entries by ascending score
-        selected_entries.sort(key=lambda item: item[0])
+            # Sort selected entries by ascending score
+            selected_entries.sort(key=lambda item: item[0])
 
-        selected_flag_total = sum(1 for _, s, _ in all_entries if s)
-        try:
-            if self.selector_count_var is not None:
-                limit_source = self.selector_count_var.get()
+            selected_flag_total = sum(1 for _, s, _ in all_entries if s)
+            try:
+                if self.selector_count_var is not None:
+                    limit_source = self.selector_count_var.get()
+                else:
+                    limit_source = ""
+                limit_text = str(limit_source).strip()
+                percent_text = limit_text.rstrip("%")
+                limit_percent = float(percent_text) if percent_text else 5.0
+            except (TypeError, ValueError):
+                limit_percent = 5.0
+            limit_percent = max(0.1, min(limit_percent, 100.0))
+            if selected_entries:
+                max_lines = max(1, min(200, math.ceil((limit_percent / 100.0) * len(selected_entries))))
+                suspects = selected_entries[:max_lines]
             else:
-                limit_source = ""
-            limit_text = str(limit_source).strip()
-            percent_text = limit_text.rstrip("%")
-            limit_percent = float(percent_text) if percent_text else 5.0
-        except (TypeError, ValueError):
-            limit_percent = 5.0
-        limit_percent = max(0.1, min(limit_percent, 100.0))
-        if selected_entries:
-            max_lines = max(1, min(200, math.ceil((limit_percent / 100.0) * len(selected_entries))))
-            suspects = selected_entries[:max_lines]
-        else:
-            max_lines = 0
-            suspects = []
-        suspect_indices = {entry[3] for entry in suspects}
-        all_entries.sort(key=lambda item: item[0])
-        self.selector_last_scores = all_entries
-        self._update_selector_score_view(all_entries, suspect_indices)
+                max_lines = 0
+                suspects = []
+            suspect_indices = {entry[3] for entry in suspects}
+            all_entries.sort(key=lambda item: item[0])
+            self.selector_last_scores = all_entries
+            self._update_selector_score_view(all_entries, suspect_indices)
 
-        self._append_text_widget(
-            self.selector_log,
-            (
-                f"[score] {csv_path.name}: selected={selected_flag_total} "
-                f"showing lowest {len(suspects)} scores ({limit_percent:.1f}% of selected, limit={max_lines})"
-            ),
-        )
-        if not suspects:
-            self._append_text_widget(self.selector_log, "[score] No low-score selections detected.")
-            return
-
-        for score, fname, idx_text, _frame_idx in suspects:
-            label = fname or (f"index {idx_text}" if idx_text else "(unknown)")
             self._append_text_widget(
                 self.selector_log,
-                f"  - {label} (score={score:.4f})",
+                (
+                    f"[score] {csv_path.name}: selected={selected_flag_total} "
+                    f"showing lowest {len(suspects)} scores ({limit_percent:.1f}% of selected, limit={max_lines})"
+                ),
             )
+            if not suspects:
+                self._append_text_widget(self.selector_log, "[score] No low-score selections detected.")
+                return
+
+            for score, fname, idx_text, _frame_idx in suspects:
+                label = fname or (f"index {idx_text}" if idx_text else "(unknown)")
+                self._append_text_widget(
+                    self.selector_log,
+                    f"  - {label} (score={score:.4f})",
+                )
+        finally:
+            if duration_message:
+                self._append_text_widget(self.selector_log, duration_message)
 
     def _update_selector_score_view(
         self,
@@ -5446,9 +5487,42 @@ class PreviewApp:
         preset_value = selection or self.field_vars["preset"].get()
         current_ffmpeg = self.ffmpeg_path_var.get().strip() or getattr(self.defaults, "ffmpeg", "ffmpeg")
         current_jobs = self.jobs_var.get().strip() or str(getattr(self.defaults, "jobs", "auto"))
+        output_path_text = self.output_path_var.get()
+        fps_text = self.field_vars["fps"].get() if "fps" in self.field_vars else ""
+        start_text = self.field_vars["start"].get() if "start" in self.field_vars else ""
+        end_text = self.field_vars["end"].get() if "end" in self.field_vars else ""
+        keep_ui_var = self.field_vars.get("keep_rec709")
+        keep_rec709_ui = bool(keep_ui_var.get()) if isinstance(keep_ui_var, tk.BooleanVar) else None
+
+        def _parse_float(text: str) -> Optional[float]:
+            cleaned = (text or "").strip()
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+
         video_prev_values = {
-            "fps": getattr(self.current_args, "fps", None),
-            "keep_rec709": getattr(self.current_args, "keep_rec709", False),
+            "fps": _parse_float(fps_text),
+            "start": _parse_float(start_text),
+            "end": _parse_float(end_text),
+        }
+        if video_prev_values["fps"] is None:
+            video_prev_values["fps"] = getattr(self.current_args, "fps", None)
+        if video_prev_values["start"] is None:
+            video_prev_values["start"] = getattr(self.current_args, "start", None)
+        if video_prev_values["end"] is None:
+            video_prev_values["end"] = getattr(self.current_args, "end", None)
+        if keep_rec709_ui is None:
+            video_prev_values["keep_rec709"] = getattr(self.current_args, "keep_rec709", False)
+        else:
+            video_prev_values["keep_rec709"] = not keep_rec709_ui
+        video_ui_values = {
+            "fps": fps_text,
+            "start": start_text,
+            "end": end_text,
+            "keep_rec709": keep_rec709_ui,
         }
         seam_prev = getattr(self.current_args, "show_seam_overlay", False)
         self.current_args = clone_namespace(self.defaults)
@@ -5471,12 +5545,23 @@ class PreviewApp:
             setattr(self.current_args, "fps_explicit", True)
             keep_val = bool(video_prev_values.get("keep_rec709", False))
             self.current_args.keep_rec709 = keep_val
+            self.current_args.start = video_prev_values.get("start")
+            self.current_args.end = video_prev_values.get("end")
         self.set_form_values()
         self.field_vars["preset"].set(preset_value)
         if getattr(self.current_args, "input_is_video", False) or self.source_is_video:
-            fps_current = self.current_args.fps if getattr(self.current_args, "fps", None) else self.video_persist_state.get("fps", 1.0)
-            self.field_vars["fps"].set(str(fps_current))
-            self.field_vars["keep_rec709"].set(not bool(self.current_args.keep_rec709))
+            fps_var = self.field_vars.get("fps")
+            start_var = self.field_vars.get("start")
+            end_var = self.field_vars.get("end")
+            if isinstance(fps_var, tk.StringVar):
+                fps_var.set(video_ui_values.get("fps") or "")
+            if isinstance(start_var, tk.StringVar):
+                start_var.set(video_ui_values.get("start") or "")
+            if isinstance(end_var, tk.StringVar):
+                end_var.set(video_ui_values.get("end") or "")
+            if isinstance(keep_ui_var, tk.BooleanVar) and video_ui_values.get("keep_rec709") is not None:
+                keep_ui_var.set(bool(video_ui_values.get("keep_rec709")))
+        self.output_path_var.set(output_path_text)
         updated = self.collect_updated_args()
         if updated is None:
             return
