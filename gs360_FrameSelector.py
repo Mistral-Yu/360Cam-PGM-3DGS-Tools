@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 select_sharp_frames.py (listdir-based sharp frame selector)
@@ -6,7 +6,7 @@ select_sharp_frames.py (listdir-based sharp frame selector)
 Workflow (after this update):
   1) Gather images directly under the input directory (tif/png/jpg by default)
   2) Sort them according to the chosen rule
-  3) Score sharpness in parallel (grayscale read + optional resize/crop via --score_crop_ratio)
+  3) Score sharpness in parallel (ffmpeg by default; optional resize/crop via --score_crop_ratio)
   4) Split the list into --segment_size batches and keep the sharpest frame from each segment
   5) Finalize the per-segment selection before optional augmentations
   6) Gap augmentation (optional, enable via --augment_gaps): backfill when gaps between selected frames exceed the configured max spacing
@@ -19,7 +19,8 @@ Workflow (after this update):
 
 Defaults:
   - ext: all (tif/png/jpg)
-  - metric: hybrid (0.6 * laplacian variance + 0.3 * tenengrad + 0.2 * fft)  [normalized blending]
+  - score_backend: ffmpeg (sobel + signalstats)
+  - metric: hybrid (0.6 * laplacian variance + 0.3 * tenengrad + 0.2 * fft)  [opencv backend only]
   - score_crop_ratio: 0.8 (keep central 80% vertical band; override with --score_crop_ratio)
   - sort: lastnum (prefer trailing numbers, fallback to name)
   - csv: off (enable with --csv)
@@ -41,6 +42,7 @@ import shutil
 import re
 import math
 import ctypes
+import subprocess
 from bisect import bisect_left, insort
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -335,6 +337,8 @@ MAX_SPACING_RATIO = 0.8
 BRIGHTNESS_SHARPNESS_KEEP_RATIO = 0.2
 BRIGHTNESS_SHARPNESS_MIN_KEEP = 0
 MIN_DIFF_FRAMES_RATIO = 0.2
+DEFAULT_SCORE_BACKEND = "ffmpeg"
+FFMPEG_BINARY = "ffmpeg"
 
 
 def update_progress(label, completed, total, last_pct):
@@ -577,6 +581,109 @@ def fft_energy_fast(gray, mask=None):
             return float(np.sum(hf_abs * valid) / total)
     return float(np.mean(hf_abs))
 
+
+def _build_ffmpeg_filtergraph(crop_ratio, max_long):
+    filters = ["format=gray"]
+    if max_long and max_long > 0:
+        scale_expr = "min(1\\,{}/max(iw\\,ih))".format(max_long)
+        filters.append(
+            "scale=trunc(iw*{s}):trunc(ih*{s}):flags=area".format(s=scale_expr)
+        )
+    if crop_ratio is not None and crop_ratio < 1.0:
+        crop_h = "max(1\\,trunc(ih*{}))".format(crop_ratio)
+        filters.append(
+            "crop=iw:{h}:0:trunc((ih-{h})/2)".format(h=crop_h)
+        )
+    filters.extend(
+        [
+            "signalstats",
+            "metadata=print:direct=1",
+            "sobel",
+            "signalstats",
+            "metadata=print:direct=1",
+        ]
+    )
+    return ",".join(filters)
+
+
+def _parse_signalstats_yavg(output):
+    values = []
+    for line in output.splitlines():
+        if "lavfi.signalstats.YAVG=" not in line:
+            continue
+        try:
+            value = line.split("lavfi.signalstats.YAVG=", 1)[1].strip()
+            values.append(float(value))
+        except ValueError:
+            continue
+    return values
+
+
+def score_one_file_ffmpeg(
+        fp,
+        metric,
+        crop_ratio,
+        max_long,
+        augment_motion,
+        ignore_highlights,
+):
+    """Compute sharpness/brightness via ffmpeg signalstats + sobel."""
+    try:
+        vf = _build_ffmpeg_filtergraph(crop_ratio, max_long)
+        cmd = [
+            FFMPEG_BINARY,
+            "-hide_banner",
+            "-nostats",
+            "-v",
+            "info",
+            "-i",
+            fp,
+            "-vf",
+            vf,
+            "-f",
+            "null",
+            "-",
+        ]
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode != 0:
+            return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
+        yavg_values = _parse_signalstats_yavg(output)
+        if len(yavg_values) < 2:
+            return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
+
+        brightness_mean = max(0.0, min(1.0, yavg_values[0] / 255.0))
+        sharp = max(0.0, min(1.0, yavg_values[1] / 255.0))
+
+        if brightness_mean < HYBRID_DARK_THRESHOLD:
+            dark_ratio = brightness_mean / HYBRID_DARK_THRESHOLD
+        else:
+            dark_ratio = 1.0
+        dark_ratio = max(0.0, min(1.0, dark_ratio))
+        brightness_weight = 1.0 - HYBRID_DARK_PENALTY_WEIGHT * (1.0 - dark_ratio)
+        brightness_weight = max(0.0, brightness_weight)
+
+        return (
+            sharp,
+            0.0,
+            0.0,
+            brightness_mean,
+            brightness_weight,
+            None,
+            None,
+            None,
+            1.0,
+        )
+
+    except Exception:
+        return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
+
+
 def score_one_file(
         fp,
         metric,
@@ -710,6 +817,13 @@ def score_one_file(
 
 
 
+
+
+def ensure_ffmpeg_available():
+    if shutil.which(FFMPEG_BINARY) is None:
+        raise SystemExit(
+            "ffmpeg not found on PATH. Install FFmpeg or use --score_backend opencv."
+        )
 
 
 def _score_or_negative_infinity(scores, index):
@@ -1326,7 +1440,13 @@ def main():
         "--metric",
         choices=["hybrid", "lapvar", "tenengrad", "fft"],
         default="hybrid",
-        help="Sharpness metric (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
+        help="Sharpness metric for the opencv backend (default: hybrid 0.6*lapvar + 0.3*tenengrad + 0.2*fft).",
+    )
+    ap.add_argument(
+        "--score_backend",
+        choices=["ffmpeg", "opencv"],
+        default=DEFAULT_SCORE_BACKEND,
+        help="Score backend (default: ffmpeg). ffmpeg uses sobel+signalstats and ignores --metric.",
     )
     ap.add_argument(
         "-e",
@@ -1415,6 +1535,14 @@ def main():
 
     if args.reselect_csv:
         args.dry_run = True
+
+    scoring_needed = not args.apply_csv and not args.reselect_csv
+    if args.score_backend == "ffmpeg" and scoring_needed:
+        ensure_ffmpeg_available()
+        if args.ignore_highlights:
+            print("[INFO] ffmpeg backend ignores --ignore-highlights; disabling.")
+            args.ignore_highlights = False
+        print("[INFO] score_backend=ffmpeg uses sobel+signalstats; --metric ignored.")
 
     try:
         signal.signal(signal.SIGINT, _handle_sigint)
@@ -1583,11 +1711,16 @@ def main():
         cancelled = cancel_event.is_set()
     else:
         with ThreadPoolExecutor(max_workers=workers) as ex:
+            score_func = (
+                score_one_file_ffmpeg
+                if args.score_backend == "ffmpeg"
+                else score_one_file
+            )
             futs = {
                 _submit_with_limiter(
                     ex,
                     limiter,
-                    score_one_file,
+                    score_func,
                     files[i],
                     args.metric,
                     score_crop_ratio,
