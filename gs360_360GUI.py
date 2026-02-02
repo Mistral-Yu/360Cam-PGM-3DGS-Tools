@@ -54,6 +54,22 @@ PRESET_CHOICES = ["default", "fisheyelike", "full360coverage", "2views", "evenMi
 
 HUMAN_MODE_CHOICES = ["mask", "alpha", "inpaint"]
 
+MSXML_PRESET_CHOICES = [
+    "default",
+    "fisheyelike",
+    "full360coverage",
+    "2views",
+    "evenMinus30",
+    "evenPlus30",
+    "cube90",
+]
+MSXML_FORMAT_CHOICES = [
+    "metashape",
+    "transforms",
+    "colmap",
+    "all",
+]
+
 DEFAULT_SELECTOR_CSV_NAME = "selected_image_list.csv"
 
 PLY_VIEW_CANVAS_WIDTH = 960
@@ -645,6 +661,16 @@ class PreviewApp:
         self.human_log: Optional[tk.Text] = None
         self.human_run_button: Optional[tk.Button] = None
 
+        self.msxml_vars: Dict[str, tk.Variable] = {}
+        self.msxml_log: Optional[tk.Text] = None
+        self.msxml_run_button: Optional[tk.Button] = None
+        self.msxml_stop_button: Optional[tk.Button] = None
+        self.msxml_cut_input_entry: Optional[tk.Entry] = None
+        self.msxml_cut_out_entry: Optional[tk.Entry] = None
+        self.msxml_points_entry: Optional[tk.Entry] = None
+        self.msxml_points_button: Optional[tk.Button] = None
+        self.msxml_points_rotate_check: Optional[tk.Checkbutton] = None
+
         self.ply_vars: Dict[str, tk.Variable] = {}
         self.ply_log: Optional[tk.Text] = None
         self.ply_run_button: Optional[tk.Button] = None
@@ -724,6 +750,15 @@ class PreviewApp:
         self._human_output_auto = True
         self._human_last_auto_output = ""
         self._human_output_updating = False
+        self._msxml_output_auto = True
+        self._msxml_last_auto_output = ""
+        self._msxml_output_updating = False
+        self._msxml_cut_input_auto = True
+        self._msxml_last_auto_cut_input = ""
+        self._msxml_cut_input_updating = False
+        self._msxml_points_ply_auto = True
+        self._msxml_last_auto_points_ply = ""
+        self._msxml_points_ply_updating = False
         self._ply_output_auto = True
         self._ply_last_auto_output = ""
         self._ply_output_updating = False
@@ -766,6 +801,7 @@ class PreviewApp:
         preview_tab = tk.Frame(self.notebook)
         human_tab = tk.Frame(self.notebook)
         ply_tab = tk.Frame(self.notebook)
+        msxml_tab = tk.Frame(self.notebook)
         config_tab = tk.Frame(self.notebook)
 
         self.notebook.add(video_tab, text="Video2Frames")
@@ -773,14 +809,16 @@ class PreviewApp:
         self.notebook.add(preview_tab, text="360PerspCut")
         self.notebook.add(human_tab, text="HumanMaskTool")
         self.notebook.add(ply_tab, text="PlyOptimizer")
+        self.notebook.add(msxml_tab, text="MSXmlToPerspCams")
         self.notebook.add(config_tab, text="Config")
 
         self._build_video_tab(video_tab)
         self._build_frame_selector_tab(selector_tab)
         self._build_preview_tab(preview_tab)
-        self._build_config_tab(config_tab)
         self._build_human_mask_tab(human_tab)
         self._build_ply_tab(ply_tab)
+        self._build_msxml_tab(msxml_tab)
+        self._build_config_tab(config_tab)
 
         self.notebook.select(preview_tab)
 
@@ -2128,6 +2166,371 @@ class PreviewApp:
     def _on_human_input_selected(self, selected_path: str) -> None:
         self._update_human_default_output(selected_path)
 
+    def _msxml_base_dir(self, input_text: str) -> Optional[Path]:
+        text = input_text.strip()
+        if not text:
+            return None
+        try:
+            path_obj = Path(text).expanduser()
+        except Exception:
+            return None
+        return path_obj.parent if path_obj.suffix else path_obj
+
+    def _msxml_default_output_for_input(self, input_text: str) -> Optional[str]:
+        base_dir = self._msxml_base_dir(input_text)
+        if base_dir is None:
+            return None
+        return str(base_dir / "perspective_cams")
+
+    def _msxml_default_cut_input(self, input_text: str) -> Optional[str]:
+        base_dir = self._msxml_base_dir(input_text)
+        if base_dir is None:
+            return None
+        return str(base_dir / "360imgs")
+
+    def _msxml_default_points_ply(self, input_text: str) -> Optional[str]:
+        base_dir = self._msxml_base_dir(input_text)
+        if base_dir is None:
+            return None
+        candidate = base_dir / "pointcloud" / "pointcloud.ply"
+        if candidate.exists():
+            return str(candidate)
+        fallback = base_dir / "pointcloud.ply"
+        if fallback.exists():
+            return str(fallback)
+        return str(candidate)
+
+    def _update_msxml_auto_paths(self, input_text: Optional[str] = None) -> None:
+        if not self.msxml_vars:
+            return
+        if input_text is None:
+            input_text = self.msxml_vars["xml"].get()
+
+        default_out = self._msxml_default_output_for_input(input_text)
+        if default_out:
+            current_output = self.msxml_vars["output"].get().strip()
+            should_update = (
+                self._msxml_output_auto
+                or not current_output
+                or current_output == self._msxml_last_auto_output
+            )
+            if should_update:
+                self._msxml_output_auto = True
+                self._msxml_last_auto_output = default_out
+                self._msxml_output_updating = True
+                try:
+                    self.msxml_vars["output"].set(default_out)
+                finally:
+                    self._msxml_output_updating = False
+
+        # NOTE: cut input and points PLY are user-specified (no auto-fill).
+
+    def _on_msxml_input_changed(self, *_args) -> None:
+        self._update_msxml_auto_paths()
+
+    def _on_msxml_input_selected(self, selected_path: str) -> None:
+        self._update_msxml_auto_paths(selected_path)
+
+    def _on_msxml_output_changed(self, *_args) -> None:
+        if self._msxml_output_updating:
+            return
+        self._msxml_output_auto = False
+
+    def _on_msxml_cut_input_changed(self, *_args) -> None:
+        if self._msxml_cut_input_updating:
+            return
+        self._msxml_cut_input_auto = False
+
+    def _on_msxml_points_ply_changed(self, *_args) -> None:
+        if self._msxml_points_ply_updating:
+            return
+        self._msxml_points_ply_auto = False
+
+    def _update_msxml_cut_state(self) -> None:
+        if not self.msxml_vars:
+            return
+        enabled = bool(self.msxml_vars["cut"].get())
+        state = "normal" if enabled else "disabled"
+        for widget in (self.msxml_cut_input_entry, self.msxml_cut_out_entry):
+            if widget is None:
+                continue
+            try:
+                widget.configure(state=state)
+            except tk.TclError:
+                pass
+
+    def _format_includes_colmap(self, format_value: str) -> bool:
+        return format_value in {"colmap", "all"}
+
+    def _update_msxml_format_state(self) -> None:
+        if not self.msxml_vars:
+            return
+        fmt = self.msxml_vars["format"].get().strip().lower()
+        enabled = self._format_includes_colmap(fmt)
+        state = "normal" if enabled else "disabled"
+        for widget in (
+            self.msxml_points_entry,
+            self.msxml_points_button,
+            self.msxml_points_rotate_check,
+        ):
+            if widget is None:
+                continue
+            try:
+                widget.configure(state=state)
+            except tk.TclError:
+                pass
+
+    def _build_msxml_tab(self, parent: tk.Widget) -> None:
+        container = tk.Frame(parent)
+        container.pack(fill="both", expand=True)
+
+        params = tk.LabelFrame(container, text="Parameters")
+        params.pack(fill="x", padx=8, pady=8)
+
+        self.msxml_vars = {
+            "xml": tk.StringVar(),
+            "output": tk.StringVar(),
+            "preset": tk.StringVar(value="full360coverage"),
+            "format": tk.StringVar(value="metashape"),
+            "ext": tk.StringVar(value="jpg"),
+            "scale": tk.StringVar(value="1.0"),
+            "world_axis": tk.StringVar(value="0 1 0"),
+            "world_deg": tk.StringVar(value="0"),
+            "cut": tk.BooleanVar(value=False),
+            "cut_input": tk.StringVar(),
+            "cut_out": tk.StringVar(),
+            "points_ply": tk.StringVar(),
+            "pc_rotate_x": tk.BooleanVar(value=True),
+        }
+        self.msxml_vars["xml"].trace_add("write", self._on_msxml_input_changed)
+        self.msxml_vars["output"].trace_add("write", self._on_msxml_output_changed)
+        self.msxml_vars["cut_input"].trace_add(
+            "write", self._on_msxml_cut_input_changed
+        )
+        self.msxml_vars["points_ply"].trace_add(
+            "write", self._on_msxml_points_ply_changed
+        )
+        self.msxml_vars["cut"].trace_add(
+            "write", lambda *_args: self._update_msxml_cut_state()
+        )
+        self.msxml_vars["format"].trace_add(
+            "write", lambda *_args: self._update_msxml_format_state()
+        )
+
+        row = 0
+        tk.Label(params, text="Input XML").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(params, textvariable=self.msxml_vars["xml"], width=52).grid(
+            row=row, column=1, sticky="we", padx=4, pady=4
+        )
+        tk.Button(
+            params,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.msxml_vars["xml"],
+                title="Select Metashape XML",
+                filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
+                on_select=self._on_msxml_input_selected,
+            ),
+        ).grid(row=row, column=2, padx=4, pady=4)
+
+        row += 1
+        tk.Label(params, text="Output folder").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(params, textvariable=self.msxml_vars["output"], width=52).grid(
+            row=row, column=1, sticky="we", padx=4, pady=4
+        )
+        tk.Button(
+            params,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.msxml_vars["output"],
+                title="Select output folder",
+            ),
+        ).grid(row=row, column=2, padx=4, pady=4)
+
+        row += 1
+        tk.Label(params, text="Preset").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
+        )
+        preset_combo = ttk.Combobox(
+            params,
+            textvariable=self.msxml_vars["preset"],
+            values=MSXML_PRESET_CHOICES,
+            state="readonly",
+            width=22,
+        )
+        preset_combo.grid(row=row, column=1, sticky="w", padx=4, pady=4)
+
+        row += 1
+        tk.Label(params, text="Format / Ext").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
+        )
+        format_frame = tk.Frame(params)
+        format_frame.grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        tk.Label(format_frame, text="Format").pack(side=tk.LEFT, padx=(0, 4))
+        format_combo = ttk.Combobox(
+            format_frame,
+            textvariable=self.msxml_vars["format"],
+            values=MSXML_FORMAT_CHOICES,
+            state="readonly",
+            width=14,
+        )
+        format_combo.pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(format_frame, text="Ext").pack(side=tk.LEFT, padx=(0, 4))
+        ext_combo = ttk.Combobox(
+            format_frame,
+            textvariable=self.msxml_vars["ext"],
+            values=("jpg", "png", "tif"),
+            state="readonly",
+            width=8,
+        )
+        ext_combo.pack(side=tk.LEFT)
+
+        row += 1
+        tk.Label(params, text="Scale / World").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
+        )
+        world_frame = tk.Frame(params)
+        world_frame.grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        tk.Label(world_frame, text="Scale").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            world_frame,
+            textvariable=self.msxml_vars["scale"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(world_frame, text="Axis").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            world_frame,
+            textvariable=self.msxml_vars["world_axis"],
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(world_frame, text="Deg").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            world_frame,
+            textvariable=self.msxml_vars["world_deg"],
+            width=6,
+        ).pack(side=tk.LEFT)
+
+        row += 1
+        persp_frame = tk.LabelFrame(params, text="PerspCut")
+        persp_frame.grid(
+            row=row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(6, 4),
+        )
+        persp_frame.grid_columnconfigure(1, weight=1)
+
+        p_row = 0
+        tk.Checkbutton(
+            persp_frame,
+            text="PerspCut",
+            variable=self.msxml_vars["cut"],
+            command=self._update_msxml_cut_state,
+        ).grid(row=p_row, column=0, columnspan=3, sticky="w", padx=4, pady=4)
+
+        p_row += 1
+        tk.Label(persp_frame, text="PerspCut input").grid(
+            row=p_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.msxml_cut_input_entry = tk.Entry(
+            persp_frame, textvariable=self.msxml_vars["cut_input"], width=52
+        )
+        self.msxml_cut_input_entry.grid(
+            row=p_row, column=1, sticky="we", padx=4, pady=4
+        )
+        tk.Button(
+            persp_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.msxml_vars["cut_input"],
+                title="Select cut input folder",
+            ),
+        ).grid(row=p_row, column=2, padx=4, pady=4)
+
+        p_row += 1
+        tk.Label(persp_frame, text="Cut out").grid(
+            row=p_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.msxml_cut_out_entry = tk.Entry(
+            persp_frame, textvariable=self.msxml_vars["cut_out"], width=52
+        )
+        self.msxml_cut_out_entry.grid(
+            row=p_row, column=1, sticky="we", padx=4, pady=4
+        )
+        tk.Button(
+            persp_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.msxml_vars["cut_out"],
+                title="Select cut output folder",
+            ),
+        ).grid(row=p_row, column=2, padx=4, pady=4)
+
+        p_row += 1
+        tk.Label(persp_frame, text="Points PLY").grid(
+            row=p_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.msxml_points_entry = tk.Entry(
+            persp_frame, textvariable=self.msxml_vars["points_ply"], width=52
+        )
+        self.msxml_points_entry.grid(
+            row=p_row, column=1, sticky="we", padx=4, pady=4
+        )
+        self.msxml_points_button = tk.Button(
+            persp_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.msxml_vars["points_ply"],
+                title="Select points PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        )
+        self.msxml_points_button.grid(row=p_row, column=2, padx=4, pady=4)
+
+        p_row += 1
+        self.msxml_points_rotate_check = tk.Checkbutton(
+            persp_frame,
+            text="Rotate pointcloud X +180",
+            variable=self.msxml_vars["pc_rotate_x"],
+        )
+        self.msxml_points_rotate_check.grid(
+            row=p_row, column=1, sticky="w", padx=4, pady=4
+        )
+
+        params.grid_columnconfigure(1, weight=1)
+
+        actions = tk.Frame(container)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        self.msxml_stop_button = tk.Button(
+            actions,
+            text="Stop",
+            command=lambda: self._stop_cli_process("msxml"),
+        )
+        self.msxml_stop_button.pack(side=tk.RIGHT, padx=4, pady=4)
+        self.msxml_stop_button.configure(state="disabled")
+        self.msxml_run_button = tk.Button(
+            actions,
+            text="Run gs360_MSXmlToPerspCams",
+            command=self._run_msxml_tool,
+        )
+        self.msxml_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
+
+        log_frame = tk.LabelFrame(container, text="Log")
+        log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.msxml_log = tk.Text(log_frame, wrap="word", height=16, cursor="arrow")
+        self.msxml_log.pack(fill="both", expand=True, padx=6, pady=4)
+        self.msxml_log.bind("<Key>", self._block_text_edit)
+        self.msxml_log.bind("<Button-1>", lambda event: self.msxml_log.focus_set())
+        self._set_text_widget(self.msxml_log, "")
+        self._update_msxml_cut_state()
+        self._update_msxml_format_state()
+
     def _build_ply_tab(self, parent: tk.Widget) -> None:
         container = tk.Frame(parent)
         container.pack(fill="both", expand=True)
@@ -2844,6 +3247,121 @@ class PreviewApp:
             self.human_run_button,
             process_key="human",
             stop_button=self.human_stop_button,
+            cwd=self.base_dir,
+        )
+
+    def _run_msxml_tool(self) -> None:
+        if not self.msxml_vars:
+            return
+        xml_text = self.msxml_vars["xml"].get().strip()
+        if not xml_text:
+            messagebox.showerror("gs360_MSXmlToPerspCams", "Input XML is required.")
+            return
+        xml_path = Path(xml_text).expanduser()
+        if not xml_path.exists():
+            messagebox.showerror(
+                "gs360_MSXmlToPerspCams",
+                f"XML file not found:\n{xml_text}",
+            )
+            return
+
+        cmd: List[str] = [
+            sys.executable,
+            str(self.base_dir / "gs360_MSXmlToPerspCams.py"),
+            str(xml_path),
+        ]
+
+        output_dir = self.msxml_vars["output"].get().strip()
+        if output_dir:
+            cmd.extend(["-o", output_dir])
+
+        preset_value = self.msxml_vars["preset"].get().strip()
+        if preset_value:
+            cmd.extend(["--preset", preset_value])
+
+        format_value = self.msxml_vars["format"].get().strip().lower()
+        if format_value:
+            cmd.extend(["--format", format_value])
+
+        ext_value = self.msxml_vars["ext"].get().strip()
+        if ext_value:
+            cmd.extend(["--ext", ext_value])
+
+        scale_text = self.msxml_vars["scale"].get().strip()
+        if scale_text:
+            try:
+                float(scale_text)
+            except ValueError:
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams", "Scale must be numeric."
+                )
+                return
+            cmd.extend(["--scale", scale_text])
+
+        axis_text = self.msxml_vars["world_axis"].get().strip()
+        if axis_text:
+            parts = axis_text.replace(",", " ").split()
+            if len(parts) != 3:
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams",
+                    "World axis must have 3 values (x y z).",
+                )
+                return
+            try:
+                [float(p) for p in parts]
+            except ValueError:
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams",
+                    "World axis must be numeric.",
+                )
+                return
+            cmd.extend(["--world-rot-axis", axis_text])
+
+        world_deg = self.msxml_vars["world_deg"].get().strip()
+        if world_deg:
+            try:
+                float(world_deg)
+            except ValueError:
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams", "World deg must be numeric."
+                )
+                return
+            cmd.extend(["--world-rot-deg", world_deg])
+
+        if bool(self.msxml_vars["cut"].get()):
+            cmd.append("--persp-cut")
+            cut_input = self.msxml_vars["cut_input"].get().strip()
+            if cut_input:
+                cmd.extend(["--cut-input", cut_input])
+            cut_out = self.msxml_vars["cut_out"].get().strip()
+            if cut_out:
+                cmd.extend(["--cut-out", cut_out])
+
+        if self._format_includes_colmap(format_value):
+            points_ply = self.msxml_vars["points_ply"].get().strip()
+            if not points_ply:
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams",
+                    "Points PLY is required for COLMAP output.",
+                )
+                return
+            points_path = Path(points_ply).expanduser()
+            if not points_path.exists():
+                messagebox.showerror(
+                    "gs360_MSXmlToPerspCams",
+                    f"Points PLY not found:\n{points_ply}",
+                )
+                return
+            cmd.extend(["--points-ply", points_ply])
+            if bool(self.msxml_vars["pc_rotate_x"].get()):
+                cmd.append("--pc-rotate-x-plus180")
+
+        self._run_cli_command(
+            cmd,
+            self.msxml_log,
+            self.msxml_run_button,
+            process_key="msxml",
+            stop_button=self.msxml_stop_button,
             cwd=self.base_dir,
         )
 
