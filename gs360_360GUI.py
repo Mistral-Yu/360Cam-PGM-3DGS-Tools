@@ -61,7 +61,7 @@ MSXML_PRESET_CHOICES = [
     "2views",
     "evenMinus30",
     "evenPlus30",
-    "cube90",
+    "cube105",
 ]
 MSXML_FORMAT_CHOICES = [
     "metashape",
