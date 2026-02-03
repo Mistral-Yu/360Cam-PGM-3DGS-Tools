@@ -1008,13 +1008,16 @@ def build_arg_parser():
     ap.add_argument(
         "--points-ply",
         default=None,
-        help="Input pointcloud PLY (required when --format includes colmap)",
+        help=(
+            "Input pointcloud PLY (required for --format colmap; "
+            "optional for transforms to write rotated PLY)"
+        ),
     )
     ap.add_argument(
         "--pc-rotate-x-plus180",
         dest="pc_rotate_x_plus180",
         action="store_true",
-        help="Rotate pointcloud PLY (fixed X +180); points3D uses +90",
+        help="Rotate pointcloud PLY (fixed X +180)",
     )
     ap.add_argument(
         "--pc-rotate-x-plus90",
@@ -1133,13 +1136,15 @@ def main():
         print("[OK] transforms.json:", out_json)
 
     points = []
-    if args.format in ("colmap", "all"):
-        if not args.points_ply:
-            print(
-                "[ERR] --points-ply is required when --format includes colmap",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    needs_colmap = args.format in ("colmap", "all")
+    allow_points = args.format in ("transforms", "colmap", "all")
+    if needs_colmap and not args.points_ply:
+        print(
+            "[ERR] --points-ply is required when --format includes colmap",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if args.points_ply and allow_points:
         points_ply_path = pathlib.Path(args.points_ply).expanduser().resolve()
         if not points_ply_path.exists():
             print(
@@ -1154,6 +1159,7 @@ def main():
             args.pc_rotate_x_plus180,
             args.scale,
         )
+    if needs_colmap:
         colmap_images = compute_colmap_images(frames, COLMAP_X_BASE_DEG)
         colmap_dir = out_dir / "sparse" / "0"
         export_colmap(colmap_dir, colmap_images, intrinsics, points)
