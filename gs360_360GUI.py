@@ -2259,14 +2259,14 @@ class PreviewApp:
             except tk.TclError:
                 pass
 
-    def _format_includes_colmap(self, format_value: str) -> bool:
-        return format_value in {"colmap", "all"}
+    def _format_allows_points_ply(self, format_value: str) -> bool:
+        return format_value in {"colmap", "all", "transforms"}
 
     def _update_msxml_format_state(self) -> None:
         if not self.msxml_vars:
             return
         fmt = self.msxml_vars["format"].get().strip().lower()
-        enabled = self._format_includes_colmap(fmt)
+        enabled = self._format_allows_points_ply(fmt)
         state = "normal" if enabled else "disabled"
         for widget in (
             self.msxml_points_entry,
@@ -3337,7 +3337,7 @@ class PreviewApp:
             if cut_out:
                 cmd.extend(["--cut-out", cut_out])
 
-        if self._format_includes_colmap(format_value):
+        if format_value in {"colmap", "all"}:
             points_ply = self.msxml_vars["points_ply"].get().strip()
             if not points_ply:
                 messagebox.showerror(
@@ -3355,6 +3355,19 @@ class PreviewApp:
             cmd.extend(["--points-ply", points_ply])
             if bool(self.msxml_vars["pc_rotate_x"].get()):
                 cmd.append("--pc-rotate-x-plus180")
+        elif format_value == "transforms":
+            points_ply = self.msxml_vars["points_ply"].get().strip()
+            if points_ply:
+                points_path = Path(points_ply).expanduser()
+                if not points_path.exists():
+                    messagebox.showerror(
+                        "gs360_MSXmlToPerspCams",
+                        f"Points PLY not found:\n{points_ply}",
+                    )
+                    return
+                cmd.extend(["--points-ply", points_ply])
+                if bool(self.msxml_vars["pc_rotate_x"].get()):
+                    cmd.append("--pc-rotate-x-plus180")
 
         self._run_cli_command(
             cmd,
