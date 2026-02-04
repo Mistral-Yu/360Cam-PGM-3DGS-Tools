@@ -51,6 +51,7 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 4. `HumanMaskTool` tab: (Optional) Remove or isolate bystanders with `HumanMaskTool` to avoid reconstruction ghosts.
 5. Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
 6. `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with `PlyOptimizer`.
+7. `MS360xmlToPerspCams` tab: Convert Metashape camera XML (spherical) into perspective cameras.
 
 ### Quick Workflow (GUI)
 #### Fast
