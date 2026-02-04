@@ -57,6 +57,12 @@ TRANSFORMS_X_FIX_DEG = 270.0
 COLMAP_X_BASE_DEG = 0.0
 COLMAP_POINTS_X_DEG = 90.0
 POINTCLOUD_PLY_X_DEG = 180.0
+REALITYSCAN_AXIS = [
+    [1.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0],
+    [0.0, 1.0, 0.0],
+]
+REALITYSCAN_DIR = "cameras_RealityScan"
 
 # OpenCV camera coords -> OpenGL camera coords.
 CV_TO_GL = [
@@ -203,11 +209,7 @@ def compute_colmap_images(frames, x_fix_deg):
     images = []
     image_id = 1
     for frame in frames:
-        c2w_gl = apply_x_fix_gl(frame["c2w_gl"], x_fix_deg)
-        c2w_cv = mat4_mul(c2w_gl, CV_TO_GL)
-        r_wc = mat3_transpose([row[:3] for row in c2w_cv[:3]])
-        t_wc = c2w_cv[0][3], c2w_cv[1][3], c2w_cv[2][3]
-        t = mat3_vec_mul(r_wc, [-t_wc[0], -t_wc[1], -t_wc[2]])
+        r_wc, t = compute_colmap_pose(frame, x_fix_deg)
         qw, qx, qy, qz = rotmat_to_quat_wxyz(r_wc)
         images.append({
             "image_id": image_id,
@@ -222,6 +224,15 @@ def compute_colmap_images(frames, x_fix_deg):
         })
         image_id += 1
     return images
+
+
+def compute_colmap_pose(frame, x_fix_deg):
+    c2w_gl = apply_x_fix_gl(frame["c2w_gl"], x_fix_deg)
+    c2w_cv = mat4_mul(c2w_gl, CV_TO_GL)
+    r_wc = mat3_transpose([row[:3] for row in c2w_cv[:3]])
+    t_wc = c2w_cv[0][3], c2w_cv[1][3], c2w_cv[2][3]
+    t = mat3_vec_mul(r_wc, [-t_wc[0], -t_wc[1], -t_wc[2]])
+    return r_wc, t
 
 
 def apply_unit_scale(mat, scale):
@@ -752,6 +763,54 @@ def export_colmap(out_dir, images, intrinsics, points):
             )
 
 
+def export_realityscan_xmp(out_dir, frames, intrinsics, x_fix_deg=0.0):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fl_x, _fl_y, _cx, _cy, width, _height = intrinsics
+    focal_mm = fl_x * (SENSOR_W_MM / float(width))
+    axis_t = mat3_transpose(REALITYSCAN_AXIS)
+    for frame in frames:
+        r_wc, t = compute_colmap_pose(frame, x_fix_deg)
+        r_xmp = mat3_mul(r_wc, REALITYSCAN_AXIS)
+        c = mat3_vec_mul(
+            mat3_transpose(r_wc),
+            [-t[0], -t[1], -t[2]],
+        )
+        c_xmp = mat3_vec_mul(axis_t, c)
+        stem = pathlib.Path(frame["file_path"]).stem
+        xmp_path = out_dir / f"{stem}.xmp"
+        rotation_text = " ".join(
+            "{:.15g}".format(v) for row in r_xmp for v in row
+        )
+        position_text = "{:.15g} {:.15g} {:.15g}".format(
+            c_xmp[0], c_xmp[1], c_xmp[2]
+        )
+        xmp_lines = [
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+            '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-'
+            'rdf-syntax-ns#">',
+            '    <rdf:Description xcr:Version="3" xcr:PosePrior="initial" '
+            'xcr:Coordinates="absolute"',
+            '       xcr:DistortionModel="perspective" '
+            'xcr:DistortionCoeficients="0 0 0 0 0 0"',
+            f'       xcr:FocalLength35mm="{focal_mm:g}" xcr:Skew="0" '
+            'xcr:AspectRatio="1" xcr:PrincipalPointU="0"',
+            '       xcr:PrincipalPointV="0" xcr:CalibrationPrior="initial" '
+            'xcr:CalibrationGroup="0"',
+            '       xcr:DistortionGroup="0" xcr:InTexturing="1" '
+            'xcr:InMeshing="1" '
+            'xmlns:xcr="http://www.capturingreality.com/ns/xcr/1.1#">',
+            f"      <xcr:Rotation>{rotation_text}</xcr:Rotation>",
+            f"      <xcr:Position>{position_text}</xcr:Position>",
+            "    </rdf:Description>",
+            "  </rdf:RDF>",
+            "</x:xmpmeta>",
+        ]
+        xmp = "\n".join(xmp_lines) + "\n"
+        with xmp_path.open("w", encoding="utf-8") as f:
+            f.write(xmp)
+    print("[OK] RealityScan XMP:", out_dir)
+
+
 def export_metashape_xml(
     xml_in_path,
     out_path,
@@ -954,9 +1013,9 @@ def build_arg_parser():
     )
     ap.add_argument(
         "--format",
-        choices=["transforms", "colmap", "metashape", "all"],
+        choices=["transforms", "colmap", "metashape", "realityscan", "all"],
         default="metashape",
-        help="Output format (all=transforms+colmap+metashape)",
+        help="Output format (all=transforms+colmap+metashape+realityscan)",
     )
     ap.add_argument(
         "--ext",
@@ -1164,6 +1223,10 @@ def main():
         colmap_dir = out_dir / "sparse" / "0"
         export_colmap(colmap_dir, colmap_images, intrinsics, points)
         print("[OK] COLMAP text:", colmap_dir)
+
+    if args.format in ("realityscan", "all"):
+        rs_dir = out_dir / REALITYSCAN_DIR
+        export_realityscan_xmp(rs_dir, frames, intrinsics, COLMAP_X_BASE_DEG)
 
     if args.format in ("metashape", "all"):
         out_xml = out_dir / "perspective_cams.xml"
