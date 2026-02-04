@@ -67,6 +67,7 @@ MSXML_FORMAT_CHOICES = [
     "metashape",
     "transforms",
     "colmap",
+    "realityscan",
     "all",
 ]
 
@@ -809,7 +810,7 @@ class PreviewApp:
         self.notebook.add(preview_tab, text="360PerspCut")
         self.notebook.add(human_tab, text="HumanMaskTool")
         self.notebook.add(ply_tab, text="PlyOptimizer")
-        self.notebook.add(msxml_tab, text="MSXmlToPerspCams")
+        self.notebook.add(msxml_tab, text="MS360xmlToPersCams")
         self.notebook.add(config_tab, text="Config")
 
         self._build_video_tab(video_tab)
@@ -2516,7 +2517,7 @@ class PreviewApp:
         self.msxml_stop_button.configure(state="disabled")
         self.msxml_run_button = tk.Button(
             actions,
-            text="Run gs360_MSXmlToPerspCams",
+            text="Run gs360_MS360xmlToPersCams",
             command=self._run_msxml_tool,
         )
         self.msxml_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
@@ -3255,19 +3256,19 @@ class PreviewApp:
             return
         xml_text = self.msxml_vars["xml"].get().strip()
         if not xml_text:
-            messagebox.showerror("gs360_MSXmlToPerspCams", "Input XML is required.")
+            messagebox.showerror("gs360_MS360xmlToPersCams", "Input XML is required.")
             return
         xml_path = Path(xml_text).expanduser()
         if not xml_path.exists():
             messagebox.showerror(
-                "gs360_MSXmlToPerspCams",
+                "gs360_MS360xmlToPersCams",
                 f"XML file not found:\n{xml_text}",
             )
             return
 
         cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_MSXmlToPerspCams.py"),
+            str(self.base_dir / "gs360_MS360xmlToPersCams.py"),
             str(xml_path),
         ]
 
@@ -3293,7 +3294,7 @@ class PreviewApp:
                 float(scale_text)
             except ValueError:
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams", "Scale must be numeric."
+                    "gs360_MS360xmlToPersCams", "Scale must be numeric."
                 )
                 return
             cmd.extend(["--scale", scale_text])
@@ -3303,7 +3304,7 @@ class PreviewApp:
             parts = axis_text.replace(",", " ").split()
             if len(parts) != 3:
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams",
+                    "gs360_MS360xmlToPersCams",
                     "World axis must have 3 values (x y z).",
                 )
                 return
@@ -3311,7 +3312,7 @@ class PreviewApp:
                 [float(p) for p in parts]
             except ValueError:
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams",
+                    "gs360_MS360xmlToPersCams",
                     "World axis must be numeric.",
                 )
                 return
@@ -3323,7 +3324,7 @@ class PreviewApp:
                 float(world_deg)
             except ValueError:
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams", "World deg must be numeric."
+                    "gs360_MS360xmlToPersCams", "World deg must be numeric."
                 )
                 return
             cmd.extend(["--world-rot-deg", world_deg])
@@ -3341,14 +3342,14 @@ class PreviewApp:
             points_ply = self.msxml_vars["points_ply"].get().strip()
             if not points_ply:
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams",
+                    "gs360_MS360xmlToPersCams",
                     "Points PLY is required for COLMAP output.",
                 )
                 return
             points_path = Path(points_ply).expanduser()
             if not points_path.exists():
                 messagebox.showerror(
-                    "gs360_MSXmlToPerspCams",
+                    "gs360_MS360xmlToPersCams",
                     f"Points PLY not found:\n{points_ply}",
                 )
                 return
@@ -3361,7 +3362,7 @@ class PreviewApp:
                 points_path = Path(points_ply).expanduser()
                 if not points_path.exists():
                     messagebox.showerror(
-                        "gs360_MSXmlToPerspCams",
+                        "gs360_MS360xmlToPersCams",
                         f"Points PLY not found:\n{points_ply}",
                     )
                     return
