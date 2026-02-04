@@ -75,7 +75,7 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 3. In **Metashape**, import the frames, then go to **Tools -> Camera Calibration** and set **Camera Type = Spherical**.
 4. Align the cameras.
 5. Export from Metashape: **File -> Export -> Export Cameras** (Agisoft XML) and **File -> Export -> Point Cloud** (PLY).
-6. Back in `gs360_360GUI.py`, open the **MSXmlToPerspCams** tab and set **Input XML** to the exported XML.
+6. Back in `gs360_360GUI.py`, open the **MS360xmlToPerspCams** tab and set **Input XML** to the exported XML.
 7. Set **Format = transforms**, enable **PerspCut**, set **PerspCut input** to the 360 image folder, and set **Points PLY** to the exported PLY. Run the tool.
 8. Use **PerspCut out**, `transforms.json`, and the rotated PLY in PostShot (or similar 3DGS tools).
 
