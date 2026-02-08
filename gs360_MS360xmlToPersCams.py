@@ -13,7 +13,7 @@ Assumptions:
 - Metashape camera transform is camera-to-world in OpenCV camera coords
   (x right, y down, z forward).
 - transforms.json uses OpenGL camera coords (x right, y up, z back).
-- World units default to meters (scale=1). Use --scale 100 for cm.
+- Translation scale is controlled by --scale.
 
 Adjust the WORLD_FROM_METASHAPE matrix if a world-axis conversion is needed.
 """
@@ -943,7 +943,7 @@ def build_outputs(
             width, height, hfov, vfov
         )
     )
-    print(f"[INFO] unit scale: 1.0m -> {scale_cm:.1f}cm")
+    print(f"[INFO] scale factor: {scale_cm:.6g}")
     print(
         "[INFO] WORLD_FROM_METASHAPE axis=({:.6f} {:.6f} {:.6f}) deg={:.3f}"
         .format(world_axis[0], world_axis[1], world_axis[2], world_deg)
@@ -1026,7 +1026,7 @@ def build_arg_parser():
         "--scale",
         type=float,
         default=1.0,
-        help="World unit scale applied to translations (meters to cm = 100)",
+        help="Global scale factor applied to translations",
     )
     ap.add_argument(
         "--world-rot-axis",
