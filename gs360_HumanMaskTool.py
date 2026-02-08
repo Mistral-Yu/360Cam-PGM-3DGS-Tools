@@ -2,17 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 gs360_HumanMaskTool.py
-  - Generate human masks with Python 3.7 / torchvision Mask R-CNN.
+  - Generate target masks with Python 3.7 / torchvision Mask R-CNN.
   - Inputs: image folder only (non-recursive, selected via -i/--in).
   - Output modes:
       mask        : Binary mask PNG (person=black, background=white) -> <source>.png
       alpha       : RGBA cutout PNG (person=opaque, background=transparent) -> <source>.png
       cutout      : RGBA cutout PNG (person only, filename <source>_cutout.png)
-      keep_person : Color image preserving people and filling the background with black.
-      remove_person: Paint people black to remove them.
-      inpaint     : Replace the person region with classical inpainting (OpenCV Telea).
+      keep_person : Color image preserving selected targets and filling the background with black.
+      remove_person: Paint selected targets black to remove them.
+      inpaint     : Replace selected target regions with classical inpainting (OpenCV Telea).
   - Default output location: automatically create masks/ directly under the input.
-  - Performance settings (score, morphology, resize) and shadow parameters are fixed constants; only --include_shadow is configurable.
+  - Performance settings (score, morphology, resize) and shadow parameters are fixed constants.
 """
 
 import argparse
@@ -59,6 +59,13 @@ SHADOW_NEAR = 25
 SHADOW_MIN_AREA = 500
 PROGRESS_INTERVAL = 5
 INPAINT_RADIUS = 5
+TARGET_TO_COCO_LABELS = {
+    "person": [1],
+    "bicycle": [2],
+    "car": [3],
+    "animal": [16, 17, 18],  # bird, cat, dog
+}
+TARGET_CHOICES = ["person", "bicycle", "car", "animal"]
 
 
 def is_image(path: Path) -> bool:
@@ -148,16 +155,23 @@ def _set_rpn_topn_compat(rpn, pre: int, post: int) -> bool:
 
     return False
 
-def person_mask_from_prediction(pred, score_thres=SCORE_THRESH, mask_thres=MASK_THRESH):
+def target_mask_from_prediction(pred, targets,
+                                score_thres=SCORE_THRESH, mask_thres=MASK_THRESH):
     """
     pred: Dictionary produced by model(x)[0].
-    return: HxW (uint8) mask with person pixels = 255.
+    return: HxW (uint8) mask with selected target pixels = 255.
     """
-    labels = pred["labels"].detach().cpu().numpy()       # COCO: person=1
+    labels = pred["labels"].detach().cpu().numpy()
     scores = pred["scores"].detach().cpu().numpy()
     masks = pred["masks"].detach().cpu().numpy()         # (N,1,H,W) float [0..1]
 
-    keep = (labels == 1) & (scores >= score_thres)
+    target_ids = set()
+    for name in targets:
+        target_ids.update(TARGET_TO_COCO_LABELS.get(name, []))
+    if not target_ids:
+        return None
+
+    keep = np.isin(labels, list(target_ids)) & (scores >= score_thres)
     if keep.sum() == 0:
         return None
 
@@ -286,7 +300,11 @@ def apply_mode(img_rgb, mask, mode: str):
 def process_image(model, device, in_path: Path, out_dir: Path,
                   score_thres: float = SCORE_THRESH, mask_thres: float = MASK_THRESH,
                   close: int = CLOSE_KERNEL, mode: str = "mask",
-                  include_shadow: bool = False):
+                  include_shadow: bool = False,
+                  targets=None):
+    if targets is None:
+        targets = ["person"]
+
     img = Image.open(str(in_path)).convert("RGB")
     t = transforms.ToTensor()(img).to(device)
 
@@ -298,8 +316,8 @@ def process_image(model, device, in_path: Path, out_dir: Path,
         else:
             pred = model([t])[0]
 
-    # Person mask (person=255, background=0).
-    mask = person_mask_from_prediction(pred, score_thres, mask_thres)
+    # Selected target mask (target=255, background=0).
+    mask = target_mask_from_prediction(pred, targets, score_thres, mask_thres)
     mask = refine_mask(mask,
                        close=close,
                        dilate_ratio=0.0,
@@ -372,7 +390,9 @@ def collect_images(in_path: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Tool to generate person masks with Mask R-CNN (COCO).")
+    ap = argparse.ArgumentParser(
+        description="Tool to generate target masks with Mask R-CNN (COCO)."
+    )
     ap.add_argument("-i", "--in", dest="input_dir", type=str, required=True,
                     help="Input directory containing images (non-recursive)")
     ap.add_argument("-o", "--out", type=str, default=None,
@@ -382,6 +402,14 @@ def main():
                     help="Output mode")
 
     ap.add_argument("--cpu", action="store_true", help="Force CPU")
+    ap.add_argument(
+        "--target",
+        action="append",
+        dest="targets",
+        choices=TARGET_CHOICES,
+        default=None,
+        help="Target category to mask (repeatable). default: person",
+    )
     ap.add_argument("--include_shadow", action="store_true",
                     help="Include adjacent shadows in the mask")
     args = ap.parse_args()
@@ -398,6 +426,13 @@ def main():
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
     print(f"Device: {device}")
+    targets = args.targets if args.targets else ["person"]
+    deduped_targets = []
+    for target_name in targets:
+        if target_name not in deduped_targets:
+            deduped_targets.append(target_name)
+    targets = deduped_targets
+    print(f"Targets: {', '.join(targets)}")
 
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -428,7 +463,9 @@ def main():
         process_image(model, device, p, out_dir,
                       score_thres=SCORE_THRESH, mask_thres=MASK_THRESH,
                       close=CLOSE_KERNEL,
-                      mode=args.mode, include_shadow=args.include_shadow)
+                      mode=args.mode,
+                      include_shadow=args.include_shadow,
+                      targets=targets)
     if total > 0:
         update_progress("Processing", total, total, last_pct)
         sys.stdout.write("\n")
