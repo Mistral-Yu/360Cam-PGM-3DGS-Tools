@@ -53,6 +53,7 @@ COLOR_CYCLE = [
 PRESET_CHOICES = ["default", "fisheyelike", "full360coverage", "2views", "evenMinus30", "evenPlus30", "fisheyeXY"]
 
 HUMAN_MODE_CHOICES = ["mask", "alpha", "inpaint"]
+HUMAN_TARGET_CHOICES = ["person", "bicycle", "car", "animal"]
 
 MSXML_PRESET_CHOICES = [
     "default",
@@ -73,9 +74,11 @@ MSXML_FORMAT_CHOICES = [
 
 DEFAULT_SELECTOR_CSV_NAME = "selected_image_list.csv"
 
-PLY_VIEW_CANVAS_WIDTH = 960
-PLY_VIEW_CANVAS_HEIGHT = 720
-PLY_VIEW_MAX_POINTS = 1_000_000
+PLY_VIEW_CANVAS_WIDTH = 840
+PLY_VIEW_CANVAS_HEIGHT = 840
+PLY_VIEW_MAX_POINTS = 500_000
+PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
+PLY_INTERACTION_SETTLE_DELAY_MS = 350
 PLY_PROPERTY_TYPES = {
     "char": ("b", 1, "i1"),
     "uchar": ("B", 1, "u1"),
@@ -677,10 +680,12 @@ class PreviewApp:
         self.ply_run_button: Optional[tk.Button] = None
         self.ply_input_view_button: Optional[tk.Button] = None
         self.ply_view_button: Optional[tk.Button] = None
-        self.ply_append_text: Optional[tk.Text] = None
+        self.ply_clear_view_button: Optional[tk.Button] = None
+        self.ply_append_entry: Optional[tk.Entry] = None
         self.ply_adaptive_weight_entry: Optional[tk.Entry] = None
         self.ply_keep_menu: Optional[ttk.Combobox] = None
         self.ply_target_mode_var = tk.StringVar(value="Target points")
+        self.ply_downsample_method_var = tk.StringVar(value="spatial-hash")
         self._ply_target_value_entry: Optional[tk.Entry] = None
         self._ply_target_value_label: Optional[tk.Label] = None
         self._ply_target_var_map: Dict[str, tk.StringVar] = {}
@@ -689,9 +694,14 @@ class PreviewApp:
             "Target percent": "percent",
             "Voxel size": "voxel",
         }
+        self._ply_downsample_method_key_map: Dict[str, str] = {
+            "Voxel": "voxel",
+            "spatial-hash": "spatial-hash",
+            "Adaptive (Octree)": "adaptive",
+        }
         self._last_ply_output_path: Optional[Path] = None
         self._ply_current_file_path: Optional[Path] = None
-        self._ply_viewer_window: Optional[tk.Toplevel] = None
+        self._ply_viewer_root: Optional[tk.Widget] = None
         self._ply_view_canvas: Optional[tk.Canvas] = None
         self._ply_canvas_image_id: Optional[int] = None
         self._ply_canvas_photo: Optional[ImageTk.PhotoImage] = None
@@ -703,8 +713,7 @@ class PreviewApp:
         self._ply_view_total_points = 0
         self._ply_view_sample_step = 1
         self._ply_view_source_label = "PLY"
-        self._ply_view_yaw = 35.0
-        self._ply_view_pitch = 25.0
+        self._ply_view_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
         self._ply_view_zoom = 1.0
         self._ply_view_pan: Tuple[float, float] = (0.0, 0.0)
         self._ply_drag_last: Optional[Tuple[int, int]] = None
@@ -716,16 +725,42 @@ class PreviewApp:
         self._ply_view_max_extent = 1.0
         self._ply_monochrome_var = tk.BooleanVar(value=False)
         self._ply_projection_mode = tk.StringVar(value="Orthographic")
+        self._ply_view_interactive_max_points_var = tk.StringVar(
+            value=str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
+        )
+        self._ply_view_high_max_points_var = tk.StringVar(
+            value=str(PLY_VIEW_MAX_POINTS)
+        )
         self._ply_projection_combo: Optional[ttk.Combobox] = None
+        self._ply_interactive_max_points_entry: Optional[tk.Entry] = None
+        self._ply_high_max_points_entry: Optional[tk.Entry] = None
         self._ply_sky_axis_var = tk.StringVar(value="+Z")
         self._ply_sky_scale_var = tk.StringVar(value="100")
         self._ply_sky_count_var = tk.StringVar(value="4000")
         self._ply_sky_color_var = tk.StringVar(value="#87cefa")
         self._ply_sky_color_rgb_var = tk.StringVar(value="RGB(135, 206, 250)")
         self._ply_sky_color_label: Optional[tk.Label] = None
+        self._ply_remove_color_var = tk.StringVar(
+            value=self._ply_sky_color_var.get()
+        )
+        self._ply_remove_color_rgb_var = tk.StringVar(
+            value=self._ply_sky_color_rgb_var.get()
+        )
+        self._ply_remove_color_tol_var = tk.StringVar(value="50")
+        self._ply_remove_color_label: Optional[tk.Label] = None
         self._ply_sky_save_path_var = tk.StringVar()
         self._ply_sky_points: Optional[np.ndarray] = None
         self._ply_sky_colors: Optional[np.ndarray] = None
+        self._ply_view_rgb_mean: Optional[Tuple[float, float, float]] = None
+        self._ply_loaded_points: Optional[np.ndarray] = None
+        self._ply_loaded_colors: Optional[np.ndarray] = None
+        self._ply_loaded_total_points = 0
+        self._ply_loaded_sample_step = 1
+        self._ply_is_interacting = False
+        self._ply_interaction_after_id: Optional[str] = None
+        self._ply_high_max_points_auto = True
+        self._ply_high_max_points_updating = False
+        self._ply_last_auto_high_max_points = str(PLY_VIEW_MAX_POINTS)
 
         self.video_stop_button: Optional[tk.Button] = None
         self.selector_stop_button: Optional[tk.Button] = None
@@ -2045,6 +2080,10 @@ class PreviewApp:
             "mode": tk.StringVar(value="mask"),
             "cpu": tk.BooleanVar(value=False),
             "include_shadow": tk.BooleanVar(value=False),
+            "target_person": tk.BooleanVar(value=True),
+            "target_bicycle": tk.BooleanVar(value=False),
+            "target_car": tk.BooleanVar(value=False),
+            "target_animal": tk.BooleanVar(value=False),
         }
         self.human_vars["input"].trace_add("write", self._on_human_input_changed)
         self.human_vars["output"].trace_add("write", self._on_human_output_changed)
@@ -2084,6 +2123,31 @@ class PreviewApp:
         )
         mode_combo.pack(side=tk.LEFT, padx=(0, 12))
         mode_combo.set(self.human_vars["mode"].get())
+
+        row += 1
+        target_frame = tk.Frame(params)
+        target_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
+        tk.Label(target_frame, text="Targets").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Person",
+            variable=self.human_vars["target_person"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Bicycle",
+            variable=self.human_vars["target_bicycle"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Car",
+            variable=self.human_vars["target_car"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Animal (Bird/Cat/Dog)",
+            variable=self.human_vars["target_animal"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
 
         row += 1
         flags_frame = tk.Frame(params)
@@ -2391,12 +2455,12 @@ class PreviewApp:
         ext_combo.pack(side=tk.LEFT)
 
         row += 1
-        tk.Label(params, text="Scale / World").grid(
+        tk.Label(params, text="Scale factor / World").grid(
             row=row, column=0, sticky="e", padx=4, pady=4
         )
         world_frame = tk.Frame(params)
         world_frame.grid(row=row, column=1, sticky="w", padx=4, pady=4)
-        tk.Label(world_frame, text="Scale").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(world_frame, text="Scale factor").pack(side=tk.LEFT, padx=(0, 4))
         tk.Entry(
             world_frame,
             textvariable=self.msxml_vars["scale"],
@@ -2536,8 +2600,20 @@ class PreviewApp:
         container = tk.Frame(parent)
         container.pack(fill="both", expand=True)
 
-        params = tk.LabelFrame(container, text="Parameters")
-        params.pack(fill="x", padx=8, pady=8)
+        body_pane = tk.PanedWindow(
+            container,
+            orient=tk.HORIZONTAL,
+            sashrelief=tk.RAISED,
+            sashwidth=6,
+        )
+        body_pane.pack(fill="both", expand=True, padx=8, pady=8)
+        left_panel = tk.Frame(body_pane)
+        right_panel = tk.Frame(body_pane)
+        body_pane.add(left_panel, minsize=700, stretch="always")
+        body_pane.add(right_panel, minsize=260, stretch="never")
+
+        params = tk.LabelFrame(left_panel, text="Parameters")
+        params.pack(fill="x", padx=0, pady=(0, 8))
 
         self.ply_vars = {
             "input": tk.StringVar(),
@@ -2545,13 +2621,19 @@ class PreviewApp:
             "target_points": tk.StringVar(value="100000"),
             "target_percent": tk.StringVar(value="10"),
             "voxel_size": tk.StringVar(value="1"),
-            "adaptive": tk.BooleanVar(value=False),
+            "downsample_method": self.ply_downsample_method_var,
             "adaptive_weight": tk.StringVar(value="1.0"),
             "keep_strategy": tk.StringVar(value="centroid"),
+            "append_ply": tk.StringVar(),
         }
         self.ply_vars["input"].trace_add("write", self._on_ply_input_changed)
         self.ply_vars["output"].trace_add("write", self._on_ply_output_changed)
-        self.ply_vars["adaptive"].trace_add("write", self._update_ply_adaptive_state)
+        self.ply_vars["downsample_method"].trace_add(
+            "write", self._update_ply_adaptive_state
+        )
+        self._ply_view_high_max_points_var.trace_add(
+            "write", self._on_ply_high_max_points_var_changed
+        )
         self._ply_target_var_map = {
             "points": self.ply_vars["target_points"],
             "percent": self.ply_vars["target_percent"],
@@ -2582,12 +2664,12 @@ class PreviewApp:
         ).grid(row=row, column=2, padx=4, pady=4)
 
         row += 1
-        target_frame = tk.Frame(params)
-        target_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Label(target_frame, text="Downsample mode").pack(side=tk.LEFT, padx=(0, 4))
+        downsample_frame = tk.Frame(params)
+        downsample_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
+        tk.Label(downsample_frame, text="Target mode").pack(side=tk.LEFT, padx=(0, 4))
         mode_labels = tuple(self._ply_mode_key_map.keys())
         mode_combo = ttk.Combobox(
-            target_frame,
+            downsample_frame,
             textvariable=self.ply_target_mode_var,
             values=mode_labels,
             state="readonly",
@@ -2595,86 +2677,313 @@ class PreviewApp:
         )
         mode_combo.pack(side=tk.LEFT, padx=(0, 12))
         mode_combo.bind("<<ComboboxSelected>>", self._on_ply_target_mode_changed)
-        self._ply_target_value_label = tk.Label(target_frame, text="Points")
+        self._ply_target_value_label = tk.Label(downsample_frame, text="Points")
         self._ply_target_value_label.pack(side=tk.LEFT, padx=(0, 4))
         current_mode_key = self._ply_mode_key_map.get(self.ply_target_mode_var.get(), "points")
         current_var = self._ply_target_var_map.get(current_mode_key, self.ply_vars["target_points"])
         self._ply_target_value_entry = tk.Entry(
-            target_frame,
+            downsample_frame,
             textvariable=current_var,
             width=12,
         )
-        self._ply_target_value_entry.pack(side=tk.LEFT, padx=(0, 4))
-        self._update_ply_target_value_widgets()
-
-        row += 1
-        adaptive_frame = tk.Frame(params)
-        adaptive_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Checkbutton(
-            adaptive_frame,
-            text="Adaptive sampling",
-            variable=self.ply_vars["adaptive"],
-            command=self._update_ply_adaptive_state,
+        self._ply_target_value_entry.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(downsample_frame, text="Downsample").pack(side=tk.LEFT, padx=(0, 4))
+        method_labels = tuple(self._ply_downsample_method_key_map.keys())
+        ttk.Combobox(
+            downsample_frame,
+            textvariable=self.ply_downsample_method_var,
+            values=method_labels,
+            state="readonly",
+            width=22,
         ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(adaptive_frame, text="Weight").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(downsample_frame, text="Weight").pack(side=tk.LEFT, padx=(0, 4))
         self.ply_adaptive_weight_entry = tk.Entry(
-            adaptive_frame,
+            downsample_frame,
             textvariable=self.ply_vars["adaptive_weight"],
             width=8,
         )
         self.ply_adaptive_weight_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(adaptive_frame, text="Keep strategy").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(downsample_frame, text="Keep strategy").pack(side=tk.LEFT, padx=(0, 4))
         self.ply_keep_menu = ttk.Combobox(
-            adaptive_frame,
+            downsample_frame,
             textvariable=self.ply_vars["keep_strategy"],
             values=("centroid", "center", "first", "random"),
             state="readonly",
             width=12,
         )
         self.ply_keep_menu.pack(side=tk.LEFT, padx=(0, 4))
+        self._update_ply_target_value_widgets()
 
-        params.grid_columnconfigure(1, weight=1)
-
-        append_frame = tk.LabelFrame(container, text="Append PLY files (one per line)")
-        append_frame.pack(fill="both", expand=False, padx=8, pady=(0, 8))
-        self.ply_append_text = tk.Text(append_frame, height=4, wrap="none")
-        self.ply_append_text.pack(fill="both", expand=True, padx=6, pady=4)
-
-        actions = tk.Frame(container)
-        actions.pack(fill="x", padx=8, pady=(0, 8))
-        self.ply_input_view_button = tk.Button(
-            actions,
-            text="Show Input PLY",
-            command=self._on_show_input_ply,
+        row += 1
+        tk.Label(params, text="Append PLY files").grid(
+            row=row, column=0, sticky="e", padx=4, pady=4
         )
-        self.ply_input_view_button.pack(side=tk.LEFT, padx=4, pady=4)
-        self.ply_view_button = tk.Button(
-            actions,
-            text="Show Output PLY",
-            command=self._on_show_ply,
+        append_entry = tk.Entry(
+            params,
+            textvariable=self.ply_vars["append_ply"],
+            width=52,
         )
-        self.ply_view_button.pack(side=tk.LEFT, padx=4, pady=4)
+        append_entry.grid(row=row, column=1, sticky="we", padx=4, pady=4)
+        self.ply_append_entry = append_entry
+        tk.Button(
+            params,
+            text="Browse...",
+            command=self._browse_ply_append_files,
+        ).grid(row=row, column=2, padx=4, pady=4)
+
+        row += 1
+        params_actions = tk.Frame(params)
+        params_actions.grid(row=row, column=0, columnspan=3, sticky="we", pady=(4, 4))
         self.ply_stop_button = tk.Button(
-            actions,
+            params_actions,
             text="Stop",
             command=lambda: self._stop_cli_process("ply"),
         )
         self.ply_stop_button.pack(side=tk.RIGHT, padx=4, pady=4)
         self.ply_stop_button.configure(state="disabled")
         self.ply_run_button = tk.Button(
-            actions,
+            params_actions,
             text="Run gs360_PlyOptimizer",
             command=self._run_ply_optimizer,
         )
         self.ply_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
 
-        log_frame = tk.LabelFrame(container, text="Log")
-        log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.ply_log = tk.Text(log_frame, wrap="word", height=18, cursor="arrow")
+        params.grid_columnconfigure(1, weight=1)
+
+        viewer_frame = tk.LabelFrame(left_panel, text="Ply Viewer")
+        viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
+        self._ply_viewer_root = viewer_frame
+
+        viewer_actions = tk.Frame(viewer_frame)
+        viewer_actions.pack(fill="x", padx=12, pady=(8, 0))
+        self.ply_input_view_button = tk.Button(
+            viewer_actions,
+            text="Show Input PLY",
+            command=self._on_show_input_ply,
+        )
+        self.ply_input_view_button.pack(side=tk.LEFT, padx=(0, 4), pady=0)
+        self.ply_view_button = tk.Button(
+            viewer_actions,
+            text="Show Output PLY",
+            command=self._on_show_ply,
+        )
+        self.ply_view_button.pack(side=tk.LEFT, padx=4, pady=0)
+        self.ply_clear_view_button = tk.Button(
+            viewer_actions,
+            text="Clear",
+            command=self._on_clear_ply_view,
+        )
+        self.ply_clear_view_button.pack(side=tk.LEFT, padx=(4, 0), pady=0)
+
+        top_controls = tk.Frame(viewer_frame)
+        top_controls.pack(fill="x", padx=12, pady=(6, 0))
+        tk.Checkbutton(
+            top_controls,
+            text="Monochrome",
+            variable=self._ply_monochrome_var,
+            command=self._redraw_ply_canvas,
+        ).pack(side=tk.LEFT)
+        tk.Label(top_controls, text="Projection").pack(side=tk.LEFT, padx=(12, 4))
+        self._ply_projection_combo = ttk.Combobox(
+            top_controls,
+            textvariable=self._ply_projection_mode,
+            values=("Orthographic", "Perspective"),
+            state="readonly",
+            width=14,
+        )
+        self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
+        tk.Label(top_controls, text="Low quality pts").pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        interactive_max_points_entry = tk.Entry(
+            top_controls,
+            textvariable=self._ply_view_interactive_max_points_var,
+            width=9,
+        )
+        interactive_max_points_entry.pack(side=tk.LEFT)
+        interactive_max_points_entry.bind(
+            "<Return>", self._on_ply_interactive_max_points_commit
+        )
+        interactive_max_points_entry.bind(
+            "<FocusOut>", self._on_ply_interactive_max_points_commit
+        )
+        self._ply_interactive_max_points_entry = interactive_max_points_entry
+        tk.Label(top_controls, text="High quality pts").pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        high_max_points_entry = tk.Entry(
+            top_controls,
+            textvariable=self._ply_view_high_max_points_var,
+            width=9,
+        )
+        high_max_points_entry.pack(side=tk.LEFT)
+        high_max_points_entry.bind(
+            "<Return>", self._on_ply_high_max_points_commit
+        )
+        high_max_points_entry.bind(
+            "<FocusOut>", self._on_ply_high_max_points_commit
+        )
+        self._ply_high_max_points_entry = high_max_points_entry
+
+        remove_color_controls = tk.Frame(viewer_frame)
+        remove_color_controls.pack(fill="x", padx=12, pady=(4, 0))
+        tk.Label(remove_color_controls, text="Remove color").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        remove_color_display = tk.Label(
+            remove_color_controls,
+            textvariable=self._ply_remove_color_rgb_var,
+            fg="#87cefa",
+        )
+        remove_color_display.pack(side=tk.LEFT, padx=(4, 4))
+        self._ply_remove_color_label = remove_color_display
+        self._update_remove_color_display(
+            (135, 206, 250),
+            self._ply_remove_color_var.get(),
+        )
+        tk.Button(
+            remove_color_controls,
+            text="Pick Remove Color",
+            command=self._on_pick_remove_color,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Label(remove_color_controls, text="Tol (RGB)").pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        tk.Entry(
+            remove_color_controls,
+            textvariable=self._ply_remove_color_tol_var,
+            width=6,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            remove_color_controls,
+            text="Remove Color Points",
+            command=self._on_remove_color_points,
+        ).pack(side=tk.LEFT, padx=(8, 4))
+        tk.Button(
+            remove_color_controls,
+            text="Reset",
+            command=self._on_reset_ply_view_state,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        sky_controls = tk.Frame(viewer_frame)
+        sky_controls.pack(fill="x", padx=12, pady=(4, 0))
+        tk.Label(sky_controls, text="Sky color").pack(side=tk.LEFT, padx=(12, 4))
+        sky_color_display = tk.Label(
+            sky_controls,
+            textvariable=self._ply_sky_color_rgb_var,
+            fg="#87cefa",
+        )
+        sky_color_display.pack(side=tk.LEFT, padx=(4, 4))
+        self._ply_sky_color_label = sky_color_display
+        self._update_sky_color_display((135, 206, 250), self._ply_sky_color_var.get())
+        tk.Button(
+            sky_controls,
+            text="Pick Sky Color",
+            command=self._on_pick_sky_color,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Button(
+            sky_controls,
+            text="Auto Pick Sky Color",
+            command=self._on_auto_pick_sky_color,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        sky_action_controls = tk.Frame(viewer_frame)
+        sky_action_controls.pack(fill="x", padx=12, pady=(4, 0))
+        axis_options = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
+        button_row = tk.Frame(sky_action_controls)
+        button_row.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(button_row, text="Sky axis").pack(side=tk.LEFT, padx=(0, 4))
+        axis_combo = ttk.Combobox(
+            button_row,
+            textvariable=self._ply_sky_axis_var,
+            values=axis_options,
+            state="readonly",
+            width=6,
+        )
+        axis_combo.pack(side=tk.LEFT)
+        tk.Label(button_row, text="Sky scale").pack(side=tk.LEFT, padx=(12, 4))
+        sky_scale_entry = tk.Entry(
+            button_row,
+            textvariable=self._ply_sky_scale_var,
+            width=8,
+        )
+        sky_scale_entry.pack(side=tk.LEFT)
+        tk.Label(button_row, text="Sky points").pack(side=tk.LEFT, padx=(12, 4))
+        sky_count_entry = tk.Entry(
+            button_row,
+            textvariable=self._ply_sky_count_var,
+            width=10,
+        )
+        sky_count_entry.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Button(
+            button_row,
+            text="Add Sky PointClouds (Preview)",
+            command=self._on_add_sky_points,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Button(
+            button_row,
+            text="Clear Sky",
+            command=self._on_clear_sky_points,
+        ).pack(side=tk.LEFT)
+        save_row = tk.Frame(sky_action_controls)
+        save_row.pack(side=tk.LEFT, fill="x", expand=True)
+        tk.Label(save_row, text="Save viewed PLY").pack(side=tk.LEFT, padx=(0, 4))
+        sky_save_entry = tk.Entry(
+            save_row,
+            textvariable=self._ply_sky_save_path_var,
+            width=40,
+        )
+        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        tk.Button(
+            save_row,
+            text="Browse...",
+            command=self._on_browse_sky_save_path,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Button(
+            save_row,
+            text="Save",
+            command=self._on_save_sky_points,
+        ).pack(side=tk.LEFT)
+
+        canvas = tk.Canvas(
+            viewer_frame,
+            width=PLY_VIEW_CANVAS_WIDTH,
+            height=PLY_VIEW_CANVAS_HEIGHT,
+            bg="#101010",
+            highlightthickness=0,
+        )
+        canvas.pack(padx=12, pady=12, anchor="center")
+        self._ply_canvas_image_id = canvas.create_image(0, 0, anchor="nw")
+        self._ply_view_canvas = canvas
+        canvas.bind("<ButtonPress-1>", self._on_ply_drag_start)
+        canvas.bind("<B1-Motion>", self._on_ply_drag_move)
+        canvas.bind("<ButtonRelease-1>", self._on_ply_drag_end)
+        canvas.bind("<ButtonPress-3>", self._on_ply_pan_start)
+        canvas.bind("<B3-Motion>", self._on_ply_pan_move)
+        canvas.bind("<ButtonRelease-3>", self._on_ply_pan_end)
+        canvas.bind("<Leave>", self._on_ply_drag_end)
+        canvas.bind("<MouseWheel>", self._on_ply_zoom)
+        canvas.bind("<Button-4>", self._on_ply_zoom)
+        canvas.bind("<Button-5>", self._on_ply_zoom)
+
+        log_frame = tk.LabelFrame(right_panel, text="Log")
+        log_frame.pack(fill="both", expand=True, padx=0, pady=0)
+        self.ply_log = tk.Text(log_frame, wrap="word", height=28, cursor="arrow")
         self.ply_log.pack(fill="both", expand=True, padx=6, pady=4)
         self.ply_log.bind("<Key>", self._block_text_edit)
         self.ply_log.bind("<Button-1>", lambda event: self.ply_log.focus_set())
         self._set_text_widget(self.ply_log, "")
+
+        def _init_ply_sash() -> None:
+            try:
+                w = max(640, body_pane.winfo_width())
+                body_pane.sash_place(0, int(w * 0.74), 1)
+            except Exception:
+                pass
+
+        self.root.after_idle(_init_ply_sash)
+        self._redraw_ply_canvas()
         self._update_ply_adaptive_state()
 
     def _build_preview_tab(self, parent: tk.Widget) -> None:
@@ -3045,7 +3354,7 @@ class PreviewApp:
                     bufsize=1,
                 )
             except Exception as exc:
-                self.root.after(0, lambda: self._append_text_widget(log_widget, f"[ERR] {exc}"))
+                self.root.after(0, lambda err=exc: self._append_text_widget(log_widget, f"[ERR] {err}"))
                 if run_button is not None:
                     self.root.after(0, lambda: run_button.configure(state="normal"))
                 if stop_button is not None:
@@ -3148,6 +3457,23 @@ class PreviewApp:
                 self.root.after(100, self._show_selector_scores)
             elif duration_message and log_widget is not None:
                 self._append_text_widget(log_widget, duration_message)
+        elif key == "ply":
+            if start_time is not None and log_widget is not None:
+                elapsed = max(0.0, time.perf_counter() - start_time)
+                self._append_text_widget(
+                    log_widget,
+                    f"[time] PlyOptimizer elapsed: {elapsed:.2f}s",
+                )
+            if not stopped and rc == 0:
+                self.root.after(100, self._auto_show_ply_output_after_run)
+
+    def _auto_show_ply_output_after_run(self) -> None:
+        path = self._resolve_ply_display_path()
+        if path is None:
+            return
+        if not path.exists():
+            return
+        self._show_ply_from_path(path, "output")
 
     def _stop_cli_process(self, key: str) -> None:
         with self._process_lock:
@@ -3237,6 +3563,21 @@ class PreviewApp:
         if mode_value and mode_value in HUMAN_MODE_CHOICES:
             cmd.extend(["--mode", mode_value])
 
+        selected_targets: List[str] = []
+        for target_name in HUMAN_TARGET_CHOICES:
+            key = f"target_{target_name}"
+            if bool(self.human_vars[key].get()):
+                selected_targets.append(target_name)
+
+        if not selected_targets:
+            messagebox.showerror(
+                "gs360_HumanMaskTool",
+                "Select at least one target (Person, Bicycle, Car, Animal).",
+            )
+            return
+        for target_name in selected_targets:
+            cmd.extend(["--target", target_name])
+
         if bool(self.human_vars["cpu"].get()):
             cmd.append("--cpu")
         if bool(self.human_vars["include_shadow"].get()):
@@ -3294,7 +3635,7 @@ class PreviewApp:
                 float(scale_text)
             except ValueError:
                 messagebox.showerror(
-                    "gs360_MS360xmlToPersCams", "Scale must be numeric."
+                    "gs360_MS360xmlToPersCams", "Scale factor must be numeric."
                 )
                 return
             cmd.extend(["--scale", scale_text])
@@ -3743,8 +4084,12 @@ class PreviewApp:
         )
 
     def _update_ply_adaptive_state(self, *_args) -> None:
-        adaptive_var = self.ply_vars.get("adaptive")
-        active = bool(adaptive_var.get()) if adaptive_var is not None else False
+        method_var = self.ply_vars.get("downsample_method")
+        method_label = method_var.get() if method_var is not None else "Voxel"
+        method_key = self._ply_downsample_method_key_map.get(
+            method_label, "voxel"
+        )
+        active = method_key == "adaptive"
         entry = self.ply_adaptive_weight_entry
         if entry is not None:
             state = "normal" if active else "disabled"
@@ -3889,6 +4234,18 @@ class PreviewApp:
 
     def _on_ply_input_changed(self, *_args) -> None:
         self._update_ply_default_output()
+        input_var = self.ply_vars.get("input")
+        if input_var is None:
+            return
+        input_text = input_var.get().strip()
+        if not input_text:
+            return
+        try:
+            input_path = Path(input_text).expanduser()
+        except Exception:
+            return
+        if input_path.exists():
+            self._update_ply_high_max_default_from_path(input_path)
 
     def _on_ply_output_changed(self, *_args) -> None:
         if self._ply_output_updating:
@@ -3935,6 +4292,45 @@ class PreviewApp:
 
     def _on_ply_input_selected(self, selected_path: str) -> None:
         self._update_ply_default_output(selected_path)
+
+    @staticmethod
+    def _parse_ply_append_items(raw_text: str) -> List[str]:
+        items: List[str] = []
+        if not raw_text:
+            return items
+        for chunk in re.split(r"[;\r\n]+", raw_text):
+            candidate = chunk.strip().strip('"').strip("'")
+            if candidate:
+                items.append(candidate)
+        return items
+
+    def _browse_ply_append_files(self) -> None:
+        if not self.ply_vars:
+            return
+        append_var = self.ply_vars.get("append_ply")
+        if append_var is None:
+            return
+        current_items = self._parse_ply_append_items(append_var.get().strip())
+        initial_dir = self.base_dir
+        if current_items:
+            try:
+                first_path = Path(current_items[0]).expanduser()
+                initial_dir = first_path.parent if first_path.parent.exists() else self.base_dir
+            except Exception:
+                initial_dir = self.base_dir
+        selected = filedialog.askopenfilenames(
+            title="Select append PLY files",
+            initialdir=str(initial_dir),
+            filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+        )
+        if not selected:
+            return
+        merged: List[str] = []
+        for item in current_items + list(selected):
+            text = str(item).strip()
+            if text and text not in merged:
+                merged.append(text)
+        append_var.set("; ".join(merged))
 
     def _run_ply_optimizer(self) -> None:
         if not self.ply_vars:
@@ -3987,9 +4383,13 @@ class PreviewApp:
                 return
             cmd.extend(["-v", target_value])
 
-        adaptive_enabled = bool(self.ply_vars["adaptive"].get())
-        if adaptive_enabled:
-            cmd.append("--adaptive")
+        method_var = self.ply_vars.get("downsample_method")
+        method_label = method_var.get() if method_var is not None else "Voxel"
+        method_key = self._ply_downsample_method_key_map.get(
+            method_label, "voxel"
+        )
+        cmd.extend(["--downsample-method", method_key])
+        if method_key == "adaptive":
             weight_text = self.ply_vars["adaptive_weight"].get().strip()
             if weight_text:
                 try:
@@ -4004,10 +4404,9 @@ class PreviewApp:
             cmd.extend(["-k", keep_strategy])
 
         append_items: List[str] = []
-        if self.ply_append_text is not None:
-            raw = self.ply_append_text.get("1.0", tk.END).strip()
-            if raw:
-                append_items = [line.strip() for line in raw.splitlines() if line.strip()]
+        append_var = self.ply_vars.get("append_ply")
+        if append_var is not None:
+            append_items = self._parse_ply_append_items(append_var.get().strip())
         for item in append_items:
             cmd.extend(["-a", item])
 
@@ -4066,155 +4465,66 @@ class PreviewApp:
             return
         self._show_ply_from_path(path, "input")
 
+    def _on_clear_ply_view(self) -> None:
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        self._ply_is_interacting = False
+        self._ply_view_info_var.set("PLY viewer is idle")
+        self._ply_view_points = None
+        self._ply_view_points_centered = None
+        self._ply_view_colors = None
+        self._ply_view_center = np.zeros(3, dtype=np.float32)
+        self._ply_sky_points = None
+        self._ply_sky_colors = None
+        self._ply_loaded_points = None
+        self._ply_loaded_colors = None
+        self._ply_loaded_total_points = 0
+        self._ply_loaded_sample_step = 1
+        self._ply_view_total_points = 0
+        self._ply_view_sample_step = 1
+        self._ply_view_source_label = "PLY"
+        self._ply_current_file_path = None
+        self._ply_sky_save_path_var.set("")
+        self._ply_view_rgb_mean = None
+        remove_color = self._parse_color_to_rgb(self._ply_sky_color_var.get())
+        if remove_color is not None:
+            sky_hex = self._ply_sky_color_var.get()
+            self._ply_remove_color_var.set(sky_hex)
+            self._update_remove_color_display(remove_color, sky_hex)
+        self._reset_ply_view_transform()
+        self._redraw_ply_canvas()
+
     def _show_ply_from_path(self, path: Path, label: str) -> None:
         if not path.exists():
             messagebox.showerror("Show PLY", f"{path} was not found.")
             return
+        self._update_ply_high_max_default_from_path(path)
         self._ply_view_source_label = label
         canvas = self._ensure_ply_viewer_window()
         if canvas is None:
-            messagebox.showerror("Show PLY", "Failed to initialize the PLY viewer window.")
+            messagebox.showerror("Show PLY", "Ply Viewer canvas is not available.")
             return
         self._ply_view_info_var.set(f"Loading {label} ({path.name}) ...")
+        self._redraw_ply_canvas()
         self._start_ply_async_load(path)
 
     def _ensure_ply_viewer_window(self) -> Optional[tk.Canvas]:
-        window = self._ply_viewer_window
-        if window is None or not window.winfo_exists():
-            window = tk.Toplevel(self.root)
-            window.title("PLY Viewer")
-            window.geometry(f"{PLY_VIEW_CANVAS_WIDTH + 32}x{PLY_VIEW_CANVAS_HEIGHT + 72}")
-            window.protocol("WM_DELETE_WINDOW", self._close_ply_viewer_window)
-            info_label = tk.Label(window, textvariable=self._ply_view_info_var, anchor="w")
-            info_label.pack(fill="x", padx=12, pady=(8, 0))
-            top_controls = tk.Frame(window)
-            top_controls.pack(fill="x", padx=12, pady=(4, 0))
-            tk.Checkbutton(
-                top_controls,
-                text="Monochrome",
-                variable=self._ply_monochrome_var,
-                command=self._redraw_ply_canvas,
-            ).pack(side=tk.LEFT)
-            tk.Label(top_controls, text="Projection").pack(side=tk.LEFT, padx=(12, 4))
-            self._ply_projection_combo = ttk.Combobox(
-                top_controls,
-                textvariable=self._ply_projection_mode,
-                values=("Orthographic", "Perspective"),
-                state="readonly",
-                width=14,
-            )
-            self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
-            self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
-            sky_controls = tk.Frame(window)
-            sky_controls.pack(fill="x", padx=12, pady=(4, 0))
-            axis_options = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
-            tk.Label(sky_controls, text="Sky axis").pack(side=tk.LEFT, padx=(0, 4))
-            axis_combo = ttk.Combobox(
-                sky_controls,
-                textvariable=self._ply_sky_axis_var,
-                values=axis_options,
-                state="readonly",
-                width=6,
-            )
-            axis_combo.pack(side=tk.LEFT)
-            tk.Label(sky_controls, text="Sky scale").pack(side=tk.LEFT, padx=(12, 4))
-            sky_scale_entry = tk.Entry(
-                sky_controls,
-                textvariable=self._ply_sky_scale_var,
-                width=8,
-            )
-            sky_scale_entry.pack(side=tk.LEFT)
-            tk.Label(sky_controls, text="Sky points").pack(side=tk.LEFT, padx=(12, 4))
-            sky_count_entry = tk.Entry(
-                sky_controls,
-                textvariable=self._ply_sky_count_var,
-                width=10,
-            )
-            sky_count_entry.pack(side=tk.LEFT)
-            tk.Label(sky_controls, text="Sky color").pack(side=tk.LEFT, padx=(12, 4))
-            sky_color_entry = tk.Entry(
-                sky_controls,
-                textvariable=self._ply_sky_color_var,
-                width=10,
-            )
-            sky_color_entry.pack(side=tk.LEFT)
-            sky_color_display = tk.Label(
-                sky_controls,
-                textvariable=self._ply_sky_color_rgb_var,
-                fg="#87cefa",
-            )
-            sky_color_display.pack(side=tk.LEFT, padx=(4, 4))
-            self._ply_sky_color_label = sky_color_display
-            self._update_sky_color_display((135, 206, 250), self._ply_sky_color_var.get())
-            tk.Button(
-                sky_controls,
-                text="Pick Sky Color",
-                command=self._on_pick_sky_color,
-            ).pack(side=tk.LEFT, padx=(4, 4))
-            tk.Button(
-                sky_controls,
-                text="Auto Pick Sky Color",
-                command=self._on_auto_pick_sky_color,
-            ).pack(side=tk.LEFT, padx=(4, 0))
-            sky_action_controls = tk.Frame(window)
-            sky_action_controls.pack(fill="x", padx=12, pady=(4, 0))
-            button_row = tk.Frame(sky_action_controls)
-            button_row.pack(side=tk.LEFT, padx=(0, 12))
-            tk.Button(
-                button_row,
-                text="Add Sky PointClouds (Preview)",
-                command=self._on_add_sky_points,
-            ).pack(side=tk.LEFT, padx=(0, 12))
-            tk.Button(
-                button_row,
-                text="Clear",
-                command=self._on_clear_sky_points,
-            ).pack(side=tk.LEFT)
-            save_row = tk.Frame(sky_action_controls)
-            save_row.pack(side=tk.LEFT, fill="x", expand=True)
-            tk.Label(save_row, text="Save w/ sky").pack(side=tk.LEFT, padx=(0, 4))
-            sky_save_entry = tk.Entry(
-                save_row,
-                textvariable=self._ply_sky_save_path_var,
-                width=40,
-            )
-            sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
-            tk.Button(
-                save_row,
-                text="Browse...",
-                command=self._on_browse_sky_save_path,
-            ).pack(side=tk.LEFT, padx=(4, 4))
-            tk.Button(
-                save_row,
-                text="Save",
-                command=self._on_save_sky_points,
-            ).pack(side=tk.LEFT)
-            canvas = tk.Canvas(
-                window,
-                width=PLY_VIEW_CANVAS_WIDTH,
-                height=PLY_VIEW_CANVAS_HEIGHT,
-                bg="#101010",
-                highlightthickness=0,
-            )
-            canvas.pack(fill="both", expand=True, padx=12, pady=12)
-            self._ply_canvas_image_id = canvas.create_image(0, 0, anchor="nw")
-            self._ply_view_canvas = canvas
-            self._ply_viewer_window = window
-            canvas.bind("<ButtonPress-1>", self._on_ply_drag_start)
-            canvas.bind("<B1-Motion>", self._on_ply_drag_move)
-            canvas.bind("<ButtonRelease-1>", self._on_ply_drag_end)
-            canvas.bind("<ButtonPress-3>", self._on_ply_pan_start)
-            canvas.bind("<B3-Motion>", self._on_ply_pan_move)
-            canvas.bind("<ButtonRelease-3>", self._on_ply_pan_end)
-            canvas.bind("<Leave>", self._on_ply_drag_end)
-            canvas.bind("<MouseWheel>", self._on_ply_zoom)
-            canvas.bind("<Button-4>", self._on_ply_zoom)
-            canvas.bind("<Button-5>", self._on_ply_zoom)
-        return self._ply_view_canvas
+        canvas = self._ply_view_canvas
+        if canvas is None or not canvas.winfo_exists():
+            return None
+        return canvas
 
     def _set_ply_view_loading_state(self, loading: bool) -> None:
         self._ply_view_is_loading = loading
-        buttons = [self.ply_view_button, self.ply_input_view_button]
+        buttons = [
+            self.ply_view_button,
+            self.ply_input_view_button,
+            self.ply_clear_view_button,
+        ]
         for button in buttons:
             if button is None:
                 continue
@@ -4222,27 +4532,185 @@ class PreviewApp:
                 button.configure(state="disabled" if loading else "normal")
             except tk.TclError:
                 pass
+        if self._ply_interactive_max_points_entry is not None:
+            try:
+                self._ply_interactive_max_points_entry.configure(
+                    state="disabled" if loading else "normal"
+                )
+            except tk.TclError:
+                pass
+        if self._ply_high_max_points_entry is not None:
+            try:
+                self._ply_high_max_points_entry.configure(
+                    state="disabled" if loading else "normal"
+                )
+            except tk.TclError:
+                pass
+
+    def _get_ply_view_interactive_max_points(
+        self, show_error: bool = False
+    ) -> Optional[int]:
+        text = self._ply_view_interactive_max_points_var.get().strip()
+        if not text:
+            return PLY_VIEW_INTERACTIVE_MAX_POINTS
+        try:
+            value = int(float(text))
+        except ValueError:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "Low quality pts must be numeric.",
+                )
+            return None
+        if value <= 0:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "Low quality pts must be greater than zero.",
+                )
+            return None
+        return value
+
+    def _on_ply_high_max_points_var_changed(self, *_args) -> None:
+        if self._ply_high_max_points_updating:
+            return
+        self._ply_high_max_points_auto = False
+
+    def _set_ply_high_max_points_auto_value(self, value: int) -> None:
+        if value <= 0:
+            return
+        value_text = str(int(value))
+        self._ply_high_max_points_updating = True
+        try:
+            self._ply_view_high_max_points_var.set(value_text)
+        finally:
+            self._ply_high_max_points_updating = False
+        self._ply_high_max_points_auto = True
+        self._ply_last_auto_high_max_points = value_text
+
+    def _read_ply_vertex_count_from_header(self, path: Path) -> Optional[int]:
+        vertex_count: Optional[int] = None
+        try:
+            with path.open("rb") as fh:
+                while True:
+                    raw = fh.readline()
+                    if not raw:
+                        break
+                    line = raw.decode("ascii", errors="ignore").strip()
+                    if not line:
+                        continue
+                    if line.startswith("element"):
+                        parts = line.split()
+                        if len(parts) >= 3 and parts[1].lower() == "vertex":
+                            try:
+                                vertex_count = int(parts[2])
+                            except ValueError:
+                                vertex_count = None
+                    if line == "end_header":
+                        break
+        except Exception:
+            return None
+        if vertex_count is None or vertex_count <= 0:
+            return None
+        return vertex_count
+
+    def _update_ply_high_max_default_from_path(self, path: Path) -> None:
+        vertex_count = self._read_ply_vertex_count_from_header(path)
+        if vertex_count is None:
+            return
+        current = self._ply_view_high_max_points_var.get().strip()
+        should_update = (
+            self._ply_high_max_points_auto
+            or not current
+            or current == self._ply_last_auto_high_max_points
+        )
+        if not should_update:
+            return
+        self._set_ply_high_max_points_auto_value(vertex_count)
+
+    def _get_ply_view_high_max_points(
+        self, show_error: bool = False
+    ) -> Optional[int]:
+        text = self._ply_view_high_max_points_var.get().strip()
+        if not text:
+            return PLY_VIEW_MAX_POINTS
+        try:
+            value = int(float(text))
+        except ValueError:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "High quality pts must be numeric.",
+                )
+            return None
+        if value <= 0:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "High quality pts must be greater than zero.",
+                )
+            return None
+        return value
+
+    def _on_ply_interactive_max_points_commit(self, _event=None) -> Optional[str]:
+        max_points = self._get_ply_view_interactive_max_points(show_error=True)
+        if max_points is None:
+            return "break"
+        self._redraw_ply_canvas()
+        return "break"
+
+    def _on_ply_high_max_points_commit(self, _event=None) -> Optional[str]:
+        max_points = self._get_ply_view_high_max_points(show_error=True)
+        if max_points is None:
+            return "break"
+        if self._ply_view_is_loading:
+            return "break"
+        path = self._ply_current_file_path
+        points = self._ply_view_points
+        loaded_count = int(points.shape[0]) if isinstance(points, np.ndarray) else 0
+        original_count = max(self._ply_view_total_points, loaded_count)
+        target_count = min(max_points, original_count) if original_count > 0 else max_points
+        should_reload = (
+            path is not None
+            and path.exists()
+            and loaded_count > 0
+            and loaded_count < target_count
+        )
+        if should_reload:
+            self._ply_view_info_var.set(
+                f"Reloading ({path.name}) for max pts={max_points:,} ..."
+            )
+            self._redraw_ply_canvas()
+            self._start_ply_async_load(path)
+        else:
+            self._redraw_ply_canvas()
+        return "break"
 
     def _start_ply_async_load(self, path: Path) -> None:
+        max_points = self._get_ply_view_high_max_points(show_error=True)
+        if max_points is None:
+            return
         load_token: object = object()
         self._ply_view_load_token = load_token
         self._set_ply_view_loading_state(True)
         thread = threading.Thread(
             target=self._load_ply_async,
-            args=(path, load_token),
+            args=(path, load_token, max_points),
             daemon=True,
         )
         self._ply_loader_thread = thread
         thread.start()
 
-    def _load_ply_async(self, path: Path, token: object) -> None:
+    def _load_ply_async(
+        self, path: Path, token: object, max_points: int
+    ) -> None:
         try:
             points, colors, original_count, sample_step = self._load_binary_ply_points(
                 path,
-                max_points=PLY_VIEW_MAX_POINTS,
+                max_points=max_points,
             )
         except Exception as exc:  # pragma: no cover - UI thread handles dialog
-            self.root.after(0, lambda: self._on_ply_load_error(token, exc))
+            self.root.after(0, lambda err=exc: self._on_ply_load_error(token, err))
             return
         self.root.after(
             0,
@@ -4267,12 +4735,27 @@ class PreviewApp:
     ) -> None:
         if token is not self._ply_view_load_token:
             return
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        self._ply_is_interacting = False
         self._set_ply_view_loading_state(False)
         point_count = int(points.shape[0]) if points.size else 0
         if point_count == 0:
+            self._ply_view_rgb_mean = None
             self._ply_view_info_var.set(f"{path.name}: no points")
+            self._redraw_ply_canvas()
             messagebox.showinfo("Show PLY", "No points were available for display.")
             return
+        rgb_mean = colors.mean(axis=0)
+        self._ply_view_rgb_mean = (
+            float(rgb_mean[0]),
+            float(rgb_mean[1]),
+            float(rgb_mean[2]),
+        )
         center = np.zeros(3, dtype=np.float32)
         spans = np.maximum(points.max(axis=0) - points.min(axis=0), 1e-6)
         max_extent = float(np.max(spans))
@@ -4286,6 +4769,10 @@ class PreviewApp:
         self._ply_current_file_path = path
         self._ply_view_total_points = original_count
         self._ply_view_sample_step = max(1, sample_step)
+        self._ply_loaded_points = points.astype(np.float32, copy=True)
+        self._ply_loaded_colors = colors.astype(np.uint8, copy=True)
+        self._ply_loaded_total_points = original_count
+        self._ply_loaded_sample_step = max(1, sample_step)
         self._reset_ply_view_transform()
         label = self._ply_view_source_label or "PLY"
         if self._ply_view_sample_step > 1 and original_count > 0:
@@ -4299,6 +4786,11 @@ class PreviewApp:
         self._update_sky_save_default(path)
         default_sky_count = max(1, int(round(original_count * 0.05)))
         self._ply_sky_count_var.set(str(default_sky_count))
+        remove_color = self._parse_color_to_rgb(self._ply_sky_color_var.get())
+        if remove_color is not None:
+            sky_hex = self._ply_sky_color_var.get()
+            self._ply_remove_color_var.set(sky_hex)
+            self._update_remove_color_display(remove_color, sky_hex)
         canvas = self._ensure_ply_viewer_window()
         if canvas is not None:
             self._render_ply_points(canvas)
@@ -4306,40 +4798,27 @@ class PreviewApp:
     def _on_ply_load_error(self, token: object, exc: Exception) -> None:
         if token is not self._ply_view_load_token:
             return
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        self._ply_is_interacting = False
         self._set_ply_view_loading_state(False)
+        self._ply_view_rgb_mean = None
         self._ply_view_info_var.set("PLY viewer is idle")
+        self._redraw_ply_canvas()
         messagebox.showerror("Show PLY", f"Failed to load the PLY file.\n{exc}")
 
-    def _close_ply_viewer_window(self) -> None:
-        window = self._ply_viewer_window
-        if window is not None:
-            try:
-                window.destroy()
-            except tk.TclError:
-                pass
-        self._ply_viewer_window = None
-        self._ply_view_canvas = None
-        self._ply_canvas_image_id = None
-        self._ply_canvas_photo = None
-        self._ply_projection_combo = None
-        self._ply_sky_color_label = None
-        self._ply_view_info_var.set("PLY viewer is idle")
-        self._ply_view_points = None
-        self._ply_view_points_centered = None
-        self._ply_view_colors = None
-        self._ply_view_center = np.zeros(3, dtype=np.float32)
-        self._ply_sky_points = None
-        self._ply_sky_colors = None
-        self._ply_view_total_points = 0
-        self._ply_view_sample_step = 1
-        self._ply_view_source_label = "PLY"
-        self._ply_current_file_path = None
-        self._ply_sky_save_path_var.set("")
-        self._reset_ply_view_transform()
-
     def _reset_ply_view_transform(self) -> None:
-        self._ply_view_yaw = 35.0
-        self._ply_view_pitch = 25.0
+        yaw = math.radians(35.0)
+        pitch = math.radians(25.0)
+        q_yaw = self._quat_from_axis_angle((0.0, 1.0, 0.0), yaw)
+        q_pitch = self._quat_from_axis_angle((1.0, 0.0, 0.0), pitch)
+        self._ply_view_quat = self._quat_normalize(
+            self._quat_multiply(q_pitch, q_yaw)
+        )
         self._ply_view_zoom = 1.0
         self._ply_drag_last = None
         self._ply_pan_last = None
@@ -4351,9 +4830,52 @@ class PreviewApp:
             return
         self._render_ply_points(canvas)
 
+    def _begin_ply_interaction(self) -> None:
+        self._ply_is_interacting = True
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+
+    def _schedule_end_ply_interaction(
+        self, delay_ms: int = PLY_INTERACTION_SETTLE_DELAY_MS
+    ) -> None:
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        self._ply_interaction_after_id = self.root.after(
+            delay_ms, self._finish_ply_interaction
+        )
+
+    def _finish_ply_interaction(self) -> None:
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        was_interacting = self._ply_is_interacting
+        self._ply_is_interacting = False
+        if was_interacting:
+            self._redraw_ply_canvas()
+
+    @staticmethod
+    def _compute_sample_step(total_count: int, max_count: int) -> int:
+        if total_count <= 0 or max_count <= 0:
+            return 1
+        if total_count <= max_count:
+            return 1
+        return max(1, int(math.ceil(float(total_count) / float(max_count))))
+
     def _on_ply_drag_start(self, event: tk.Event) -> None:
         if self._ply_view_points_centered is None:
             return
+        self._begin_ply_interaction()
         self._ply_drag_last = (event.x, event.y)
 
     def _on_ply_drag_move(self, event: tk.Event) -> None:
@@ -4363,17 +4885,25 @@ class PreviewApp:
         dx = event.x - last_x
         dy = event.y - last_y
         self._ply_drag_last = (event.x, event.y)
-        self._ply_view_yaw = (self._ply_view_yaw + dx * 0.4) % 360.0
-        self._ply_view_pitch = max(-89.0, min(89.0, self._ply_view_pitch + dy * 0.4))
+        angle_y = math.radians(dx * 0.35)
+        angle_x = math.radians(dy * 0.35)
+        q_y = self._quat_from_axis_angle((0.0, 1.0, 0.0), angle_y)
+        q_x = self._quat_from_axis_angle((1.0, 0.0, 0.0), angle_x)
+        q_inc = self._quat_multiply(q_x, q_y)
+        self._ply_view_quat = self._quat_normalize(
+            self._quat_multiply(q_inc, self._ply_view_quat)
+        )
         self._redraw_ply_canvas()
 
     def _on_ply_drag_end(self, _event=None) -> None:
         self._ply_drag_last = None
         self._ply_pan_last = None
+        self._schedule_end_ply_interaction()
 
     def _on_ply_pan_start(self, event: tk.Event) -> None:
         if self._ply_view_points_centered is None:
             return
+        self._begin_ply_interaction()
         self._ply_pan_last = (event.x, event.y)
 
     def _on_ply_pan_move(self, event: tk.Event) -> None:
@@ -4389,6 +4919,7 @@ class PreviewApp:
 
     def _on_ply_pan_end(self, _event=None) -> None:
         self._ply_pan_last = None
+        self._schedule_end_ply_interaction()
 
     def _on_ply_zoom(self, event: tk.Event) -> Optional[str]:
         if self._ply_view_points_centered is None:
@@ -4405,8 +4936,70 @@ class PreviewApp:
         factor = 1.0 + (0.12 if delta > 0 else -0.12)
         new_zoom = self._ply_view_zoom * factor
         self._ply_view_zoom = max(0.1, min(8.0, new_zoom))
+        self._begin_ply_interaction()
         self._redraw_ply_canvas()
+        self._schedule_end_ply_interaction()
         return "break"
+
+    @staticmethod
+    def _quat_normalize(q: np.ndarray) -> np.ndarray:
+        q_arr = np.asarray(q, dtype=np.float32)
+        norm = float(np.linalg.norm(q_arr))
+        if norm <= 1e-9:
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        return (q_arr / norm).astype(np.float32, copy=False)
+
+    @staticmethod
+    def _quat_from_axis_angle(
+        axis: Tuple[float, float, float], angle_rad: float
+    ) -> np.ndarray:
+        axis_arr = np.asarray(axis, dtype=np.float32)
+        norm = float(np.linalg.norm(axis_arr))
+        if norm <= 1e-9:
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        axis_n = axis_arr / norm
+        half = angle_rad * 0.5
+        s = math.sin(half)
+        c = math.cos(half)
+        return np.array(
+            [c, axis_n[0] * s, axis_n[1] * s, axis_n[2] * s],
+            dtype=np.float32,
+        )
+
+    @staticmethod
+    def _quat_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        w1, x1, y1, z1 = np.asarray(q1, dtype=np.float32)
+        w2, x2, y2, z2 = np.asarray(q2, dtype=np.float32)
+        return np.array(
+            [
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            ],
+            dtype=np.float32,
+        )
+
+    @staticmethod
+    def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
+        w, x, y, z = np.asarray(q, dtype=np.float32)
+        xx = x * x
+        yy = y * y
+        zz = z * z
+        xy = x * y
+        xz = x * z
+        yz = y * z
+        wx = w * x
+        wy = w * y
+        wz = w * z
+        return np.array(
+            [
+                [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+                [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+                [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+            ],
+            dtype=np.float32,
+        )
 
     def _on_ply_projection_changed(self, _event=None) -> None:
         self._redraw_ply_canvas()
@@ -4488,6 +5081,99 @@ class PreviewApp:
                 label.configure(fg=hex_clean)
             except tk.TclError:
                 pass
+
+    def _update_remove_color_display(
+        self, rgb: Tuple[int, int, int], hex_value: str
+    ) -> None:
+        self._ply_remove_color_rgb_var.set(
+            f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
+        )
+        label = self._ply_remove_color_label
+        if label is not None:
+            hex_clean = hex_value if hex_value.startswith("#") else f"#{hex_value}"
+            try:
+                label.configure(fg=hex_clean)
+            except tk.TclError:
+                pass
+
+    def _sample_auto_sky_color(self) -> Optional[Tuple[int, int, int]]:
+        if self._ply_view_points_centered is None or self._ply_view_colors is None:
+            return None
+        direction = self._axis_direction(self._ply_sky_axis_var.get() or "+Z")
+        if direction is None:
+            return None
+        points = self._ply_view_points_centered
+        colors = self._ply_view_colors
+        if points.size == 0 or colors.size == 0:
+            return None
+        norms = np.linalg.norm(points, axis=1)
+        dots = points @ direction
+        cos_vals = np.zeros_like(dots)
+        valid = norms > 1e-9
+        cos_vals[valid] = dots[valid] / norms[valid]
+        mask = (cos_vals >= math.cos(math.radians(45.0))) & valid
+        candidate_indices = np.where(mask)[0]
+        if candidate_indices.size < 10:
+            candidate_indices = np.where(dots > 0)[0]
+        if candidate_indices.size == 0:
+            return None
+        sample = min(200, candidate_indices.size)
+        farthest = candidate_indices[np.argsort(norms[candidate_indices])]
+        chosen = farthest[-sample:]
+        avg_color = colors[chosen].mean(axis=0)
+        rgb = tuple(int(round(val)) for val in avg_color)
+        return rgb
+
+    def _get_remove_color_tolerance(
+        self, show_error: bool = False
+    ) -> Optional[float]:
+        text = self._ply_remove_color_tol_var.get().strip()
+        if not text:
+            return 0.0
+        try:
+            value = float(text)
+        except ValueError:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "Remove color tolerance must be numeric.",
+                )
+            return None
+        if value < 0:
+            if show_error:
+                messagebox.showerror(
+                    "PLY Viewer",
+                    "Remove color tolerance must be zero or greater.",
+                )
+            return None
+        return value
+
+    def _refresh_ply_view_rgb_mean(self) -> None:
+        if self._ply_view_colors is None or self._ply_view_colors.size == 0:
+            self._ply_view_rgb_mean = None
+            return
+        rgb_mean = self._ply_view_colors.mean(axis=0)
+        self._ply_view_rgb_mean = (
+            float(rgb_mean[0]),
+            float(rgb_mean[1]),
+            float(rgb_mean[2]),
+        )
+
+    def _build_ply_info_text(
+        self, point_count: int, original_count: int, sample_step: int
+    ) -> str:
+        label = self._ply_view_source_label or "PLY"
+        name = (
+            self._ply_current_file_path.name
+            if self._ply_current_file_path is not None
+            else "PLY"
+        )
+        if sample_step > 1 and original_count > 0:
+            return (
+                f"{label}: {name}  "
+                f"({point_count:,} / {original_count:,} pts, step {sample_step})"
+            )
+        return f"{label}: {name}  ({point_count:,} pts)"
 
     @staticmethod
     def _rotation_matrix_from_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -4592,42 +5278,144 @@ class PreviewApp:
         if self._ply_view_points_centered is None or self._ply_view_colors is None:
             messagebox.showerror("Sky PointCloud", "Load a PLY before auto picking a color.")
             return
-        direction = self._axis_direction(self._ply_sky_axis_var.get() or "+Z")
-        if direction is None:
-            messagebox.showerror("Sky PointCloud", "Invalid axis selection for auto color.")
+        rgb = self._sample_auto_sky_color()
+        if rgb is None:
+            messagebox.showerror(
+                "Sky PointCloud",
+                "Failed to auto pick sky color from current points/axis.",
+            )
             return
-        points = self._ply_view_points_centered
-        colors = self._ply_view_colors
-        if points.size == 0 or colors.size == 0:
-            messagebox.showerror("Sky PointCloud", "No points available to sample color.")
-            return
-        norms = np.linalg.norm(points, axis=1)
-        dots = points @ direction
-        cos_vals = np.zeros_like(dots)
-        valid = norms > 1e-9
-        cos_vals[valid] = dots[valid] / norms[valid]
-        mask = (cos_vals >= math.cos(math.radians(45.0))) & valid
-        candidate_indices = np.where(mask)[0]
-        if candidate_indices.size < 10:
-            candidate_indices = np.where(dots > 0)[0]
-        if candidate_indices.size == 0:
-            messagebox.showerror("Sky PointCloud", "Not enough points in that direction to sample color.")
-            return
-        sample = min(200, candidate_indices.size)
-        farthest = candidate_indices[np.argsort(norms[candidate_indices])]
-        chosen = farthest[-sample:]
-        avg_color = colors[chosen].mean(axis=0)
-        rgb = tuple(int(round(val)) for val in avg_color)
         hex_value = "#{:02x}{:02x}{:02x}".format(*rgb)
         self._ply_sky_color_var.set(hex_value)
         self._update_sky_color_display(rgb, hex_value)
+        self._ply_remove_color_var.set(hex_value)
+        self._update_remove_color_display(rgb, hex_value)
         if self._ply_sky_colors is not None:
             self._ply_sky_colors[:] = np.array(rgb, dtype=np.uint8)
             self._redraw_ply_canvas()
 
+    def _on_pick_remove_color(self) -> None:
+        initial = self._ply_remove_color_var.get().strip() or "#87cefa"
+        try:
+            _, picked_hex = colorchooser.askcolor(
+                color=initial,
+                title="Remove Color",
+            )
+        except tk.TclError:
+            picked_hex = None
+        if picked_hex:
+            self._ply_remove_color_var.set(picked_hex)
+            rgb = self._parse_color_to_rgb(picked_hex)
+            if rgb is not None:
+                self._update_remove_color_display(rgb, picked_hex)
+
+    def _on_remove_color_points(self) -> None:
+        if self._ply_view_points is None or self._ply_view_colors is None:
+            messagebox.showerror("PLY Viewer", "Load a PLY before removing colors.")
+            return
+        target_text = self._ply_remove_color_var.get().strip()
+        target_rgb = self._parse_color_to_rgb(target_text)
+        if target_rgb is None:
+            messagebox.showerror(
+                "PLY Viewer",
+                "Remove color must be a valid color (e.g., #87cefa).",
+            )
+            return
+        tol = self._get_remove_color_tolerance(show_error=True)
+        if tol is None:
+            return
+        self._update_remove_color_display(target_rgb, target_text)
+        target = np.array(target_rgb, dtype=np.int32).reshape(1, 3)
+        tol2 = float(tol) * float(tol)
+        base_colors = self._ply_view_colors.astype(np.int32, copy=False)
+        diff = base_colors - target
+        diff64 = diff.astype(np.int64, copy=False)
+        dist2 = (diff64 * diff64).sum(axis=1)
+        keep_mask = dist2 > tol2
+        removed_base = int(np.count_nonzero(~keep_mask))
+        if removed_base <= 0:
+            self._ply_view_info_var.set(
+                "No points removed "
+                f"(color={target_text}, tol={tol:.1f})."
+            )
+            self._redraw_ply_canvas()
+            return
+        self._ply_view_points = self._ply_view_points[keep_mask].astype(
+            np.float32, copy=False
+        )
+        self._ply_view_colors = self._ply_view_colors[keep_mask].astype(
+            np.uint8, copy=False
+        )
+        self._ply_view_points_centered = self._ply_view_points.astype(
+            np.float32, copy=False
+        )
+        self._ply_view_total_points = int(self._ply_view_points.shape[0])
+        self._ply_view_sample_step = 1
+        removed_sky = 0
+        if self._ply_sky_points is not None and self._ply_sky_colors is not None:
+            sky_diff = (
+                self._ply_sky_colors.astype(np.int32, copy=False) - target
+            )
+            sky_diff64 = sky_diff.astype(np.int64, copy=False)
+            sky_dist2 = (sky_diff64 * sky_diff64).sum(axis=1)
+            keep_sky_mask = sky_dist2 > tol2
+            removed_sky = int(np.count_nonzero(~keep_sky_mask))
+            self._ply_sky_points = self._ply_sky_points[keep_sky_mask].astype(
+                np.float32, copy=False
+            )
+            self._ply_sky_colors = self._ply_sky_colors[keep_sky_mask].astype(
+                np.uint8, copy=False
+            )
+            if self._ply_sky_points.size == 0:
+                self._ply_sky_points = None
+                self._ply_sky_colors = None
+        self._refresh_ply_view_rgb_mean()
+        remaining = int(self._ply_view_points.shape[0])
+        total_removed = removed_base + removed_sky
+        self._ply_view_info_var.set(
+            f"Removed {total_removed:,} pts by color "
+            f"({target_text}, tol={tol:.1f}) -> {remaining:,} pts"
+        )
+        self._redraw_ply_canvas()
+
+    def _on_reset_ply_view_state(self) -> None:
+        if self._ply_loaded_points is None or self._ply_loaded_colors is None:
+            return
+        if self._ply_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._ply_interaction_after_id)
+            except Exception:
+                pass
+            self._ply_interaction_after_id = None
+        self._ply_is_interacting = False
+        self._ply_sky_points = None
+        self._ply_sky_colors = None
+        self._ply_view_points = self._ply_loaded_points.astype(
+            np.float32, copy=True
+        )
+        self._ply_view_colors = self._ply_loaded_colors.astype(
+            np.uint8, copy=True
+        )
+        self._ply_view_points_centered = self._ply_view_points.astype(
+            np.float32, copy=False
+        )
+        self._ply_view_total_points = int(
+            max(self._ply_loaded_total_points, self._ply_view_points.shape[0])
+        )
+        self._ply_view_sample_step = max(1, int(self._ply_loaded_sample_step))
+        self._refresh_ply_view_rgb_mean()
+        point_count = int(self._ply_view_points.shape[0])
+        info = self._build_ply_info_text(
+            point_count,
+            self._ply_view_total_points,
+            self._ply_view_sample_step,
+        )
+        self._ply_view_info_var.set(info)
+        self._redraw_ply_canvas()
+
     def _update_sky_save_default(self, source_path: Path) -> None:
         suffix = source_path.suffix or ".ply"
-        candidate = source_path.with_name(f"{source_path.stem}_with_sky_points{suffix}")
+        candidate = source_path.with_name(f"{source_path.stem}_viewed{suffix}")
         self._ply_sky_save_path_var.set(str(candidate))
 
     def _on_browse_sky_save_path(self) -> None:
@@ -4649,7 +5437,7 @@ class PreviewApp:
         except Exception:
             initial_dir = self.base_dir
         path = filedialog.asksaveasfilename(
-            title="Save PLY with sky points",
+            title="Save viewed PLY",
             initialdir=str(initial_dir),
             defaultextension=".ply",
             filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
@@ -4659,51 +5447,43 @@ class PreviewApp:
 
     def _on_save_sky_points(self) -> None:
         if self._ply_view_points is None or self._ply_view_colors is None:
-            messagebox.showerror("Sky PointCloud", "Load a PLY before saving.")
-            return
-        if self._ply_sky_points is None or self._ply_sky_colors is None:
-            messagebox.showerror("Sky PointCloud", "Add sky points before saving.")
+            messagebox.showerror("PLY Viewer", "Load a PLY before saving.")
             return
         dest_text = self._ply_sky_save_path_var.get().strip()
         if not dest_text:
-            messagebox.showerror("Sky PointCloud", "Specify a save path first.")
+            messagebox.showerror("PLY Viewer", "Specify a save path first.")
             return
         dest_path = Path(dest_text).expanduser()
         try:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            messagebox.showerror("Sky PointCloud", f"Failed to prepare destination.\n{exc}")
+            messagebox.showerror("PLY Viewer", f"Failed to prepare destination.\n{exc}")
             return
         try:
-            self._write_binary_ply_with_sky(dest_path)
+            self._write_binary_ply_from_view(dest_path)
         except Exception as exc:
-            messagebox.showerror("Sky PointCloud", f"Failed to save PLY.\n{exc}")
+            messagebox.showerror("PLY Viewer", f"Failed to save PLY.\n{exc}")
             return
-        messagebox.showinfo("Sky PointCloud", f"Saved with sky points:\n{dest_path}")
+        messagebox.showinfo("PLY Viewer", f"Saved viewed PLY:\n{dest_path}")
 
-    def _write_binary_ply_with_sky(self, path: Path) -> None:
-        source_path = self._ply_current_file_path
-        if source_path is None:
-            raise ValueError("Original PLY path is unavailable.")
-        base_points, base_colors, _, _ = self._load_binary_ply_points(
-            source_path,
-            max_points=None,
-        )
+    def _write_binary_ply_from_view(self, path: Path) -> None:
+        base_points = self._ply_view_points
+        base_colors = self._ply_view_colors
         sky_points = self._ply_sky_points
         sky_colors = self._ply_sky_colors
-        if (
-            base_points is None
-            or base_colors is None
-            or sky_points is None
-            or sky_colors is None
-        ):
-            raise ValueError("Missing point cloud data for saving.")
-        center = self._ply_view_center
-        if not isinstance(center, np.ndarray):
-            center = np.zeros(3, dtype=np.float32)
-        sky_world = sky_points + center
-        xyz = np.concatenate([base_points, sky_world], axis=0).astype(np.float32, copy=False)
-        rgb = np.concatenate([base_colors, sky_colors], axis=0).astype(np.uint8, copy=False)
+        if base_points is None or base_colors is None:
+            raise ValueError("Missing loaded point cloud data.")
+        points_list: List[np.ndarray] = [base_points.astype(np.float32, copy=False)]
+        colors_list: List[np.ndarray] = [base_colors.astype(np.uint8, copy=False)]
+        if sky_points is not None and sky_colors is not None:
+            center = self._ply_view_center
+            if not isinstance(center, np.ndarray):
+                center = np.zeros(3, dtype=np.float32)
+            sky_world = (sky_points + center).astype(np.float32, copy=False)
+            points_list.append(sky_world)
+            colors_list.append(sky_colors.astype(np.uint8, copy=False))
+        xyz = np.concatenate(points_list, axis=0).astype(np.float32, copy=False)
+        rgb = np.concatenate(colors_list, axis=0).astype(np.uint8, copy=False)
         header = (
             "ply\n"
             "format binary_little_endian 1.0\n"
@@ -4819,7 +5599,7 @@ class PreviewApp:
         if all(channel in data.dtype.names for channel in ("red", "green", "blue")):
             colors = np.stack((data["red"], data["green"], data["blue"]), axis=1)
             if np.issubdtype(colors.dtype, np.floating):
-                colors = self._linear_float_to_srgb888(colors)
+                colors = self._float_colors_to_u8(colors)
             else:
                 colors = colors.astype(np.uint8, copy=False)
         else:
@@ -4827,23 +5607,25 @@ class PreviewApp:
         return xyz, colors, original_count, sample_step
 
     @staticmethod
-    def _linear_float_to_srgb888(values: np.ndarray) -> np.ndarray:
-        """Convert linear float colors (0-1) to sRGB 8-bit."""
-        clipped = np.clip(values, 0.0, 1.0).astype(np.float32, copy=False)
-        threshold = 0.0031308
-        srgb = np.where(
-            clipped <= threshold,
-            clipped * 12.92,
-            1.055 * np.power(clipped, 1.0 / 2.4) - 0.055,
-        )
-        srgb = np.clip(np.rint(srgb * 255.0), 0, 255).astype(np.uint8)
-        return srgb
+    def _float_colors_to_u8(values: np.ndarray) -> np.ndarray:
+        """Convert float RGB values to uint8 while preserving sRGB semantics."""
+        values32 = values.astype(np.float32, copy=False)
+        finite = values32[np.isfinite(values32)]
+        if finite.size == 0:
+            return np.zeros(values32.shape, dtype=np.uint8)
+        max_value = float(finite.max())
+        if max_value <= 1.0 + 1e-6:
+            scaled = np.clip(values32, 0.0, 1.0) * 255.0
+        else:
+            scaled = np.clip(values32, 0.0, 255.0)
+        return np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
 
     def _render_ply_points(
         self,
         canvas: tk.Canvas,
     ) -> None:
         if self._ply_view_points_centered is None or self._ply_view_colors is None:
+            self._render_ply_idle_canvas(canvas)
             return
         canvas.update_idletasks()
         width = max(1, canvas.winfo_width())
@@ -4857,26 +5639,34 @@ class PreviewApp:
             points = np.concatenate((points, self._ply_sky_points), axis=0)
             colors = np.concatenate((colors, self._ply_sky_colors), axis=0)
         if points.size == 0 or colors.size == 0:
+            self._render_ply_idle_canvas(canvas)
             return
+        high_quality_max = self._get_ply_view_high_max_points(show_error=False)
+        if high_quality_max is None:
+            high_quality_max = PLY_VIEW_MAX_POINTS
+        render_max = high_quality_max
+        if self._ply_is_interacting:
+            low_quality_max = self._get_ply_view_interactive_max_points(
+                show_error=False
+            )
+            if low_quality_max is None:
+                low_quality_max = PLY_VIEW_INTERACTIVE_MAX_POINTS
+            render_max = min(render_max, low_quality_max)
+        sample_step = self._compute_sample_step(points.shape[0], render_max)
+        if sample_step > 1:
+            points = points[::sample_step]
+            colors = colors[::sample_step]
         depth_offset = max(self._ply_view_depth_offset, 1e-6)
-        yaw = math.radians(self._ply_view_yaw)
-        pitch = math.radians(self._ply_view_pitch)
-        cos_y = math.cos(yaw)
-        sin_y = math.sin(yaw)
-        cos_x = math.cos(pitch)
-        sin_x = math.sin(pitch)
+        rotation = self._quat_to_matrix(self._ply_view_quat)
+        rotated = points @ rotation.T
         proj_scale = min(width, height) * 0.9 * self._ply_view_zoom
         ortho_scale = self._compute_ortho_scale(width, height)
         projection_mode = (self._ply_projection_mode.get() or "").lower()
         is_orthographic = projection_mode.startswith("ortho")
         pan_x, pan_y = self._ply_view_pan
-        x = points[:, 0]
-        y = points[:, 1]
-        z = points[:, 2]
-        x1 = x * cos_y + z * sin_y
-        z1 = -x * sin_y + z * cos_y
-        y1 = y * cos_x - z1 * sin_x
-        z2 = y * sin_x + z1 * cos_x
+        x1 = rotated[:, 0]
+        y1 = rotated[:, 1]
+        z2 = rotated[:, 2]
         depth = z2 + depth_offset
         if is_orthographic:
             valid = np.ones_like(depth, dtype=bool)
@@ -4893,6 +5683,7 @@ class PreviewApp:
         valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
         if not np.any(valid):
             messagebox.showinfo("Show PLY", "No visible points remained after projection.")
+            self._render_ply_idle_canvas(canvas)
             return
         depth_valid = depth[valid]
         ix_valid = ix[valid]
@@ -4913,10 +5704,7 @@ class PreviewApp:
             image,
             width,
             height,
-            cos_y,
-            sin_y,
-            cos_x,
-            sin_x,
+            rotation,
             depth_offset,
             proj_scale,
             ortho_scale,
@@ -4924,10 +5712,30 @@ class PreviewApp:
             pan_x,
             pan_y,
         )
+        self._draw_ply_stats_overlay(image)
         photo = ImageTk.PhotoImage(image=image)
         self._ply_canvas_photo = photo
         if self._ply_canvas_image_id is None:
             self._ply_canvas_image_id = canvas.create_image(0, 0, anchor="nw", image=photo)
+        else:
+            canvas.itemconfigure(self._ply_canvas_image_id, image=photo)
+        canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _render_ply_idle_canvas(self, canvas: tk.Canvas) -> None:
+        canvas.update_idletasks()
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = PLY_VIEW_CANVAS_HEIGHT
+        image = Image.new("RGB", (width, height), (0x11, 0x11, 0x11))
+        self._draw_ply_stats_overlay(image)
+        photo = ImageTk.PhotoImage(image=image)
+        self._ply_canvas_photo = photo
+        if self._ply_canvas_image_id is None:
+            self._ply_canvas_image_id = canvas.create_image(
+                0, 0, anchor="nw", image=photo
+            )
         else:
             canvas.itemconfigure(self._ply_canvas_image_id, image=photo)
         canvas.configure(scrollregion=(0, 0, width, height))
@@ -4944,10 +5752,7 @@ class PreviewApp:
         image: Image.Image,
         width: int,
         height: int,
-        cos_y: float,
-        sin_y: float,
-        cos_x: float,
-        sin_x: float,
+        rotation: np.ndarray,
         depth_offset: float,
         proj_scale: float,
         ortho_scale: float,
@@ -4966,10 +5771,7 @@ class PreviewApp:
             origin,
             width,
             height,
-            cos_y,
-            sin_y,
-            cos_x,
-            sin_x,
+            rotation,
             depth_offset,
             proj_scale,
             ortho_scale,
@@ -4990,10 +5792,7 @@ class PreviewApp:
                 endpoint,
                 width,
                 height,
-                cos_y,
-                sin_y,
-                cos_x,
-                sin_x,
+                rotation,
                 depth_offset,
                 proj_scale,
                 ortho_scale,
@@ -5029,15 +5828,42 @@ class PreviewApp:
             fill=(255, 255, 255),
         )
 
+    def _draw_ply_stats_overlay(self, image: Image.Image) -> None:
+        draw = ImageDraw.Draw(image)
+        mean_rgb = self._ply_view_rgb_mean
+        if mean_rgb is not None:
+            mean_text = "Mean RGB: {:.1f}, {:.1f}, {:.1f}".format(
+                mean_rgb[0],
+                mean_rgb[1],
+                mean_rgb[2],
+            )
+            x0, y0 = 8, 8
+            bbox = draw.textbbox((0, 0), mean_text)
+            text_w = max(0, int(bbox[2] - bbox[0]))
+            text_h = max(0, int(bbox[3] - bbox[1]))
+            x1 = min(image.width - 8, x0 + text_w + 8)
+            y1 = y0 + text_h + 8
+            draw.rectangle([(x0, y0), (x1, y1)], fill=(0, 0, 0))
+            draw.text((x0 + 4, y0 + 4), mean_text, fill=(255, 255, 255))
+        info_text = self._ply_view_info_var.get().strip()
+        if not info_text:
+            return
+        bbox = draw.textbbox((0, 0), info_text)
+        text_w = max(0, int(bbox[2] - bbox[0]))
+        text_h = max(0, int(bbox[3] - bbox[1]))
+        x1 = image.width - 8
+        y0 = 8
+        x0 = max(8, x1 - text_w - 8)
+        y1 = y0 + text_h + 8
+        draw.rectangle([(x0, y0), (x1, y1)], fill=(0, 0, 0))
+        draw.text((x0 + 4, y0 + 4), info_text, fill=(255, 255, 255))
+
     @staticmethod
     def _project_point_to_screen(
         point: Tuple[float, float, float],
         width: int,
         height: int,
-        cos_y: float,
-        sin_y: float,
-        cos_x: float,
-        sin_x: float,
+        rotation: np.ndarray,
         depth_offset: float,
         proj_scale: float,
         ortho_scale: float,
@@ -5046,10 +5872,11 @@ class PreviewApp:
         pan_y: float,
     ) -> Optional[Tuple[float, float]]:
         px, py, pz = point
-        x1 = px * cos_y + pz * sin_y
-        z1 = -px * sin_y + pz * cos_y
-        y1 = py * cos_x - z1 * sin_x
-        z2 = py * sin_x + z1 * cos_x
+        p = np.array([px, py, pz], dtype=np.float32)
+        transformed = rotation @ p
+        x1 = float(transformed[0])
+        y1 = float(transformed[1])
+        z2 = float(transformed[2])
         depth = z2 + depth_offset
         if is_orthographic:
             scale = ortho_scale
