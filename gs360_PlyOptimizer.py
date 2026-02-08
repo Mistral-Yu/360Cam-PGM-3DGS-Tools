@@ -14,7 +14,7 @@ import math
 import os
 from dataclasses import dataclass
 from itertools import count
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from plyfile import PlyData, PlyElement
@@ -497,7 +497,7 @@ def voxel_downsample_to_target(
     rgb: np.ndarray,
     target_points: int,
     tol_ratio: float = 0.02,
-    max_iter: int = 50,
+    max_iter: int = 32,
     stats: Optional[PointCloudStats] = None,
     log_bounds: bool = True,
     representative: str = "centroid",
@@ -552,11 +552,23 @@ def voxel_downsample_to_target(
     extent = stats.extent
     v0 = (vol / float(target_points)) ** (1.0 / 3.0) if vol > 0 else 1e-3
 
+    # Cache unique-voxel counts by voxel size during bound search.
+    count_cache: Dict[float, int] = {}
+
+    def _count_unique_cached(voxel_size: float) -> int:
+        key = round(float(voxel_size), 12)
+        cached = count_cache.get(key)
+        if cached is not None:
+            return cached
+        cnt = _unique_voxel_count(xyz, voxel_size, xyz_min)
+        count_cache[key] = cnt
+        return cnt
+
     min_voxel = 1e-9
     lo = max(v0 / 64.0, min_voxel)
     hi = max(v0 * 64.0, lo * 2.0)
 
-    cnt_lo = _unique_voxel_count(xyz, lo, xyz_min)
+    cnt_lo = _count_unique_cached(lo)
     if cnt_lo < target_points:
         print(
             f"[shrink] initial lo={lo:.6g} -> unique={cnt_lo:,} "
@@ -568,7 +580,7 @@ def voxel_downsample_to_target(
             lo = max(lo * 0.5, min_voxel)
             if lo == prev_lo:
                 break
-            cnt_lo = _unique_voxel_count(xyz, lo, xyz_min)
+            cnt_lo = _count_unique_cached(lo)
             shrink_iter += 1
             print(
                 f"[shrink {shrink_iter:02d}] lo={lo:.6g} -> unique={cnt_lo:,}"
@@ -591,7 +603,7 @@ def voxel_downsample_to_target(
 
     # Expand hi until the unique voxel count is at most the target.
     for _ in range(10):
-        cnt_hi = _unique_voxel_count(xyz, hi, xyz_min)
+        cnt_hi = _count_unique_cached(hi)
         print(f"[expand] try hi={hi:.6g} -> unique={cnt_hi:,}")
         if cnt_hi <= target_points:
             break
@@ -605,22 +617,14 @@ def voxel_downsample_to_target(
 
     for it in range(1, max_iter + 1):
         mid = 0.5 * (lo + hi)
-        cnt = _unique_voxel_count(xyz, mid, xyz_min)
+        cnt = _count_unique_cached(mid)
         diff = abs(cnt - target_points)
         ratio = diff / float(target_points)
         if diff < best_diff:
             best_diff = diff
             best_voxel = mid
             best_cnt = cnt
-        decision = (
-            "lo = mid (cnt > target -> increase voxel size)"
-            if cnt > target_points
-            else "hi = mid (cnt < target -> decrease voxel size)"
-        )
-        print(
-            f"[iter {it:02d}] voxel={mid:.6g}  unique={cnt:,}  diff={diff:,} "
-            f"({ratio:.2%})  -> {decision}"
-        )
+        print(f"[iter {it:02d}] voxel={mid:.2f}  unique={cnt:,}")
         if ratio <= tol_ratio:
             print(f"[stop] within tolerance: voxel={mid:.6g}  unique={cnt:,}")
             best_voxel = mid
@@ -640,6 +644,93 @@ def voxel_downsample_to_target(
         xyz, rgb, best_voxel, representative=representative
     )
     print(f"[final] voxel={best_voxel:.6g}  out_points={out_xyz.shape[0]:,}")
+    return out_xyz, out_rgb
+
+
+def spatial_hash_downsample_one_pass(
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    target_points: Optional[int] = None,
+    voxel_size: Optional[float] = None,
+    stats: Optional[PointCloudStats] = None,
+    representative: str = "centroid",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Approximate downsampling with a single spatial-hash voxel pass.
+
+    This mode avoids iterative voxel-size search. When voxel_size is given,
+    it is used directly. Otherwise, a heuristic voxel size is estimated from
+    the target point count and the cloud bounding-box volume.
+
+    Args:
+        xyz: Array of shape (N, 3) with point coordinates.
+        rgb: Array of shape (N, 3) with 8-bit color values.
+        target_points: Approximate desired number of output points.
+        voxel_size: Optional fixed voxel size. Takes precedence over target.
+        stats: Optional precomputed statistics for the input cloud.
+        representative: Strategy for choosing voxel representatives.
+
+    Returns:
+        Downsampled XYZ and RGB arrays.
+    """
+    n = int(xyz.shape[0])
+    if n == 0:
+        return xyz.astype(np.float32, copy=False), rgb.astype(
+            np.uint8, copy=False
+        )
+
+    voxel: Optional[float] = None
+    if voxel_size is not None and voxel_size > 0:
+        voxel = float(voxel_size)
+        print(f"[spatial-hash] fixed voxel-size={voxel:.6g}")
+    elif target_points is not None and target_points > 0:
+        target = int(max(1, min(n, target_points)))
+        if target >= n:
+            print(
+                "[spatial-hash] skip: "
+                f"target={target:,} is not smaller than input={n:,}"
+            )
+            return xyz.astype(np.float32, copy=False), rgb.astype(
+                np.uint8, copy=False
+            )
+        if stats is None or stats.count != n:
+            stats = compute_point_cloud_stats(xyz)
+        vol = stats.volume
+        voxel_init = (vol / float(target)) ** (1.0 / 3.0) if vol > 0 else 1e-3
+        voxel_init = max(float(voxel_init), 1e-9)
+        cnt_init = _unique_voxel_count(xyz, voxel_init, stats.xyz_min)
+        if cnt_init > 0:
+            ratio = float(cnt_init) / float(target)
+            # Surface-like photogrammetry clouds tend to have an occupancy
+            # dimension near 2.0, but very sparse initial probes need a more
+            # aggressive shrink to approach the target count.
+            if ratio < 0.2:
+                effective_dim = 1.55
+            elif ratio < 0.4:
+                effective_dim = 1.75
+            else:
+                effective_dim = 2.0
+            scale = ratio ** (1.0 / effective_dim)
+            scale = min(2.5, max(0.15, scale))
+            voxel = max(voxel_init * scale, 1e-9)
+        else:
+            voxel = voxel_init
+        print(
+            f"[spatial-hash] target~{target:,} "
+            f"-> probe unique={cnt_init:,} voxel={voxel:.6g}"
+        )
+    else:
+        print("[spatial-hash] skip (no voxel-size/target-points)")
+        return xyz.astype(np.float32, copy=False), rgb.astype(
+            np.uint8, copy=False
+        )
+
+    out_xyz, out_rgb = voxel_downsample_by_size(
+        xyz, rgb, voxel, representative=representative
+    )
+    print(
+        f"[spatial-hash] voxel={voxel:.6g}  "
+        f"out_points={out_xyz.shape[0]:,} (approx)"
+    )
     return out_xyz, out_rgb
 
 
@@ -918,6 +1009,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Fixed voxel size in meters.",
     )
     ap.add_argument(
+        "--downsample-method",
+        choices=("voxel", "spatial-hash", "adaptive"),
+        default="spatial-hash",
+        help=(
+            "Downsampling method: "
+            "voxel=existing voxel mode (fixed size or target search), "
+            "spatial-hash=single-pass approximate voxel hashing, "
+            "adaptive=octree-based adaptive sampling."
+        ),
+    )
+    ap.add_argument(
         "--adaptive",
         action="store_true",
         help=(
@@ -1050,6 +1152,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             (args.voxel_size is not None and args.voxel_size > 0)
             or (target_points is not None and target_points > 0)
             or args.adaptive
+            or args.downsample_method != "voxel"
             or args.append_ply
         ):
             print("[warn] --out missing; skipping downsample/append options.")
@@ -1058,10 +1161,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     # 2) Downsample
+    downsample_method = args.downsample_method
+    if args.adaptive and downsample_method != "adaptive":
+        print(
+            "[warn] --adaptive is deprecated by --downsample-method; "
+            "forcing method=adaptive."
+        )
+        downsample_method = "adaptive"
+
     adaptive_min_voxel = (
         args.voxel_size if args.voxel_size is not None and args.voxel_size > 0 else None
     )
-    if args.adaptive:
+    if downsample_method == "adaptive":
         adaptive_target = (
             target_points if target_points is not None and target_points > 0 else stats.count
         )
@@ -1087,6 +1198,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         print(
             f"[adaptive] target~{adaptive_target:,} -> {xyz.shape[0]:,} points"
+        )
+    elif downsample_method == "spatial-hash":
+        xyz, rgb = spatial_hash_downsample_one_pass(
+            xyz,
+            rgb,
+            target_points=target_points,
+            voxel_size=args.voxel_size if args.voxel_size and args.voxel_size > 0 else None,
+            stats=stats,
+            representative=args.keep_strategy,
         )
     elif args.voxel_size is not None and args.voxel_size > 0:
         print(f"[downsample] fixed voxel-size={args.voxel_size:.6g}")
