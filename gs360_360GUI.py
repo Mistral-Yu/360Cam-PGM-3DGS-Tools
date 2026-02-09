@@ -79,6 +79,7 @@ PLY_VIEW_CANVAS_HEIGHT = 840
 PLY_VIEW_MAX_POINTS = 500_000
 PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
 PLY_INTERACTION_SETTLE_DELAY_MS = 350
+PLY_VIEW_MAX_ZOOM = 24.0
 PLY_PROPERTY_TYPES = {
     "char": ("b", 1, "i1"),
     "uchar": ("B", 1, "u1"),
@@ -685,7 +686,7 @@ class PreviewApp:
         self.ply_adaptive_weight_entry: Optional[tk.Entry] = None
         self.ply_keep_menu: Optional[ttk.Combobox] = None
         self.ply_target_mode_var = tk.StringVar(value="Target points")
-        self.ply_downsample_method_var = tk.StringVar(value="spatial-hash")
+        self.ply_downsample_method_var = tk.StringVar(value="Voxel")
         self._ply_target_value_entry: Optional[tk.Entry] = None
         self._ply_target_value_label: Optional[tk.Label] = None
         self._ply_target_var_map: Dict[str, tk.StringVar] = {}
@@ -2754,8 +2755,30 @@ class PreviewApp:
         viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
         self._ply_viewer_root = viewer_frame
 
+        save_top_controls = tk.Frame(viewer_frame)
+        save_top_controls.pack(fill="x", padx=12, pady=(8, 0))
+        tk.Label(save_top_controls, text="Save viewed PLY").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        sky_save_entry = tk.Entry(
+            save_top_controls,
+            textvariable=self._ply_sky_save_path_var,
+            width=56,
+        )
+        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        tk.Button(
+            save_top_controls,
+            text="Browse...",
+            command=self._on_browse_sky_save_path,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Button(
+            save_top_controls,
+            text="Save",
+            command=self._on_save_sky_points,
+        ).pack(side=tk.LEFT)
+
         viewer_actions = tk.Frame(viewer_frame)
-        viewer_actions.pack(fill="x", padx=12, pady=(8, 0))
+        viewer_actions.pack(fill="x", padx=12, pady=(6, 0))
         self.ply_input_view_button = tk.Button(
             viewer_actions,
             text="Show Input PLY",
@@ -2774,18 +2797,15 @@ class PreviewApp:
             command=self._on_clear_ply_view,
         )
         self.ply_clear_view_button.pack(side=tk.LEFT, padx=(4, 0), pady=0)
-
-        top_controls = tk.Frame(viewer_frame)
-        top_controls.pack(fill="x", padx=12, pady=(6, 0))
         tk.Checkbutton(
-            top_controls,
+            viewer_actions,
             text="Monochrome",
             variable=self._ply_monochrome_var,
             command=self._redraw_ply_canvas,
-        ).pack(side=tk.LEFT)
-        tk.Label(top_controls, text="Projection").pack(side=tk.LEFT, padx=(12, 4))
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Label(viewer_actions, text="Projection").pack(side=tk.LEFT, padx=(12, 4))
         self._ply_projection_combo = ttk.Combobox(
-            top_controls,
+            viewer_actions,
             textvariable=self._ply_projection_mode,
             values=("Orthographic", "Perspective"),
             state="readonly",
@@ -2793,11 +2813,11 @@ class PreviewApp:
         )
         self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
-        tk.Label(top_controls, text="Low quality pts").pack(
+        tk.Label(viewer_actions, text="Low quality pts").pack(
             side=tk.LEFT, padx=(12, 4)
         )
         interactive_max_points_entry = tk.Entry(
-            top_controls,
+            viewer_actions,
             textvariable=self._ply_view_interactive_max_points_var,
             width=9,
         )
@@ -2809,11 +2829,11 @@ class PreviewApp:
             "<FocusOut>", self._on_ply_interactive_max_points_commit
         )
         self._ply_interactive_max_points_entry = interactive_max_points_entry
-        tk.Label(top_controls, text="High quality pts").pack(
+        tk.Label(viewer_actions, text="High quality pts").pack(
             side=tk.LEFT, padx=(12, 4)
         )
         high_max_points_entry = tk.Entry(
-            top_controls,
+            viewer_actions,
             textvariable=self._ply_view_high_max_points_var,
             width=9,
         )
@@ -2925,25 +2945,6 @@ class PreviewApp:
             button_row,
             text="Clear Sky",
             command=self._on_clear_sky_points,
-        ).pack(side=tk.LEFT)
-        save_row = tk.Frame(sky_action_controls)
-        save_row.pack(side=tk.LEFT, fill="x", expand=True)
-        tk.Label(save_row, text="Save viewed PLY").pack(side=tk.LEFT, padx=(0, 4))
-        sky_save_entry = tk.Entry(
-            save_row,
-            textvariable=self._ply_sky_save_path_var,
-            width=40,
-        )
-        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
-        tk.Button(
-            save_row,
-            text="Browse...",
-            command=self._on_browse_sky_save_path,
-        ).pack(side=tk.LEFT, padx=(4, 4))
-        tk.Button(
-            save_row,
-            text="Save",
-            command=self._on_save_sky_points,
         ).pack(side=tk.LEFT)
 
         canvas = tk.Canvas(
@@ -4935,7 +4936,7 @@ class PreviewApp:
             return None
         factor = 1.0 + (0.12 if delta > 0 else -0.12)
         new_zoom = self._ply_view_zoom * factor
-        self._ply_view_zoom = max(0.1, min(8.0, new_zoom))
+        self._ply_view_zoom = max(0.1, min(PLY_VIEW_MAX_ZOOM, new_zoom))
         self._begin_ply_interaction()
         self._redraw_ply_canvas()
         self._schedule_end_ply_interaction()
