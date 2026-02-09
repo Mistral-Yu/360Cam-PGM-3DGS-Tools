@@ -697,26 +697,65 @@ def spatial_hash_downsample_one_pass(
         vol = stats.volume
         voxel_init = (vol / float(target)) ** (1.0 / 3.0) if vol > 0 else 1e-3
         voxel_init = max(float(voxel_init), 1e-9)
-        cnt_init = _unique_voxel_count(xyz, voxel_init, stats.xyz_min)
-        if cnt_init > 0:
-            ratio = float(cnt_init) / float(target)
-            # Surface-like photogrammetry clouds tend to have an occupancy
-            # dimension near 2.0, but very sparse initial probes need a more
-            # aggressive shrink to approach the target count.
-            if ratio < 0.2:
-                effective_dim = 1.55
-            elif ratio < 0.4:
-                effective_dim = 1.75
+        voxel = voxel_init
+        xyz_min = stats.xyz_min
+        probe_logs: List[Tuple[int, float, int]] = []
+        prev_voxel: Optional[float] = None
+        prev_count: Optional[int] = None
+        max_probes = 3
+        for probe_idx in range(1, max_probes + 1):
+            cnt_probe = _unique_voxel_count(xyz, voxel, xyz_min)
+            probe_logs.append((probe_idx, voxel, cnt_probe))
+            if cnt_probe <= 0:
+                break
+            ratio = float(cnt_probe) / float(target)
+            if abs(ratio - 1.0) <= 0.06:
+                break
+            if probe_idx >= max_probes:
+                break
+            if (
+                prev_voxel is not None
+                and prev_count is not None
+                and prev_count > 0
+                and cnt_probe != prev_count
+                and abs(voxel - prev_voxel) > 1e-12
+            ):
+                try:
+                    effective_dim = math.log(
+                        float(cnt_probe) / float(prev_count)
+                    ) / math.log(float(prev_voxel) / float(voxel))
+                except (ValueError, ZeroDivisionError):
+                    effective_dim = 2.0
+                if not np.isfinite(effective_dim):
+                    effective_dim = 2.0
+                effective_dim = max(1.2, min(3.0, abs(float(effective_dim))))
             else:
-                effective_dim = 2.0
+                if ratio < 0.2:
+                    effective_dim = 1.45
+                elif ratio < 0.5:
+                    effective_dim = 1.7
+                elif ratio > 2.0:
+                    effective_dim = 2.6
+                else:
+                    effective_dim = 2.1
             scale = ratio ** (1.0 / effective_dim)
-            scale = min(2.5, max(0.15, scale))
-            voxel = max(voxel_init * scale, 1e-9)
-        else:
-            voxel = voxel_init
+            scale = min(2.8, max(0.12, scale))
+            new_voxel = max(voxel * scale, 1e-9)
+            prev_voxel = voxel
+            prev_count = cnt_probe
+            if abs(new_voxel - voxel) <= max(1e-9, voxel * 1e-4):
+                break
+            voxel = new_voxel
+        if not probe_logs:
+            probe_logs.append((1, voxel, 0))
+        for probe_idx, probe_voxel, probe_count in probe_logs:
+            print(
+                f"[spatial-hash probe {probe_idx}] "
+                f"voxel={probe_voxel:.6g} unique={probe_count:,}"
+            )
         print(
             f"[spatial-hash] target~{target:,} "
-            f"-> probe unique={cnt_init:,} voxel={voxel:.6g}"
+            f"-> voxel={voxel:.6g} probes={len(probe_logs)}"
         )
     else:
         print("[spatial-hash] skip (no voxel-size/target-points)")
@@ -1011,7 +1050,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--downsample-method",
         choices=("voxel", "spatial-hash", "adaptive"),
-        default="spatial-hash",
+        default="voxel",
         help=(
             "Downsampling method: "
             "voxel=existing voxel mode (fixed size or target search), "
