@@ -9,6 +9,7 @@ import itertools
 import math
 import pathlib
 import os
+import shutil
 from collections import defaultdict
 from pathlib import Path
 import re
@@ -65,12 +66,21 @@ MSXML_PRESET_CHOICES = [
     "cube105",
 ]
 MSXML_FORMAT_CHOICES = [
-    "metashape",
+    "Metashape",
+    "Metashape-Multi-Camera-System",
     "transforms",
-    "colmap",
-    "realityscan",
+    "COLMAP",
+    "RealityScan",
     "all",
 ]
+MSXML_FORMAT_TO_CLI = {
+    "Metashape": "metashape",
+    "Metashape-Multi-Camera-System": "metashape-multi-camera-system",
+    "transforms": "transforms",
+    "COLMAP": "colmap",
+    "RealityScan": "realityscan",
+    "all": "all",
+}
 
 DEFAULT_SELECTOR_CSV_NAME = "selected_image_list.csv"
 
@@ -675,6 +685,8 @@ class PreviewApp:
         self.msxml_points_entry: Optional[tk.Entry] = None
         self.msxml_points_button: Optional[tk.Button] = None
         self.msxml_points_rotate_check: Optional[tk.Checkbutton] = None
+        self.msxml_multicam_vars: Dict[str, tk.Variable] = {}
+        self.msxml_multicam_run_button: Optional[tk.Button] = None
 
         self.ply_vars: Dict[str, tk.Variable] = {}
         self.ply_log: Optional[tk.Text] = None
@@ -2331,7 +2343,8 @@ class PreviewApp:
     def _update_msxml_format_state(self) -> None:
         if not self.msxml_vars:
             return
-        fmt = self.msxml_vars["format"].get().strip().lower()
+        fmt_display = self.msxml_vars["format"].get().strip()
+        fmt = MSXML_FORMAT_TO_CLI.get(fmt_display, fmt_display.lower())
         enabled = self._format_allows_points_ply(fmt)
         state = "normal" if enabled else "disabled"
         for widget in (
@@ -2346,6 +2359,134 @@ class PreviewApp:
             except tk.TclError:
                 pass
 
+    @staticmethod
+    def _extract_multicam_view_id(stem: str) -> Optional[str]:
+        """Extract trailing view ID token (e.g. A, A_U, A_D20) from a file stem."""
+        pattern = r"_((?:[A-Z]|\d{2,})(?:_(?:U|D|U\d+|D\d+))?)$"
+        match = re.search(pattern, stem.upper())
+        if not match:
+            return None
+        return match.group(1)
+
+    @staticmethod
+    def _next_available_path(path: Path) -> Path:
+        """Avoid collisions by appending a numeric suffix when needed."""
+        if not path.exists():
+            return path
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+        index = 1
+        while True:
+            candidate = parent / f"{stem}_{index:03d}{suffix}"
+            if not candidate.exists():
+                return candidate
+            index += 1
+
+    def _run_msxml_multicam_folder_split(self) -> None:
+        """Group perspective images into camera-ID folders for Metashape multi-cam import."""
+        if not self.msxml_multicam_vars:
+            return
+        source_text = self.msxml_multicam_vars["source"].get().strip()
+        dry_run = bool(self.msxml_multicam_vars["dry_run"].get())
+        if not source_text:
+            messagebox.showerror(
+                "MS360xmlToPersCams",
+                "Source image folder is required.",
+            )
+            return
+        try:
+            source_dir = Path(source_text).expanduser().resolve()
+        except Exception as exc:
+            messagebox.showerror("MS360xmlToPersCams", f"Invalid source path:\n{exc}")
+            return
+        if not source_dir.exists() or not source_dir.is_dir():
+            messagebox.showerror(
+                "MS360xmlToPersCams",
+                f"Source folder not found:\n{source_dir}",
+            )
+            return
+
+        image_exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".exr"}
+        files = sorted(
+            p for p in source_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in image_exts
+        )
+        if not files:
+            messagebox.showinfo(
+                "MS360xmlToPersCams",
+                f"No image files found in:\n{source_dir}",
+            )
+            return
+
+        moved = 0
+        skipped = 0
+        split_counts: Dict[str, int] = defaultdict(int)
+        unrecognized: List[str] = []
+        for src_path in files:
+            view_id = self._extract_multicam_view_id(src_path.stem)
+            if not view_id:
+                skipped += 1
+                unrecognized.append(src_path.name)
+                continue
+
+            dest_dir = source_dir / view_id
+            if not dry_run:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / src_path.name
+            try:
+                if src_path.resolve() == dest_path.resolve():
+                    skipped += 1
+                    continue
+            except Exception:
+                pass
+            dest_path = self._next_available_path(dest_path)
+            try:
+                if not dry_run:
+                    shutil.move(str(src_path), str(dest_path))
+                moved += 1
+                split_counts[view_id] += 1
+            except Exception:
+                skipped += 1
+                unrecognized.append(src_path.name)
+
+        self._append_text_widget(
+            self.msxml_log,
+            (
+                "[multicam] folder split completed"
+                + (" [dry-run]" if dry_run else "")
+                + ": "
+                f"moved={moved}, skipped={skipped}, root={source_dir}"
+            ),
+        )
+        if unrecognized:
+            sample = ", ".join(unrecognized[:6])
+            more = f" (+{len(unrecognized) - 6} more)" if len(unrecognized) > 6 else ""
+            self._append_text_widget(
+                self.msxml_log,
+                f"[multicam] skipped examples: {sample}{more}",
+            )
+        if dry_run and split_counts:
+            self._append_text_widget(
+                self.msxml_log,
+                "[multicam][dry-run] planned subfolders and counts:",
+            )
+            for folder_name in sorted(split_counts):
+                self._append_text_widget(
+                    self.msxml_log,
+                    f"  - {folder_name}: {split_counts[folder_name]}",
+                )
+        messagebox.showinfo(
+            "MS360xmlToPersCams",
+            (
+                "Folder split completed"
+                + (" (dry run)." if dry_run else ".")
+                + "\n"
+                f"Moved: {moved}\nSkipped: {skipped}\n"
+                f"Source folder: {source_dir}"
+            ),
+        )
+
     def _build_msxml_tab(self, parent: tk.Widget) -> None:
         container = tk.Frame(parent)
         container.pack(fill="both", expand=True)
@@ -2357,7 +2498,7 @@ class PreviewApp:
             "xml": tk.StringVar(),
             "output": tk.StringVar(),
             "preset": tk.StringVar(value="full360coverage"),
-            "format": tk.StringVar(value="metashape"),
+            "format": tk.StringVar(value="Metashape"),
             "ext": tk.StringVar(value="jpg"),
             "scale": tk.StringVar(value="1.0"),
             "world_axis": tk.StringVar(value="0 1 0"),
@@ -2367,6 +2508,10 @@ class PreviewApp:
             "cut_out": tk.StringVar(),
             "points_ply": tk.StringVar(),
             "pc_rotate_x": tk.BooleanVar(value=True),
+        }
+        self.msxml_multicam_vars = {
+            "source": tk.StringVar(),
+            "dry_run": tk.BooleanVar(value=False),
         }
         self.msxml_vars["xml"].trace_add("write", self._on_msxml_input_changed)
         self.msxml_vars["output"].trace_add("write", self._on_msxml_output_changed)
@@ -2442,7 +2587,7 @@ class PreviewApp:
             textvariable=self.msxml_vars["format"],
             values=MSXML_FORMAT_CHOICES,
             state="readonly",
-            width=14,
+            width=32,
         )
         format_combo.pack(side=tk.LEFT, padx=(0, 10))
         tk.Label(format_frame, text="Ext").pack(side=tk.LEFT, padx=(0, 4))
@@ -2586,6 +2731,47 @@ class PreviewApp:
             command=self._run_msxml_tool,
         )
         self.msxml_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
+
+        split_frame = tk.LabelFrame(
+            container,
+            text="Folder Split for Metashape Multi-Camera System",
+        )
+        split_frame.pack(fill="x", padx=8, pady=(0, 8))
+        split_frame.grid_columnconfigure(1, weight=1)
+
+        s_row = 0
+        tk.Label(split_frame, text="Source images").grid(
+            row=s_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            split_frame,
+            textvariable=self.msxml_multicam_vars["source"],
+            width=52,
+        ).grid(row=s_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            split_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.msxml_multicam_vars["source"],
+                title="Select source image folder",
+            ),
+        ).grid(row=s_row, column=2, padx=4, pady=4)
+
+        s_row += 1
+        tk.Checkbutton(
+            split_frame,
+            text="Dry Run",
+            variable=self.msxml_multicam_vars["dry_run"],
+            anchor="w",
+        ).grid(row=s_row, column=1, sticky="w", padx=4, pady=4)
+        self.msxml_multicam_run_button = tk.Button(
+            split_frame,
+            text="Run Folder Split",
+            command=self._run_msxml_multicam_folder_split,
+        )
+        self.msxml_multicam_run_button.grid(
+            row=s_row, column=2, sticky="e", padx=4, pady=4
+        )
 
         log_frame = tk.LabelFrame(container, text="Log")
         log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -3622,9 +3808,35 @@ class PreviewApp:
         if preset_value:
             cmd.extend(["--preset", preset_value])
 
-        format_value = self.msxml_vars["format"].get().strip().lower()
+        format_display = self.msxml_vars["format"].get().strip()
+        format_value = MSXML_FORMAT_TO_CLI.get(
+            format_display, format_display.lower()
+        )
         if format_value:
             cmd.extend(["--format", format_value])
+
+        if format_value == "metashape-multi-camera-system":
+            warn_lines = [
+                "Metashape-Multi-Camera-System output is experimental and "
+                "requires Metashape Pro.",
+            ]
+            if (
+                preset_value
+                and preset_value not in {"2views", "fisheyelike"}
+            ):
+                warn_lines.append(
+                    "Recommended presets are '2views' or 'fisheyelike'."
+                )
+                warn_lines.append(
+                    f"You selected preset '{preset_value}'."
+                )
+            warn_lines.append("Continue conversion?")
+            proceed = messagebox.askokcancel(
+                "gs360_MS360xmlToPersCams",
+                "\n".join(warn_lines),
+            )
+            if not proceed:
+                return
 
         ext_value = self.msxml_vars["ext"].get().strip()
         if ext_value:
