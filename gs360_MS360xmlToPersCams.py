@@ -22,6 +22,7 @@ import argparse
 import json
 import math
 import pathlib
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -63,6 +64,15 @@ REALITYSCAN_AXIS = [
     [0.0, 1.0, 0.0],
 ]
 REALITYSCAN_DIR = "cameras_RealityScan"
+METASHAPE_MULTI_XML_NAME = "perspective_cams_Multi-Camera-System.xml"
+FORMAT_METASHAPE_MULTI = "metashape-multi-camera-system"
+MCS_ROTATION_COVARIANCE_DIAG = 1e-12
+MCS_FISHEYELIKE_NO_XYZ_VIEWS = {"A_D", "A_U", "B", "J"}
+MCS_REFERENCE_TEMPLATE_REL = pathlib.Path(
+    "data_Metashape_360",
+    "perspective_cams_Fisheye",
+    METASHAPE_MULTI_XML_NAME,
+)
 
 # OpenCV camera coords -> OpenGL camera coords.
 CV_TO_GL = [
@@ -450,6 +460,20 @@ def rotmat_to_quat_wxyz(r):
 def safe_name(name):
     name = name.replace("\\", "_").replace("/", "_")
     return name.strip()
+
+
+def strip_view_suffix(name, known_view_ids):
+    upper_name = str(name).upper()
+    ordered_view_ids = sorted(
+        {str(view_id).upper() for view_id in known_view_ids},
+        key=len,
+        reverse=True,
+    )
+    for view_id in ordered_view_ids:
+        suffix = "_" + view_id
+        if upper_name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
 
 
 def extract_rot3(mat4):
@@ -910,6 +934,579 @@ def export_metashape_xml(
     tree.write(str(out_path), encoding="UTF-8", xml_declaration=True)
 
 
+def _flatten_mat4(mat4):
+    return [mat4[r][c] for r in range(4) for c in range(4)]
+
+
+def _camera_stem(frame):
+    return pathlib.Path(frame["file_path"]).stem
+
+
+def _group_frames_by_source(frames):
+    grouped = {}
+    order = []
+    for frame in frames:
+        source_name = frame["source_name"]
+        if source_name not in grouped:
+            grouped[source_name] = {}
+            order.append(source_name)
+        grouped[source_name][frame["view_id"]] = frame
+    return grouped, order
+
+
+def _view_id_sort_key(view_id):
+    text = str(view_id).upper()
+    parts = text.split("_")
+    base = parts[0] if parts else text
+    suffix = parts[1] if len(parts) > 1 else ""
+
+    if len(base) == 1 and "A" <= base <= "Z":
+        base_key = (0, ord(base))
+    elif base.isdigit():
+        base_key = (1, int(base))
+    else:
+        base_key = (2, base)
+
+    if suffix.startswith("D"):
+        rank = 1
+        mag_text = suffix[1:]
+    elif suffix.startswith("U"):
+        rank = 2
+        mag_text = suffix[1:]
+    elif not suffix:
+        rank = 0
+        mag_text = ""
+    else:
+        rank = 3
+        mag_text = suffix
+
+    if rank in (1, 2):
+        if mag_text == "":
+            mag = 30.0
+        else:
+            try:
+                mag = float(mag_text)
+            except ValueError:
+                mag = 30.0
+    else:
+        mag = 0.0
+    return base_key, rank, mag, text
+
+
+def _rotation_covariance_text(diagonal):
+    d = float(diagonal)
+    matrix = [
+        [d, 0.0, 0.0],
+        [0.0, d, 0.0],
+        [0.0, 0.0, d],
+    ]
+    return " ".join(
+        "{:.15g}".format(value) for row in matrix for value in row
+    )
+
+
+def _extract_view_id(label):
+    text = (label or "").upper()
+    match = re.search(
+        r"_((?:[A-Z]|\d{2,})(?:_(?:U|D|U\d+|D\d+))?)$",
+        text,
+    )
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _mat3_to_opk_deg(rot):
+    """Convert rotation matrix to Omega/Phi/Kappa degrees (Rz*Ry*Rx)."""
+    r31 = max(-1.0, min(1.0, rot[2][0]))
+    phi = math.asin(-r31)
+    omega = math.atan2(rot[2][1], rot[2][2])
+    kappa = math.atan2(rot[1][0], rot[0][0])
+    return (
+        math.degrees(omega),
+        math.degrees(phi),
+        math.degrees(kappa),
+    )
+
+
+def _template_rig_layout(cameras_node):
+    cameras = cameras_node.findall("camera")
+    if not cameras:
+        return None
+    start_idx = None
+    for idx, cam in enumerate(cameras):
+        if cam.get("master_id") is None:
+            start_idx = idx
+            break
+    if start_idx is None:
+        return None
+    first_master = cameras[start_idx]
+    first_master_id = first_master.get("id")
+    rig_cameras = [first_master]
+    idx = start_idx + 1
+    while idx < len(cameras):
+        cam = cameras[idx]
+        if cam.get("master_id") == first_master_id:
+            rig_cameras.append(cam)
+            idx += 1
+            continue
+        break
+    layout = []
+    for cam in rig_cameras:
+        view_id = _extract_view_id(cam.get("label"))
+        if view_id is None:
+            return None
+        layout.append(
+            {
+                "view_id": view_id,
+                "sensor_id": cam.get("sensor_id", "0"),
+                "is_master": cam.get("master_id") is None,
+            }
+        )
+    if not layout:
+        return None
+    if sum(1 for item in layout if item["is_master"]) != 1:
+        return None
+    return layout
+
+
+def _iter_mcs_template_candidates(xml_in_path, out_path):
+    script_root = pathlib.Path(__file__).resolve().parent.parent
+    preferred_template = script_root / MCS_REFERENCE_TEMPLATE_REL
+    candidates = [
+        preferred_template,
+        pathlib.Path.cwd() / MCS_REFERENCE_TEMPLATE_REL,
+        xml_in_path.parent / METASHAPE_MULTI_XML_NAME,
+        xml_in_path.parent.parent / "perspective_cams_Fisheye" /
+        METASHAPE_MULTI_XML_NAME,
+    ]
+    seen = set()
+    out_resolved = out_path.resolve()
+    for candidate in candidates:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except Exception:
+            continue
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if resolved == out_resolved:
+            continue
+        yield resolved
+
+
+def _apply_mcs_template_export(
+    template_path,
+    out_path,
+    frames,
+    preset_name,
+):
+    tree = ET.parse(str(template_path))
+    root = tree.getroot()
+    chunk = root.find("chunk")
+    if chunk is None:
+        return False
+    cameras_node = chunk.find("cameras")
+    if cameras_node is None:
+        return False
+    sensors_node = chunk.find("sensors")
+    if sensors_node is None:
+        return False
+    layout = _template_rig_layout(cameras_node)
+    if not layout:
+        return False
+
+    grouped_frames, source_order = _group_frames_by_source(frames)
+    if not source_order:
+        return False
+
+    view_order = [item["view_id"] for item in layout]
+    if not view_order:
+        return False
+    master_layout = next(item for item in layout if item["is_master"])
+    master_view_id = master_layout["view_id"]
+    master_sensor_id = master_layout["sensor_id"]
+    slave_layout = [item for item in layout if not item["is_master"]]
+    slave_view_by_sensor = {
+        str(item["sensor_id"]): item["view_id"] for item in slave_layout
+    }
+
+    # Derive slave relative rotations from generated frames to match cut views.
+    calibration_group = None
+    for source_name in source_order:
+        frame_group = grouped_frames.get(source_name, {})
+        if master_view_id not in frame_group:
+            continue
+        if any(item["view_id"] not in frame_group for item in slave_layout):
+            continue
+        calibration_group = frame_group
+        break
+    if calibration_group is None:
+        return False
+    master_rot = [
+        row[:3] for row in calibration_group[master_view_id]["c2w_cv"][:3]
+    ]
+    master_rot_t = mat3_transpose(master_rot)
+    slave_rot_by_sensor = {}
+    slave_opk_by_sensor = {}
+    for sensor_id, view_id in slave_view_by_sensor.items():
+        slave_frame = calibration_group.get(view_id)
+        if slave_frame is None:
+            return False
+        slave_rot = [row[:3] for row in slave_frame["c2w_cv"][:3]]
+        rel_rot = mat3_mul(master_rot_t, slave_rot)
+        slave_rot_by_sensor[sensor_id] = rel_rot
+        slave_opk_by_sensor[sensor_id] = _mat3_to_opk_deg(rel_rot)
+
+    # Keep slave offsets explicitly zero in both Reference and Adjusted fields.
+    slave_sensor_ids = {str(item["sensor_id"]) for item in slave_layout}
+    for sensor in sensors_node.findall("sensor"):
+        sensor_id = str(sensor.get("id", ""))
+        if sensor_id not in slave_sensor_ids:
+            continue
+        view_id = slave_view_by_sensor.get(sensor_id)
+        omit_xyz = (
+            preset_name == PRESET_FISHEYELIKE and
+            view_id in MCS_FISHEYELIKE_NO_XYZ_VIEWS
+        )
+        rel_rot = slave_rot_by_sensor.get(sensor_id)
+        if rel_rot is None:
+            return False
+        rotation_node = sensor.find("rotation")
+        if rotation_node is None:
+            rotation_node = ET.SubElement(sensor, "rotation")
+        rotation_node.text = " ".join(
+            "{:.15g}".format(v) for row in rel_rot for v in row
+        )
+        location_node = sensor.find("location")
+        if location_node is None:
+            location_node = ET.SubElement(sensor, "location")
+        location_node.text = "0 0 0"
+        reference_node = sensor.find("reference")
+        if reference_node is None:
+            reference_node = ET.SubElement(sensor, "reference")
+        omega, phi, kappa = slave_opk_by_sensor[sensor_id]
+        reference_node.set(
+            "rotation",
+            "{:.15g} {:.15g} {:.15g}".format(omega, phi, kappa),
+        )
+        location_node = sensor.find("location")
+        if omit_xyz:
+            if location_node is not None:
+                sensor.remove(location_node)
+            for key in ("x", "y", "z", "sxyz"):
+                if key in reference_node.attrib:
+                    del reference_node.attrib[key]
+        else:
+            if location_node is None:
+                location_node = ET.SubElement(sensor, "location")
+            location_node.text = "0 0 0"
+            reference_node.set("x", "0")
+            reference_node.set("y", "0")
+            reference_node.set("z", "0")
+
+    next_group_id = cameras_node.get("next_group_id", "0")
+    camera_component_id = "0"
+    start_camera_id = 0
+    for cam in cameras_node.findall("camera"):
+        if cam.get("master_id") is None:
+            camera_component_id = cam.get("component_id", "0")
+            try:
+                start_camera_id = int(cam.get("id", "0"))
+            except (TypeError, ValueError):
+                start_camera_id = 0
+            break
+
+    cameras_node.clear()
+    cameras_node.set("next_group_id", next_group_id)
+
+    camera_id = start_camera_id
+    for source_name in source_order:
+        frame_group = grouped_frames.get(source_name, {})
+        if master_view_id not in frame_group:
+            return False
+        master_frame = frame_group[master_view_id]
+        master_cam = ET.SubElement(
+            cameras_node,
+            "camera",
+            id=str(camera_id),
+            sensor_id=str(master_sensor_id),
+            component_id=camera_component_id,
+            label=_camera_stem(master_frame),
+        )
+        ET.SubElement(master_cam, "transform").text = " ".join(
+            "{:.15g}".format(v) for v in _flatten_mat4(master_frame["c2w_cv"])
+        )
+        master_id_text = str(camera_id)
+        camera_id += 1
+
+        for item in slave_layout:
+            view_id = item["view_id"]
+            if view_id not in frame_group:
+                return False
+            slave_frame = frame_group[view_id]
+            ET.SubElement(
+                cameras_node,
+                "camera",
+                id=str(camera_id),
+                sensor_id=str(item["sensor_id"]),
+                component_id=camera_component_id,
+                master_id=master_id_text,
+                label=_camera_stem(slave_frame),
+            )
+            camera_id += 1
+
+    cameras_node.set("next_id", str(camera_id))
+
+    tree.write(str(out_path), encoding="UTF-8", xml_declaration=True)
+    return True
+
+
+def export_metashape_multi_camera_xml(
+    xml_in_path,
+    out_path,
+    frames,
+    intrinsics,
+    preset_name,
+):
+    if not frames:
+        raise ValueError("no frames were generated")
+
+    # MCS export must follow the known-good Metashape template strictly.
+    attempted_templates = []
+    for template_path in _iter_mcs_template_candidates(xml_in_path, out_path):
+        if not template_path.exists():
+            continue
+        attempted_templates.append(template_path)
+        print("[INFO] Trying MCS template:", template_path)
+        if _apply_mcs_template_export(
+            template_path, out_path, frames, preset_name
+        ):
+            print("[OK] MCS template applied:", template_path)
+            return
+    if attempted_templates:
+        raise ValueError(
+            "Found MCS template(s) but they were not compatible with the "
+            "current frame layout. Check input XML and preset."
+        )
+    raise ValueError(
+        "No MCS template was found. Required template path: {}".format(
+            (pathlib.Path(__file__).resolve().parent.parent /
+             MCS_REFERENCE_TEMPLATE_REL)
+        )
+    )
+
+    fl_x, fl_y, _, _, width, height = intrinsics
+    tree = ET.parse(str(xml_in_path))
+    root = tree.getroot()
+    root.set("version", "1.4.0")
+    chunk = root.find("chunk")
+    if chunk is None:
+        raise ValueError("missing <chunk> in XML")
+
+    data_type = "uint8"
+    black_level = "0 0 0"
+    sensitivity = "1 1 1"
+    sensors_node = chunk.find("sensors")
+    if sensors_node is not None:
+        first_sensor = sensors_node.find("sensor")
+        if first_sensor is not None:
+            data_type = (
+                first_sensor.findtext("data_type") or data_type
+            ).strip()
+            black_level = (
+                first_sensor.findtext("black_level") or black_level
+            ).strip()
+            sensitivity = (
+                first_sensor.findtext("sensitivity") or sensitivity
+            ).strip()
+
+    grouped_frames, source_order = _group_frames_by_source(frames)
+    if not source_order:
+        raise ValueError("failed to group frames for multi-camera export")
+
+    first_group = grouped_frames[source_order[0]]
+    view_order = [
+        frame["view_id"]
+        for frame in frames
+        if frame["source_name"] == source_order[0]
+    ]
+    seen_views = set()
+    ordered_views = []
+    for view_id in view_order:
+        if view_id in seen_views:
+            continue
+        seen_views.add(view_id)
+        ordered_views.append(view_id)
+    ordered_views.sort(key=_view_id_sort_key)
+    if not ordered_views:
+        raise ValueError("could not infer per-frame view order")
+
+    master_view_id = "A" if "A" in ordered_views else ordered_views[0]
+    slave_view_ids = [vid for vid in ordered_views if vid != master_view_id]
+    sensor_view_ids = [master_view_id] + slave_view_ids
+    if master_view_id not in first_group:
+        master_view_id = sensor_view_ids[0]
+        slave_view_ids = [
+            vid for vid in sensor_view_ids if vid != master_view_id
+        ]
+        sensor_view_ids = [master_view_id] + slave_view_ids
+
+    if sensors_node is None:
+        sensors_node = ET.SubElement(chunk, "sensors")
+    sensors_node.clear()
+    sensors_node.set("next_id", str(len(sensor_view_ids)))
+
+    master_frame = first_group.get(master_view_id)
+    if master_frame is None:
+        raise ValueError("master camera view was not found in frame set")
+    r_master = [row[:3] for row in master_frame["c2w_cv"][:3]]
+    r_master_t = mat3_transpose(r_master)
+
+    view_to_sensor = {}
+    for sensor_id, view_id in enumerate(sensor_view_ids):
+        sensor_attr = {
+            "id": str(sensor_id),
+            "label": "virtual_{}_{}".format(preset_name, view_id),
+            "type": "frame",
+        }
+        if sensor_id > 0:
+            sensor_attr["master_id"] = "0"
+        sensor = ET.SubElement(sensors_node, "sensor", **sensor_attr)
+        ET.SubElement(
+            sensor,
+            "resolution",
+            width=str(int(width)),
+            height=str(int(height)),
+        )
+        ET.SubElement(sensor, "property", name="fixed", value="true")
+        ET.SubElement(sensor, "property", name="layer_index", value="0")
+        bands = ET.SubElement(sensor, "bands")
+        ET.SubElement(bands, "band", label="Red")
+        ET.SubElement(bands, "band", label="Green")
+        ET.SubElement(bands, "band", label="Blue")
+        calib = ET.SubElement(
+            sensor, "calibration", type="frame", **{"class": "initial"}
+        )
+        ET.SubElement(
+            calib,
+            "resolution",
+            width=str(int(width)),
+            height=str(int(height)),
+        )
+        ET.SubElement(calib, "f").text = f"{fl_x:.6f}"
+        ET.SubElement(calib, "cx").text = "0"
+        ET.SubElement(calib, "cy").text = "0"
+        ET.SubElement(calib, "k1").text = "0"
+        ET.SubElement(calib, "k2").text = "0"
+        ET.SubElement(calib, "p1").text = "0"
+        ET.SubElement(calib, "p2").text = "0"
+        ET.SubElement(sensor, "data_type").text = data_type
+        ET.SubElement(sensor, "black_level").text = black_level
+        ET.SubElement(sensor, "sensitivity").text = sensitivity
+
+        if sensor_id > 0:
+            slave_frame = first_group.get(view_id)
+            if slave_frame is not None:
+                r_slave = [row[:3] for row in slave_frame["c2w_cv"][:3]]
+                rel_rot = mat3_mul(r_master_t, r_slave)
+                ET.SubElement(sensor, "rotation").text = " ".join(
+                    "{:.15g}".format(v) for row in rel_rot for v in row
+                )
+                ET.SubElement(
+                    sensor,
+                    "rotation_covariance",
+                ).text = _rotation_covariance_text(
+                    MCS_ROTATION_COVARIANCE_DIAG
+                )
+                omega, phi, kappa = _mat3_to_opk_deg(rel_rot)
+                sigma_deg = math.degrees(
+                    math.sqrt(MCS_ROTATION_COVARIANCE_DIAG)
+                )
+                ET.SubElement(
+                    sensor,
+                    "reference",
+                    rotation="{:.15g} {:.15g} {:.15g}".format(
+                        omega, phi, kappa
+                    ),
+                    sa="{:.15g}".format(sigma_deg),
+                    sb="{:.15g}".format(sigma_deg),
+                    sc="{:.15g}".format(sigma_deg),
+                    enabled="true",
+                )
+        view_to_sensor[view_id] = str(sensor_id)
+
+    component_id = "0"
+    src_cameras_node = chunk.find("cameras")
+    if src_cameras_node is not None:
+        first_camera = src_cameras_node.find("camera")
+        if first_camera is not None:
+            component_id = first_camera.get("component_id", component_id)
+    cameras_node = src_cameras_node
+    if cameras_node is None:
+        cameras_node = ET.SubElement(chunk, "cameras")
+    cameras_node.clear()
+    cameras_node.set("next_id", str(len(frames)))
+    cameras_node.set("next_group_id", "0")
+
+    camera_id = 0
+    master_camera_ids = []
+    for source_name in source_order:
+        frame_group = grouped_frames[source_name]
+        master = frame_group.get(master_view_id)
+        if master is None:
+            continue
+        master_id = camera_id
+        master_camera_ids.append(master_id)
+        cam = ET.SubElement(
+            cameras_node,
+            "camera",
+            id=str(camera_id),
+            sensor_id=view_to_sensor[master_view_id],
+            component_id=component_id,
+            label=_camera_stem(master),
+        )
+        ET.SubElement(cam, "transform").text = " ".join(
+            "{:.15g}".format(v) for v in _flatten_mat4(master["c2w_cv"])
+        )
+        camera_id += 1
+
+        for view_id in slave_view_ids:
+            slave = frame_group.get(view_id)
+            if slave is None:
+                continue
+            ET.SubElement(
+                cameras_node,
+                "camera",
+                id=str(camera_id),
+                sensor_id=view_to_sensor[view_id],
+                component_id=component_id,
+                master_id=str(master_id),
+                label=_camera_stem(slave),
+            )
+            camera_id += 1
+
+    cameras_node.set("next_id", str(camera_id))
+
+    components_node = chunk.find("components")
+    if components_node is not None:
+        component = components_node.find("component")
+        if component is not None:
+            cameras_component = component.find("cameras")
+            if cameras_component is not None:
+                camera_ids_node = cameras_component.find("camera_ids")
+                if camera_ids_node is None:
+                    camera_ids_node = ET.SubElement(
+                        cameras_component, "camera_ids"
+                    )
+                camera_ids_node.text = " ".join(
+                    str(cid) for cid in master_camera_ids
+                )
+
+    tree.write(str(out_path), encoding="UTF-8", xml_declaration=True)
+
+
 def build_outputs(
     cameras,
     preset_name,
@@ -964,10 +1561,11 @@ def build_outputs(
         "[INFO] pointcloud ply X: +{:.1f} deg".format(POINTCLOUD_PLY_X_DEG)
     )
 
+    view_ids = [view_id for view_id, _, _ in views]
     frames = []
 
     for _, label, mat in cameras:
-        base_name = safe_name(label)
+        base_name = safe_name(strip_view_suffix(label, view_ids))
         mat_scaled = apply_unit_scale(mat, scale_cm)
         mat_world = mat4_mul(world_from_metashape, mat_scaled)
         base_gl = mat4_mul(mat_world, CV_TO_GL)
@@ -983,6 +1581,8 @@ def build_outputs(
                 "file_path": file_name,
                 "c2w_gl": c2w_gl,
                 "c2w_cv": c2w_cv,
+                "source_name": base_name,
+                "view_id": view_id,
             })
 
     return frames, intrinsics
@@ -1013,9 +1613,19 @@ def build_arg_parser():
     )
     ap.add_argument(
         "--format",
-        choices=["transforms", "colmap", "metashape", "realityscan", "all"],
+        choices=[
+            "transforms",
+            "colmap",
+            "metashape",
+            FORMAT_METASHAPE_MULTI,
+            "realityscan",
+            "all",
+        ],
         default="metashape",
-        help="Output format (all=transforms+colmap+metashape+realityscan)",
+        help=(
+            "Output format "
+            "(all=transforms+colmap+metashape+realityscan)"
+        ),
     )
     ap.add_argument(
         "--ext",
@@ -1227,6 +1837,17 @@ def main():
     if args.format in ("realityscan", "all"):
         rs_dir = out_dir / REALITYSCAN_DIR
         export_realityscan_xmp(rs_dir, frames, intrinsics, COLMAP_X_BASE_DEG)
+
+    if args.format == FORMAT_METASHAPE_MULTI:
+        out_multi_xml = out_dir / METASHAPE_MULTI_XML_NAME
+        export_metashape_multi_camera_xml(
+            xml_path,
+            out_multi_xml,
+            frames,
+            intrinsics,
+            args.preset,
+        )
+        print("[OK] Metashape Multi-Camera XML:", out_multi_xml)
 
     if args.format in ("metashape", "all"):
         out_xml = out_dir / "perspective_cams.xml"
