@@ -67,12 +67,146 @@ REALITYSCAN_DIR = "cameras_RealityScan"
 METASHAPE_MULTI_XML_NAME = "perspective_cams_Multi-Camera-System.xml"
 FORMAT_METASHAPE_MULTI = "metashape-multi-camera-system"
 MCS_ROTATION_COVARIANCE_DIAG = 1e-12
-MCS_FISHEYELIKE_NO_XYZ_VIEWS = {"A_D", "A_U", "B", "J"}
+MCS_ROTATION_ACCURACY = "0.10000000000000001"
 MCS_REFERENCE_TEMPLATE_REL = pathlib.Path(
     "data_Metashape_360",
     "perspective_cams_Fisheye",
     METASHAPE_MULTI_XML_NAME,
 )
+MCS_FISHEYELIKE_SLAVE_OFFSETS = {
+    "A_D": {
+        "location": None,
+        "reference_xyz": None,
+        "reference_rotation": (
+            "-30 -1.0000000000000001e-09 1.0000000000000001e-09"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "1 0 0 0 0.86602540378443871 0.49999999999999994 "
+            "0 -0.49999999999999994 0.86602540378443871"
+        ),
+    },
+    "A_U": {
+        "location": None,
+        "reference_xyz": None,
+        "reference_rotation": (
+            "30 1.0000000000000001e-09 -1.0000000000000001e-09"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "1 0 0 0 0.86602540378443871 -0.49999999999999994 "
+            "0 0.49999999999999994 0.86602540378443871"
+        ),
+    },
+    "B": {
+        "location": None,
+        "reference_xyz": None,
+        "reference_rotation": (
+            "-1.0000000000000001e-09 -36 -1.0000000000000001e-09"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "0.80901699437494745 0 0.58778525229247314 0 1 0 "
+            "-0.58778525229247314 -0 0.80901699437494745"
+        ),
+    },
+    "E": {
+        "location": (
+            "0.0016815735845178558 -0.002587362402607621 "
+            "-0.0091133641591967102"
+        ),
+        "reference_xyz": None,
+        "reference_rotation": (
+            "179.999 -36 179.999"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "-0.80901699437494745 9.907600726170916e-17 "
+            "0.58778525229247314 5.0481747134135657e-17 1 "
+            "-9.907600726170916e-17 -0.58778525229247314 "
+            "-5.0481747134135657e-17 -0.80901699437494745"
+        ),
+    },
+    "F": {
+        "location": (
+            "0.0015400348723170199 -0.0024766844652872205 "
+            "-0.008990779308733465"
+        ),
+        "reference_xyz": None,
+        "reference_rotation": (
+            "179.999 1.0000000000000001e-09 179.999"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "-1 1.2246467991473532e-16 -0 1.2246467991473532e-16 "
+            "1 -1.2246467991473532e-16 -1.4997597826618576e-32 "
+            "-1.2246467991473532e-16 -1"
+        ),
+    },
+    "F_D": {
+        "location": (
+            "0.0015154558601237569 -0.0025037968632555573 "
+            "-0.0088901677022376925"
+        ),
+        "reference_xyz": None,
+        "reference_rotation": (
+            "-150 1.0000000000000001e-09 179.999"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "-1 1.2246467991473532e-16 -0 1.0605752387249069e-16 "
+            "0.86602540378443871 0.49999999999999994 "
+            "6.1232339957367648e-17 0.49999999999999994 "
+            "-0.86602540378443871"
+        ),
+    },
+    "F_U": {
+        "location": (
+            "0.0015425475773918887 -0.002487764150421878 "
+            "-0.0091081939841455399"
+        ),
+        "reference_xyz": None,
+        "reference_rotation": (
+            "150 1.0000000000000001e-09 -179.999"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "-1 -1.2246467991473532e-16 0 -1.0605752387249069e-16 "
+            "0.86602540378443871 -0.49999999999999994 "
+            "6.1232339957367648e-17 -0.49999999999999994 "
+            "-0.86602540378443871"
+        ),
+    },
+    "G": {
+        "location": (
+            "0.0015096652640664463 -0.0025136977484785479 "
+            "-0.00912520386006389"
+        ),
+        "reference_xyz": None,
+        "reference_rotation": (
+            "-179.999 36 179.999"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "-0.80901699437494745 9.907600726170916e-17 "
+            "-0.58778525229247314 5.0481747134135657e-17 1 "
+            "9.907600726170916e-17 0.58778525229247314 "
+            "5.0481747134135657e-17 -0.80901699437494745"
+        ),
+    },
+    "J": {
+        "location": None,
+        "reference_xyz": None,
+        "reference_rotation": (
+            "-1.0000000000000001e-09 36 1.0000000000000001e-09"
+        ),
+        "sabc": MCS_ROTATION_ACCURACY,
+        "adjusted_rotation": (
+            "0.80901699437494745 0 -0.58778525229247314 0 1 0 "
+            "0.58778525229247314 0 0.80901699437494745"
+        ),
+    },
+}
 
 # OpenCV camera coords -> OpenGL camera coords.
 CV_TO_GL = [
@@ -1005,6 +1139,54 @@ def _rotation_covariance_text(diagonal):
     )
 
 
+def _set_mcs_slave_offset(sensor, reference_node, preset_name, view_id):
+    location_text = "0 0 0"
+    reference_xyz = ("0", "0", "0")
+    reference_rotation = None
+    reference_sabc = None
+    adjusted_rotation = None
+    if preset_name == PRESET_FISHEYELIKE:
+        offset_cfg = MCS_FISHEYELIKE_SLAVE_OFFSETS.get(view_id, {})
+        location_text = offset_cfg.get("location")
+        reference_xyz = offset_cfg.get("reference_xyz")
+        reference_rotation = offset_cfg.get("reference_rotation")
+        reference_sabc = offset_cfg.get("sabc")
+        adjusted_rotation = offset_cfg.get("adjusted_rotation")
+    if reference_rotation is not None:
+        reference_node.set("rotation", reference_rotation)
+    if reference_sabc is not None:
+        reference_node.set("sabc", reference_sabc)
+    if adjusted_rotation is not None:
+        rotation_node = sensor.find("rotation")
+        if rotation_node is None:
+            rotation_node = ET.SubElement(sensor, "rotation")
+        rotation_node.text = adjusted_rotation
+    if preset_name == PRESET_FISHEYELIKE:
+        rotation_cov_node = sensor.find("rotation_covariance")
+        if rotation_cov_node is not None:
+            sensor.remove(rotation_cov_node)
+
+    location_node = sensor.find("location")
+    if location_text is None:
+        if location_node is not None:
+            sensor.remove(location_node)
+    else:
+        if location_node is None:
+            location_node = ET.SubElement(sensor, "location")
+        location_node.text = location_text
+
+    if reference_xyz is None:
+        for key in ("x", "y", "z", "sxyz"):
+            if key in reference_node.attrib:
+                del reference_node.attrib[key]
+        return
+    reference_node.set("x", reference_xyz[0])
+    reference_node.set("y", reference_xyz[1])
+    reference_node.set("z", reference_xyz[2])
+    if "sxyz" not in reference_node.attrib:
+        reference_node.set("sxyz", "0.10000000000000001")
+
+
 def _extract_view_id(label):
     text = (label or "").upper()
     match = re.search(
@@ -1166,10 +1348,6 @@ def _apply_mcs_template_export(
         if sensor_id not in slave_sensor_ids:
             continue
         view_id = slave_view_by_sensor.get(sensor_id)
-        omit_xyz = (
-            preset_name == PRESET_FISHEYELIKE and
-            view_id in MCS_FISHEYELIKE_NO_XYZ_VIEWS
-        )
         rel_rot = slave_rot_by_sensor.get(sensor_id)
         if rel_rot is None:
             return False
@@ -1191,20 +1369,9 @@ def _apply_mcs_template_export(
             "rotation",
             "{:.15g} {:.15g} {:.15g}".format(omega, phi, kappa),
         )
-        location_node = sensor.find("location")
-        if omit_xyz:
-            if location_node is not None:
-                sensor.remove(location_node)
-            for key in ("x", "y", "z", "sxyz"):
-                if key in reference_node.attrib:
-                    del reference_node.attrib[key]
-        else:
-            if location_node is None:
-                location_node = ET.SubElement(sensor, "location")
-            location_node.text = "0 0 0"
-            reference_node.set("x", "0")
-            reference_node.set("y", "0")
-            reference_node.set("z", "0")
+        _set_mcs_slave_offset(
+            sensor, reference_node, preset_name, view_id
+        )
 
     next_group_id = cameras_node.get("next_group_id", "0")
     camera_component_id = "0"
@@ -1272,30 +1439,6 @@ def export_metashape_multi_camera_xml(
 ):
     if not frames:
         raise ValueError("no frames were generated")
-
-    # MCS export must follow the known-good Metashape template strictly.
-    attempted_templates = []
-    for template_path in _iter_mcs_template_candidates(xml_in_path, out_path):
-        if not template_path.exists():
-            continue
-        attempted_templates.append(template_path)
-        print("[INFO] Trying MCS template:", template_path)
-        if _apply_mcs_template_export(
-            template_path, out_path, frames, preset_name
-        ):
-            print("[OK] MCS template applied:", template_path)
-            return
-    if attempted_templates:
-        raise ValueError(
-            "Found MCS template(s) but they were not compatible with the "
-            "current frame layout. Check input XML and preset."
-        )
-    raise ValueError(
-        "No MCS template was found. Required template path: {}".format(
-            (pathlib.Path(__file__).resolve().parent.parent /
-             MCS_REFERENCE_TEMPLATE_REL)
-        )
-    )
 
     fl_x, fl_y, _, _, width, height = intrinsics
     tree = ET.parse(str(xml_in_path))
@@ -1421,19 +1564,17 @@ def export_metashape_multi_camera_xml(
                     MCS_ROTATION_COVARIANCE_DIAG
                 )
                 omega, phi, kappa = _mat3_to_opk_deg(rel_rot)
-                sigma_deg = math.degrees(
-                    math.sqrt(MCS_ROTATION_COVARIANCE_DIAG)
-                )
-                ET.SubElement(
+                reference_node = ET.SubElement(
                     sensor,
                     "reference",
                     rotation="{:.15g} {:.15g} {:.15g}".format(
                         omega, phi, kappa
                     ),
-                    sa="{:.15g}".format(sigma_deg),
-                    sb="{:.15g}".format(sigma_deg),
-                    sc="{:.15g}".format(sigma_deg),
+                    sabc=MCS_ROTATION_ACCURACY,
                     enabled="true",
+                )
+                _set_mcs_slave_offset(
+                    sensor, reference_node, preset_name, view_id
                 )
         view_to_sensor[view_id] = str(sensor_id)
 
@@ -1763,6 +1904,17 @@ def run_cut(preset_name, cut_in, cut_out):
 def main():
     ap = build_arg_parser()
     args = ap.parse_args()
+
+    if (
+        args.format == FORMAT_METASHAPE_MULTI
+        and args.preset != PRESET_FISHEYELIKE
+    ):
+        print(
+            "[ERR] --format metashape-multi-camera-system "
+            "requires --preset fisheyelike",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     xml_path = pathlib.Path(args.xml).expanduser().resolve()
     if not xml_path.exists():
