@@ -82,8 +82,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "1 0 0 0 0.86602540378443871 0.49999999999999994 "
-            "0 -0.49999999999999994 0.86602540378443871"
+            "1 1.7453292519943295e-11 1.7453292519943295e-11 "
+            "-2.3841685560428086e-11 0.86602191310483012 "
+            "0.50000604598569609 -6.3881819957709397e-12 "
+            "-0.50000604598569609 0.86602191310483012"
         ),
     },
     "A_U": {
@@ -94,8 +96,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "1 0 0 0 0.86602540378443871 -0.49999999999999994 "
-            "0 0.49999999999999994 0.86602540378443871"
+            "1 -1.7453292519943295e-11 -1.7453292519943295e-11 "
+            "6.3880987725495763e-12 0.86602016774919766 "
+            "-0.50000906896940533 2.3841707859244642e-11 "
+            "0.50000906896940533 0.86602016774919766"
         ),
     },
     "B": {
@@ -106,8 +110,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "0.80901699437494745 0 0.58778525229247314 0 1 0 "
-            "-0.58778525229247314 -0 0.80901699437494745"
+            "0.80901699437494745 -1.4120010256431277e-11 "
+            "0.58778525229247314 7.1945045727740908e-12 1 "
+            "1.4120010256431277e-11 -0.58778525229247314 "
+            "-7.1945045727740908e-12 0.80901699437494745"
         ),
     },
     "E": {
@@ -121,10 +127,11 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "-0.80901699437494745 9.907600726170916e-17 "
-            "0.58778525229247314 5.0481747134135657e-17 1 "
-            "-9.907600726170916e-17 -0.58778525229247314 "
-            "-5.0481747134135657e-17 -0.80901699437494745"
+            "-0.80901699425172713 1.4120010255956319e-05 "
+            "0.58778525229247314 7.1945045714363033e-06 "
+            "0.99999999987443222 -1.4120010255956319e-05 "
+            "-0.58778525241804092 -7.1945045714363033e-06 "
+            "-0.80901699425172713"
         ),
     },
     "F": {
@@ -138,9 +145,11 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "-1 1.2246467991473532e-16 -0 1.2246467991473532e-16 "
-            "1 -1.2246467991473532e-16 -1.4997597826618576e-32 "
-            "-1.2246467991473532e-16 -1"
+            "-0.99999999984769128 1.7453292519356215e-05 "
+            "-1.7453292519943295e-11 1.7453292517002544e-05 "
+            "0.99999999969538256 -1.7453292519356215e-05 "
+            "-2.8716412725158887e-10 -1.7453292517002544e-05 "
+            "-0.99999999984769128"
         ),
     },
     "F_D": {
@@ -154,9 +163,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "-1 1.2246467991473532e-16 -0 1.0605752387249069e-16 "
-            "0.86602540378443871 0.49999999999999994 "
-            "6.1232339957367648e-17 0.49999999999999994 "
+            "-0.99999999984769128 1.7453292519356215e-05 "
+            "-1.7453292519943295e-11 1.5114985974797131e-05 "
+            "0.86602540365253555 0.49999999999999994 "
+            "8.7266613746728056e-06 0.49999999992384531 "
             "-0.86602540378443871"
         ),
     },
@@ -171,9 +181,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "-1 -1.2246467991473532e-16 0 -1.0605752387249069e-16 "
-            "0.86602540378443871 -0.49999999999999994 "
-            "6.1232339957367648e-17 -0.49999999999999994 "
+            "-0.99999999984769128 -1.7453292519356215e-05 "
+            "-1.7453292519943295e-11 -1.5114985974797131e-05 "
+            "0.86602540365253555 -0.49999999999999994 "
+            "8.7266613746728056e-06 -0.49999999992384531 "
             "-0.86602540378443871"
         ),
     },
@@ -188,10 +199,11 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "-0.80901699437494745 9.907600726170916e-17 "
-            "-0.58778525229247314 5.0481747134135657e-17 1 "
-            "9.907600726170916e-17 0.58778525229247314 "
-            "5.0481747134135657e-17 -0.80901699437494745"
+            "-0.80901699425172713 1.4120010255956319e-05 "
+            "-0.58778525229247314 7.1945045714363033e-06 "
+            "0.99999999987443222 1.4120010255956319e-05 "
+            "0.58778525241804092 7.1945045714363033e-06 "
+            "-0.80901699425172713"
         ),
     },
     "J": {
@@ -202,8 +214,10 @@ MCS_FISHEYELIKE_SLAVE_OFFSETS = {
         ),
         "sabc": MCS_ROTATION_ACCURACY,
         "adjusted_rotation": (
-            "0.80901699437494745 0 -0.58778525229247314 0 1 0 "
-            "0.58778525229247314 0 0.80901699437494745"
+            "0.80901699437494745 1.4120010256431277e-11 "
+            "-0.58778525229247314 -7.1945045727740908e-12 1 "
+            "1.4120010256431277e-11 0.58778525229247314 "
+            "-7.1945045727740908e-12 0.80901699437494745"
         ),
     },
 }
@@ -1139,6 +1153,64 @@ def _rotation_covariance_text(diagonal):
     )
 
 
+def _opk_deg_to_mat3(omega_deg, phi_deg, kappa_deg):
+    """Convert Omega/Phi/Kappa degrees to rotation matrix (Rz*Ry*Rx)."""
+    omega = math.radians(float(omega_deg))
+    phi = math.radians(float(phi_deg))
+    kappa = math.radians(float(kappa_deg))
+
+    co = math.cos(omega)
+    so = math.sin(omega)
+    cp = math.cos(phi)
+    sp = math.sin(phi)
+    ck = math.cos(kappa)
+    sk = math.sin(kappa)
+
+    rx = [
+        [1.0, 0.0, 0.0],
+        [0.0, co, -so],
+        [0.0, so, co],
+    ]
+    ry = [
+        [cp, 0.0, sp],
+        [0.0, 1.0, 0.0],
+        [-sp, 0.0, cp],
+    ]
+    rz = [
+        [ck, -sk, 0.0],
+        [sk, ck, 0.0],
+        [0.0, 0.0, 1.0],
+    ]
+    return mat3_mul(rz, mat3_mul(ry, rx))
+
+
+def _opk_text_to_rotation_text(opk_text):
+    """Build flattened 3x3 rotation text from OPK text."""
+    parts = str(opk_text).replace(",", " ").split()
+    if len(parts) != 3:
+        return None
+    try:
+        omega, phi, kappa = [float(part) for part in parts]
+    except ValueError:
+        return None
+    rot = _opk_deg_to_mat3(omega, phi, kappa)
+    return " ".join("{:.17g}".format(v) for row in rot for v in row)
+
+
+def _rotation_text_to_opk_text(rotation_text):
+    """Build OPK text from flattened 3x3 rotation text."""
+    parts = str(rotation_text).replace(",", " ").split()
+    if len(parts) != 9:
+        return None
+    try:
+        values = [float(part) for part in parts]
+    except ValueError:
+        return None
+    rot = [values[0:3], values[3:6], values[6:9]]
+    omega, phi, kappa = _mat3_to_opk_deg(rot)
+    return "{:.15g} {:.15g} {:.15g}".format(omega, phi, kappa)
+
+
 def _set_mcs_slave_offset(sensor, reference_node, preset_name, view_id):
     location_text = "0 0 0"
     reference_xyz = ("0", "0", "0")
@@ -1152,6 +1224,19 @@ def _set_mcs_slave_offset(sensor, reference_node, preset_name, view_id):
         reference_rotation = offset_cfg.get("reference_rotation")
         reference_sabc = offset_cfg.get("sabc")
         adjusted_rotation = offset_cfg.get("adjusted_rotation")
+        # Use the same matrix source for both fields to avoid branch flips.
+        if adjusted_rotation is not None:
+            reference_from_adjusted = _rotation_text_to_opk_text(
+                adjusted_rotation
+            )
+            if reference_from_adjusted is not None:
+                reference_rotation = reference_from_adjusted
+        elif reference_rotation is not None:
+            adjusted_from_reference = _opk_text_to_rotation_text(
+                reference_rotation
+            )
+            if adjusted_from_reference is not None:
+                adjusted_rotation = adjusted_from_reference
     if reference_rotation is not None:
         reference_node.set("rotation", reference_rotation)
     if reference_sabc is not None:
