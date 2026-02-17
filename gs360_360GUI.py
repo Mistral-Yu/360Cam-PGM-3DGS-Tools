@@ -682,6 +682,7 @@ class PreviewApp:
         self.msxml_stop_button: Optional[tk.Button] = None
         self.msxml_cut_input_entry: Optional[tk.Entry] = None
         self.msxml_cut_out_entry: Optional[tk.Entry] = None
+        self.msxml_preset_combo: Optional[ttk.Combobox] = None
         self.msxml_points_entry: Optional[tk.Entry] = None
         self.msxml_points_button: Optional[tk.Button] = None
         self.msxml_points_rotate_check: Optional[tk.Checkbutton] = None
@@ -2345,6 +2346,26 @@ class PreviewApp:
             return
         fmt_display = self.msxml_vars["format"].get().strip()
         fmt = MSXML_FORMAT_TO_CLI.get(fmt_display, fmt_display.lower())
+        preset_combo = self.msxml_preset_combo
+        if fmt == "metashape-multi-camera-system":
+            if self.msxml_vars["preset"].get().strip() != "fisheyelike":
+                self.msxml_vars["preset"].set("fisheyelike")
+            if preset_combo is not None:
+                try:
+                    preset_combo.configure(
+                        values=("fisheyelike",),
+                        state="readonly",
+                    )
+                except tk.TclError:
+                    pass
+        elif preset_combo is not None:
+            try:
+                preset_combo.configure(
+                    values=MSXML_PRESET_CHOICES,
+                    state="readonly",
+                )
+            except tk.TclError:
+                pass
         enabled = self._format_allows_points_ply(fmt)
         state = "normal" if enabled else "disabled"
         for widget in (
@@ -2574,6 +2595,7 @@ class PreviewApp:
             width=22,
         )
         preset_combo.grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        self.msxml_preset_combo = preset_combo
 
         row += 1
         tk.Label(params, text="Format / Ext").grid(
@@ -3804,10 +3826,6 @@ class PreviewApp:
         if output_dir:
             cmd.extend(["-o", output_dir])
 
-        preset_value = self.msxml_vars["preset"].get().strip()
-        if preset_value:
-            cmd.extend(["--preset", preset_value])
-
         format_display = self.msxml_vars["format"].get().strip()
         format_value = MSXML_FORMAT_TO_CLI.get(
             format_display, format_display.lower()
@@ -3815,21 +3833,18 @@ class PreviewApp:
         if format_value:
             cmd.extend(["--format", format_value])
 
+        preset_value = self.msxml_vars["preset"].get().strip()
+        if format_value == "metashape-multi-camera-system":
+            preset_value = "fisheyelike"
+            self.msxml_vars["preset"].set(preset_value)
+        if preset_value:
+            cmd.extend(["--preset", preset_value])
+
         if format_value == "metashape-multi-camera-system":
             warn_lines = [
                 "Metashape-Multi-Camera-System output is experimental and "
                 "requires Metashape Pro.",
             ]
-            if (
-                preset_value
-                and preset_value not in {"2views", "fisheyelike"}
-            ):
-                warn_lines.append(
-                    "Recommended presets are '2views' or 'fisheyelike'."
-                )
-                warn_lines.append(
-                    f"You selected preset '{preset_value}'."
-                )
             warn_lines.append("Continue conversion?")
             proceed = messagebox.askokcancel(
                 "gs360_MS360xmlToPersCams",
