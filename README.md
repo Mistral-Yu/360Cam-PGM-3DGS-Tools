@@ -95,3 +95,6 @@ This project is released under the [MIT License](LICENSE). Copyright (c) 2025 Yu
 
 ## TODO / Ideas
 - Flesh out a full GUI walkthrough (tab descriptions, launch parameters, screenshot gallery).
+- Redesign the GUI using PySide or a similar framework
+- Create the workflow using Mermaid notation
+- Fisheye lens calibration and color correction, and extract perspective images directly from fisheye images
