@@ -1,0 +1,1689 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document version="2.3.0">
+  <chunk label="unknown" enabled="true">
+    <sensors next_id="10">
+      <sensor id="0" label="unknown" type="frame">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="1" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>1 1.7453292519943295e-11 1.7453292519943295e-11 -2.3841685560428086e-11 0.86602191310483012 0.50000604598569609 -6.3881819957709397e-12 -0.50000604598569609 0.86602191310483012</rotation>
+        <reference rotation="-30 -1.0000000000000001e-09 1.0000000000000001e-09" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="2" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>1 -1.7453292519943295e-11 -1.7453292519943295e-11 6.3880987725495763e-12 0.86602016774919766 -0.50000906896940533 2.3841707859244642e-11 0.50000906896940533 0.86602016774919766</rotation>
+        <reference rotation="30 1.0000000000000001e-09 -1.0000000000000001e-09" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="3" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>0.80901699437494745 -1.4120010256431277e-11 0.58778525229247314 7.1945045727740908e-12 1 1.4120010256431277e-11 -0.58778525229247314 -7.1945045727740908e-12 0.80901699437494745</rotation>
+        <reference rotation="-1.0000000000000001e-09 -36 -1.0000000000000001e-09" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="4" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>-0.80901699425172713 1.4120010255956319e-05 0.58778525229247314 7.1945045714363033e-06 0.99999999987443222 -1.4120010255956319e-05 -0.58778525241804092 -7.1945045714363033e-06 -0.80901699425172713</rotation>
+        <location>0.0016815735845178558 -0.002587362402607621 -0.0091133641591967102</location>
+        <reference rotation="179.999 -36 179.999" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="5" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>-0.99999999984769128 1.7453292519356215e-05 -1.7453292519943295e-11 1.7453292517002544e-05 0.99999999969538256 -1.7453292519356215e-05 -2.8716412725158887e-10 -1.7453292517002544e-05 -0.99999999984769128</rotation>
+        <location>0.0015400348723170199 -0.0024766844652872205 -0.008990779308733465</location>
+        <reference rotation="179.999 1.0000000000000001e-09 179.999" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="6" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>-0.99999999984769128 1.7453292519356215e-05 -1.7453292519943295e-11 1.5114985974797131e-05 0.86602540365253555 0.49999999999999994 8.7266613746728056e-06 0.49999999992384531 -0.86602540378443871</rotation>
+        <location>0.0015154558601237569 -0.0025037968632555573 -0.0088901677022376925</location>
+        <reference rotation="-150 1.0000000000000001e-09 179.999" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="7" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>-0.99999999984769128 -1.7453292519356215e-05 -1.7453292519943295e-11 -1.5114985974797131e-05 0.86602540365253555 -0.49999999999999994 8.7266613746728056e-06 -0.49999999992384531 -0.86602540378443871</rotation>
+        <location>0.0015425475773918887 -0.002487764150421878 -0.0091081939841455399</location>
+        <reference rotation="150 1.0000000000000001e-09 -179.999" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="8" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>-0.80901699425172713 1.4120010255956319e-05 -0.58778525229247314 7.1945045714363033e-06 0.99999999987443222 1.4120010255956319e-05 0.58778525241804092 7.1945045714363033e-06 -0.80901699425172713</rotation>
+        <location>0.0015096652640664463 -0.0025136977484785479 -0.00912520386006389</location>
+        <reference rotation="-179.999 36 179.999" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+      <sensor id="9" label="unknown" type="frame" master_id="0">
+        <resolution width="1600" height="1600"/>
+        <property name="fixed" value="true"/>
+        <property name="layer_index" value="0"/>
+        <bands>
+          <band label="Red"/>
+          <band label="Green"/>
+          <band label="Blue"/>
+        </bands>
+        <data_type>uint8</data_type>
+        <calibration type="frame" class="initial">
+          <resolution width="1600" height="1600"/>
+          <f>755.55556000000001</f>
+        </calibration>
+        <rotation>0.80901699437494745 1.4120010256431277e-11 -0.58778525229247314 -7.1945045727740908e-12 1 1.4120010256431277e-11 0.58778525229247314 -7.1945045727740908e-12 0.80901699437494745</rotation>
+        <reference rotation="-1.0000000000000001e-09 36 1.0000000000000001e-09" sabc="0.10000000000000001" enabled="true"/>
+        <black_level>0 0 0</black_level>
+        <sensitivity>1 1 1</sensitivity>
+      </sensor>
+    </sensors>
+    <components next_id="1" active_id="0">
+      <component id="0" label="Component 1">
+        <transform>
+          <scale locked="false">0.19341704876581711</scale>
+        </transform>
+        <region>
+          <center>0.74194638387268996 1.9108809733194114 0.50745107873176021</center>
+          <size>27.602923488137286 28.276112067485492 20.830073779066591</size>
+          <R>-0.5798233693520628 -0.081294811045045337 0.81067626957397232 -0.76786733809737218 -0.2781058535705358 -0.57709348054978038 0.27236852137586842 -0.95710411549995666 0.098828642895512478</R>
+        </region>
+        <partition>
+          <camera_ids>0 10 20 30 40 50 60 70 80 90 100 110 120 130 140 150 160 170 180 190 200 210 220 230 240 250 260 270 280 290 300 310 320 330 340 350 360 370 380 390 400 410 420 430 440 450 460 470 480 490 500 510 520 530 540 550 560 570 580 590 600 610 620 630 640 650 660 670 680 690 700 710 720 730 740 750 760 770 780 790 800 810 820 830 840 850 860 870 880 890 900 910 920 930 940 950 960 970 980 990 1000 1010 1020</camera_ids>
+        </partition>
+      </component>
+    </components>
+    <cameras next_id="1030" next_group_id="0">
+      <camera id="0" sensor_id="0" component_id="0" label="out_0000008_A">
+        <transform>0.82457832453076052 0.025688942310998424 -0.56516428138815178 -0.94728858621052237 0.013423727841828371 -0.99957571737344042 -0.025849347539137871 -0.069071571281774491 -0.56558853440011692 0.01372820018475859 -0.82457331164355241 0.0060313792736760123 0 0 0 1</transform>
+      </camera>
+      <camera id="1" sensor_id="1" component_id="0" master_id="0" label="out_0000008_A_D"/>
+      <camera id="2" sensor_id="2" component_id="0" master_id="0" label="out_0000008_A_U"/>
+      <camera id="3" sensor_id="3" component_id="0" master_id="0" label="out_0000008_B"/>
+      <camera id="4" sensor_id="4" component_id="0" master_id="0" label="out_0000008_E"/>
+      <camera id="5" sensor_id="5" component_id="0" master_id="0" label="out_0000008_F"/>
+      <camera id="6" sensor_id="6" component_id="0" master_id="0" label="out_0000008_F_D"/>
+      <camera id="7" sensor_id="7" component_id="0" master_id="0" label="out_0000008_F_U"/>
+      <camera id="8" sensor_id="8" component_id="0" master_id="0" label="out_0000008_G"/>
+      <camera id="9" sensor_id="9" component_id="0" master_id="0" label="out_0000008_J"/>
+      <camera id="10" sensor_id="0" component_id="0" label="out_0000013_A">
+        <transform>0.7501022376393629 -0.0071706002728581086 -0.66128300717631383 -1.173968148311709 -0.025250602214061602 -0.99952260178659835 -0.017803808737929902 -0.016785201767879634 -0.66083964785434091 0.030052470937951985 -0.74992520214637037 -0.3336535609120404 0 0 0 1</transform>
+        <rotation_covariance>4.1803042233467702e-10 -2.0221278056899383e-11 -7.2201783809773626e-11 -2.022127805689938e-11 3.6314493070137941e-10 -4.2187493514157677e-11 -7.2201783809773626e-11 -4.2187493514157683e-11 3.5763505673240831e-10</rotation_covariance>
+        <location_covariance>2.2090835066807615e-08 -5.7183330239452225e-09 2.405489980465216e-08 -5.7183330239452225e-09 4.7342508817798152e-09 -6.1219919425329497e-09 2.405489980465216e-08 -6.1219919425329497e-09 3.8454050185484867e-08</location_covariance>
+      </camera>
+      <camera id="11" sensor_id="1" component_id="0" master_id="10" label="out_0000013_A_D"/>
+      <camera id="12" sensor_id="2" component_id="0" master_id="10" label="out_0000013_A_U"/>
+      <camera id="13" sensor_id="3" component_id="0" master_id="10" label="out_0000013_B"/>
+      <camera id="14" sensor_id="4" component_id="0" master_id="10" label="out_0000013_E"/>
+      <camera id="15" sensor_id="5" component_id="0" master_id="10" label="out_0000013_F"/>
+      <camera id="16" sensor_id="6" component_id="0" master_id="10" label="out_0000013_F_D"/>
+      <camera id="17" sensor_id="7" component_id="0" master_id="10" label="out_0000013_F_U"/>
+      <camera id="18" sensor_id="8" component_id="0" master_id="10" label="out_0000013_G"/>
+      <camera id="19" sensor_id="9" component_id="0" master_id="10" label="out_0000013_J"/>
+      <camera id="20" sensor_id="0" component_id="0" label="out_0000016_A">
+        <transform>0.96045661224664913 0.033235716427961012 -0.27643893203601055 -1.3003939594787208 0.042897650525421265 -0.9986591837858505 0.028976304449974677 -0.023101628492327671 -0.27510522999588494 -0.039689063905551547 -0.96059455059625032 -0.49380568981889561 0 0 0 1</transform>
+        <rotation_covariance>6.589911289804214e-10 -4.0298089568964922e-11 1.4368965359913012e-10 -4.0298089568964922e-11 7.6356767150327197e-10 -1.08404764390562e-10 1.4368965359913017e-10 -1.0840476439056198e-10 6.1201643875708326e-10</rotation_covariance>
+        <location_covariance>4.9107704168840358e-08 -6.7523551998419288e-09 4.9224202629820595e-08 -6.7523551998419288e-09 8.9552503646257603e-09 -6.385595438394403e-09 4.9224202629820595e-08 -6.385595438394403e-09 7.5503830768069218e-08</location_covariance>
+      </camera>
+      <camera id="21" sensor_id="1" component_id="0" master_id="20" label="out_0000016_A_D"/>
+      <camera id="22" sensor_id="2" component_id="0" master_id="20" label="out_0000016_A_U"/>
+      <camera id="23" sensor_id="3" component_id="0" master_id="20" label="out_0000016_B"/>
+      <camera id="24" sensor_id="4" component_id="0" master_id="20" label="out_0000016_E"/>
+      <camera id="25" sensor_id="5" component_id="0" master_id="20" label="out_0000016_F"/>
+      <camera id="26" sensor_id="6" component_id="0" master_id="20" label="out_0000016_F_D"/>
+      <camera id="27" sensor_id="7" component_id="0" master_id="20" label="out_0000016_F_U"/>
+      <camera id="28" sensor_id="8" component_id="0" master_id="20" label="out_0000016_G"/>
+      <camera id="29" sensor_id="9" component_id="0" master_id="20" label="out_0000016_J"/>
+      <camera id="30" sensor_id="0" component_id="0" label="out_0000020_A">
+        <transform>0.88708268648115673 0.11235979493732584 0.44772713099276956 -1.0426493656075093 0.11078107695024411 -0.99339771380101938 0.029808307644881682 -0.052320059272703945 0.44812036366931446 0.023157260126143775 -0.89367325179191281 -0.72840181962796868 0 0 0 1</transform>
+        <rotation_covariance>7.1421646187532297e-10 -3.4951882535774557e-11 3.3695951732946432e-11 -3.4951882535774583e-11 1.0543471223779759e-09 -5.8511610041249971e-11 3.3695951732946432e-11 -5.8511610041249971e-11 1.0627527175270033e-09</rotation_covariance>
+        <location_covariance>2.7319143217824714e-08 -4.570751903865259e-09 2.0929407558712933e-08 -4.570751903865259e-09 1.2334082571346465e-08 -5.5426285381220366e-09 2.0929407558712933e-08 -5.5426285381220366e-09 1.553966857526132e-07</location_covariance>
+      </camera>
+      <camera id="31" sensor_id="1" component_id="0" master_id="30" label="out_0000020_A_D"/>
+      <camera id="32" sensor_id="2" component_id="0" master_id="30" label="out_0000020_A_U"/>
+      <camera id="33" sensor_id="3" component_id="0" master_id="30" label="out_0000020_B"/>
+      <camera id="34" sensor_id="4" component_id="0" master_id="30" label="out_0000020_E"/>
+      <camera id="35" sensor_id="5" component_id="0" master_id="30" label="out_0000020_F"/>
+      <camera id="36" sensor_id="6" component_id="0" master_id="30" label="out_0000020_F_D"/>
+      <camera id="37" sensor_id="7" component_id="0" master_id="30" label="out_0000020_F_U"/>
+      <camera id="38" sensor_id="8" component_id="0" master_id="30" label="out_0000020_G"/>
+      <camera id="39" sensor_id="9" component_id="0" master_id="30" label="out_0000020_J"/>
+      <camera id="40" sensor_id="0" component_id="0" label="out_0000026_A">
+        <transform>-0.43433927343358292 0.11659379855758263 0.89317147384536466 -0.61207754132315861 0.065496024802141395 -0.98487432225206217 0.16041458818841367 -0.040996189589246834 0.89836499613926668 0.12817353668544418 0.42013316722824978 -0.72777913817044482 0 0 0 1</transform>
+        <rotation_covariance>1.0198797401414507e-09 7.4386269090240247e-11 -7.3556997201717654e-11 7.4386269090240247e-11 1.0331608251045586e-09 -1.2080934834090717e-10 -7.3556997201717654e-11 -1.2080934834090717e-10 1.4647750485159442e-09</rotation_covariance>
+        <location_covariance>5.0068606761062667e-08 -1.863401833476505e-09 -5.7183603614128527e-08 -1.863401833476505e-09 9.3671112247277681e-09 -3.6625461841092276e-09 -5.7183603614128527e-08 -3.6625461841092276e-09 1.5887112074147626e-07</location_covariance>
+      </camera>
+      <camera id="41" sensor_id="1" component_id="0" master_id="40" label="out_0000026_A_D"/>
+      <camera id="42" sensor_id="2" component_id="0" master_id="40" label="out_0000026_A_U"/>
+      <camera id="43" sensor_id="3" component_id="0" master_id="40" label="out_0000026_B"/>
+      <camera id="44" sensor_id="4" component_id="0" master_id="40" label="out_0000026_E"/>
+      <camera id="45" sensor_id="5" component_id="0" master_id="40" label="out_0000026_F"/>
+      <camera id="46" sensor_id="6" component_id="0" master_id="40" label="out_0000026_F_D"/>
+      <camera id="47" sensor_id="7" component_id="0" master_id="40" label="out_0000026_F_U"/>
+      <camera id="48" sensor_id="8" component_id="0" master_id="40" label="out_0000026_G"/>
+      <camera id="49" sensor_id="9" component_id="0" master_id="40" label="out_0000026_J"/>
+      <camera id="50" sensor_id="0" component_id="0" label="out_0000029_A">
+        <transform>-0.79715452708010892 0.087908389467357101 0.5973414224854523 -0.52566892990780256 0.025350046282748465 -0.98359840709228574 0.17858205038295613 0.00040845150932186604 0.60324293208387525 0.15750012262463078 0.78185144130075968 -0.42977058991014672 0 0 0 1</transform>
+        <rotation_covariance>8.5518199800521761e-10 2.793181862645291e-11 1.710061185164344e-11 2.7931818626452923e-11 6.3350126870078226e-10 7.0819552734618011e-12 1.7100611851643389e-11 7.0819552734618011e-12 8.4527311550839331e-10</rotation_covariance>
+        <location_covariance>5.8527214073580396e-08 5.500860279689409e-09 -4.5529005836982367e-08 5.500860279689409e-09 7.3993303151604596e-09 -7.0467678469397847e-09 -4.5529005836982367e-08 -7.0467678469397847e-09 5.9466661325019075e-08</location_covariance>
+      </camera>
+      <camera id="51" sensor_id="1" component_id="0" master_id="50" label="out_0000029_A_D"/>
+      <camera id="52" sensor_id="2" component_id="0" master_id="50" label="out_0000029_A_U"/>
+      <camera id="53" sensor_id="3" component_id="0" master_id="50" label="out_0000029_B"/>
+      <camera id="54" sensor_id="4" component_id="0" master_id="50" label="out_0000029_E"/>
+      <camera id="55" sensor_id="5" component_id="0" master_id="50" label="out_0000029_F"/>
+      <camera id="56" sensor_id="6" component_id="0" master_id="50" label="out_0000029_F_D"/>
+      <camera id="57" sensor_id="7" component_id="0" master_id="50" label="out_0000029_F_U"/>
+      <camera id="58" sensor_id="8" component_id="0" master_id="50" label="out_0000029_G"/>
+      <camera id="59" sensor_id="9" component_id="0" master_id="50" label="out_0000029_J"/>
+      <camera id="60" sensor_id="0" component_id="0" label="out_0000037_A">
+        <transform>-0.96519541430076305 0.089473614393855483 0.24574841716698281 -0.28454721525809945 -0.046099856966441415 -0.98315026505140635 0.17689081241552129 0.087401741602972219 0.25743468181356488 0.15940523409427032 0.95305684822202474 0.57345516008390229 0 0 0 1</transform>
+        <rotation_covariance>8.6476653852699192e-10 1.0756458112463367e-11 1.3218486699317747e-10 1.0756458112463351e-11 5.3138905357245965e-10 3.0577072270550954e-12 1.3218486699317747e-10 3.0577072270550825e-12 6.0111649213596301e-10</rotation_covariance>
+        <location_covariance>1.2565124793873526e-07 2.2841047617573807e-08 9.7312401273496407e-08 2.2841047617573807e-08 1.3738815268102457e-08 2.0583990974310806e-08 9.7312401273496407e-08 2.0583990974310806e-08 9.6766684692800054e-08</location_covariance>
+      </camera>
+      <camera id="61" sensor_id="1" component_id="0" master_id="60" label="out_0000037_A_D"/>
+      <camera id="62" sensor_id="2" component_id="0" master_id="60" label="out_0000037_A_U"/>
+      <camera id="63" sensor_id="3" component_id="0" master_id="60" label="out_0000037_B"/>
+      <camera id="64" sensor_id="4" component_id="0" master_id="60" label="out_0000037_E"/>
+      <camera id="65" sensor_id="5" component_id="0" master_id="60" label="out_0000037_F"/>
+      <camera id="66" sensor_id="6" component_id="0" master_id="60" label="out_0000037_F_D"/>
+      <camera id="67" sensor_id="7" component_id="0" master_id="60" label="out_0000037_F_U"/>
+      <camera id="68" sensor_id="8" component_id="0" master_id="60" label="out_0000037_G"/>
+      <camera id="69" sensor_id="9" component_id="0" master_id="60" label="out_0000037_J"/>
+      <camera id="70" sensor_id="0" component_id="0" label="out_0000040_A">
+        <transform>-0.97904650927598902 0.073527782148938375 0.18989891502259684 -0.26914903986604427 -0.03810934356366627 -0.98221861031797575 0.18383220468180267 0.15119632662464053 0.20003902271218896 0.17274335529126417 0.96443979728911478 1.0017207943409157 0 0 0 1</transform>
+        <rotation_covariance>8.4289947751678314e-10 6.4273690801378108e-12 1.3106889214472396e-10 6.427369080137814e-12 5.0794612994159641e-10 3.457685776096505e-12 1.3106889214472398e-10 3.4576857760965179e-12 5.6428268414317148e-10</rotation_covariance>
+        <location_covariance>1.3120866764279629e-07 3.3390592336262697e-08 1.7054278898582765e-07 3.3390592336262697e-08 2.0068099137981382e-08 5.2897900037909055e-08 1.7054278898582765e-07 5.2897900037909055e-08 2.6365960813569317e-07</location_covariance>
+      </camera>
+      <camera id="71" sensor_id="1" component_id="0" master_id="70" label="out_0000040_A_D"/>
+      <camera id="72" sensor_id="2" component_id="0" master_id="70" label="out_0000040_A_U"/>
+      <camera id="73" sensor_id="3" component_id="0" master_id="70" label="out_0000040_B"/>
+      <camera id="74" sensor_id="4" component_id="0" master_id="70" label="out_0000040_E"/>
+      <camera id="75" sensor_id="5" component_id="0" master_id="70" label="out_0000040_F"/>
+      <camera id="76" sensor_id="6" component_id="0" master_id="70" label="out_0000040_F_D"/>
+      <camera id="77" sensor_id="7" component_id="0" master_id="70" label="out_0000040_F_U"/>
+      <camera id="78" sensor_id="8" component_id="0" master_id="70" label="out_0000040_G"/>
+      <camera id="79" sensor_id="9" component_id="0" master_id="70" label="out_0000040_J"/>
+      <camera id="80" sensor_id="0" component_id="0" label="out_0000048_A">
+        <transform>-0.92622653765532892 0.11839070525745443 0.35789389747754025 -0.054788804616249263 -0.061213469370312412 -0.98403815849378773 0.16709821601622646 0.25828928072966667 0.37196412745138652 0.13286287493802854 0.91868936227243336 2.2389338242131185 0 0 0 1</transform>
+        <rotation_covariance>1.0003171995566164e-09 -2.4484418607886767e-11 4.908679863739928e-11 -2.448441860788676e-11 7.0364288037981142e-10 7.8048629527752871e-12 4.9086798637399332e-11 7.8048629527752742e-12 6.018398173395456e-10</rotation_covariance>
+        <location_covariance>2.2147754473490398e-07 6.6643266664168178e-08 4.9256276012039585e-07 6.6643266664168178e-08 3.7205984371852305e-08 1.7648217367679213e-07 4.9256276012039585e-07 1.7648217367679213e-07 1.248082743941422e-06</location_covariance>
+      </camera>
+      <camera id="81" sensor_id="1" component_id="0" master_id="80" label="out_0000048_A_D"/>
+      <camera id="82" sensor_id="2" component_id="0" master_id="80" label="out_0000048_A_U"/>
+      <camera id="83" sensor_id="3" component_id="0" master_id="80" label="out_0000048_B"/>
+      <camera id="84" sensor_id="4" component_id="0" master_id="80" label="out_0000048_E"/>
+      <camera id="85" sensor_id="5" component_id="0" master_id="80" label="out_0000048_F"/>
+      <camera id="86" sensor_id="6" component_id="0" master_id="80" label="out_0000048_F_D"/>
+      <camera id="87" sensor_id="7" component_id="0" master_id="80" label="out_0000048_F_U"/>
+      <camera id="88" sensor_id="8" component_id="0" master_id="80" label="out_0000048_G"/>
+      <camera id="89" sensor_id="9" component_id="0" master_id="80" label="out_0000048_J"/>
+      <camera id="90" sensor_id="0" component_id="0" label="out_0000051_A">
+        <transform>-0.87136772777169125 0.17196718425776159 0.45950578944824755 0.17306022571383775 -0.0862396675657012 -0.97566422830366606 0.20159869381216028 0.29049936882842592 0.48299172118801109 0.13603896922231101 0.864992714487685 2.6113887677471448 0 0 0 1</transform>
+        <rotation_covariance>1.1187265812772847e-09 -4.3848428343046631e-11 -1.2940972892714179e-11 -4.3848428343046631e-11 7.7469158883268995e-10 -4.0147334938792025e-12 -1.2940972892714231e-11 -4.0147334938791767e-12 7.0435186773363918e-10</rotation_covariance>
+        <location_covariance>3.3390143182084078e-07 9.3351404467671728e-08 7.1828946041581859e-07 9.3351404467671728e-08 4.3993839923422496e-08 2.2494050772762257e-07 7.1828946041581859e-07 2.2494050772762257e-07 1.693333416462826e-06</location_covariance>
+      </camera>
+      <camera id="91" sensor_id="1" component_id="0" master_id="90" label="out_0000051_A_D"/>
+      <camera id="92" sensor_id="2" component_id="0" master_id="90" label="out_0000051_A_U"/>
+      <camera id="93" sensor_id="3" component_id="0" master_id="90" label="out_0000051_B"/>
+      <camera id="94" sensor_id="4" component_id="0" master_id="90" label="out_0000051_E"/>
+      <camera id="95" sensor_id="5" component_id="0" master_id="90" label="out_0000051_F"/>
+      <camera id="96" sensor_id="6" component_id="0" master_id="90" label="out_0000051_F_D"/>
+      <camera id="97" sensor_id="7" component_id="0" master_id="90" label="out_0000051_F_U"/>
+      <camera id="98" sensor_id="8" component_id="0" master_id="90" label="out_0000051_G"/>
+      <camera id="99" sensor_id="9" component_id="0" master_id="90" label="out_0000051_J"/>
+      <camera id="100" sensor_id="0" component_id="0" label="out_0000056_A">
+        <transform>-0.35469728959299235 0.19732782709328056 0.91392098203839756 0.50734418652933377 0.039955594194025584 -0.97338328548856856 0.22567350315019952 0.37088439616388974 0.93412707018263152 0.11656203578406307 0.33737206251538915 2.9847763507442342 0 0 0 1</transform>
+        <rotation_covariance>1.1195919302944111e-09 -5.7278632999279371e-11 -2.6997543509088421e-10 -5.7278632999279423e-11 1.075259815559982e-09 1.0433479942620383e-10 -2.69975435090884e-10 1.0433479942620378e-10 1.0656288057597858e-09</rotation_covariance>
+        <location_covariance>5.4977249348586304e-07 1.5000777070215274e-07 1.064126393880195e-06 1.5000777070215274e-07 6.7158329701096794e-08 3.1928372430131799e-07 1.064126393880195e-06 3.1928372430131799e-07 2.2175679357369288e-06</location_covariance>
+      </camera>
+      <camera id="101" sensor_id="1" component_id="0" master_id="100" label="out_0000056_A_D"/>
+      <camera id="102" sensor_id="2" component_id="0" master_id="100" label="out_0000056_A_U"/>
+      <camera id="103" sensor_id="3" component_id="0" master_id="100" label="out_0000056_B"/>
+      <camera id="104" sensor_id="4" component_id="0" master_id="100" label="out_0000056_E"/>
+      <camera id="105" sensor_id="5" component_id="0" master_id="100" label="out_0000056_F"/>
+      <camera id="106" sensor_id="6" component_id="0" master_id="100" label="out_0000056_F_D"/>
+      <camera id="107" sensor_id="7" component_id="0" master_id="100" label="out_0000056_F_U"/>
+      <camera id="108" sensor_id="8" component_id="0" master_id="100" label="out_0000056_G"/>
+      <camera id="109" sensor_id="9" component_id="0" master_id="100" label="out_0000056_J"/>
+      <camera id="110" sensor_id="0" component_id="0" label="out_0000060_A">
+        <transform>0.35478721693405402 0.17708669192312462 0.91802305757748393 0.75679128172446286 0.029728682282657633 -0.98353867704470321 0.17823545159953885 0.36847392248194838 0.9344743100534787 -0.035944044025109728 -0.35421150397636147 2.9379498108783451 0 0 0 1</transform>
+        <rotation_covariance>8.6408969589560494e-10 -2.2579120648768673e-11 -5.7563487345983965e-11 -2.2579120648768647e-11 1.1759464770994038e-09 6.3968727358077668e-11 -5.756348734598381e-11 6.3968727358077668e-11 1.4127534405037889e-09</rotation_covariance>
+        <location_covariance>7.5753812346179777e-07 1.7305407421905094e-07 1.2235442399363412e-06 1.7305407421905094e-07 7.0099533294903718e-08 3.1098734042224285e-07 1.2235442399363412e-06 3.1098734042224285e-07 2.1576443032010181e-06</location_covariance>
+      </camera>
+      <camera id="111" sensor_id="1" component_id="0" master_id="110" label="out_0000060_A_D"/>
+      <camera id="112" sensor_id="2" component_id="0" master_id="110" label="out_0000060_A_U"/>
+      <camera id="113" sensor_id="3" component_id="0" master_id="110" label="out_0000060_B"/>
+      <camera id="114" sensor_id="4" component_id="0" master_id="110" label="out_0000060_E"/>
+      <camera id="115" sensor_id="5" component_id="0" master_id="110" label="out_0000060_F"/>
+      <camera id="116" sensor_id="6" component_id="0" master_id="110" label="out_0000060_F_D"/>
+      <camera id="117" sensor_id="7" component_id="0" master_id="110" label="out_0000060_F_U"/>
+      <camera id="118" sensor_id="8" component_id="0" master_id="110" label="out_0000060_G"/>
+      <camera id="119" sensor_id="9" component_id="0" master_id="110" label="out_0000060_J"/>
+      <camera id="120" sensor_id="0" component_id="0" label="out_0000066_A">
+        <transform>0.99915697078651378 -0.039562056767897813 0.01096318352539799 0.8358457394852008 -0.040202367782530141 -0.99700017441154964 0.066139412214034798 0.33739138596689466 0.0083136847063205871 -0.066524400693530855 -0.99775016249508586 2.4782039232162196 0 0 0 1</transform>
+        <rotation_covariance>8.1472144039496598e-10 1.1608865459283633e-10 1.6639194644782383e-10 1.1608865459283629e-10 9.2474962659496244e-10 1.5695212939560837e-11 1.6639194644782383e-10 1.569521293956085e-11 8.4323556624680899e-10</rotation_covariance>
+        <location_covariance>7.9861673641968535e-07 1.7111780947864149e-07 1.0861386573463223e-06 1.7111780947864149e-07 5.5198552256554838e-08 2.4384480425236352e-07 1.0861386573463223e-06 2.4384480425236352e-07 1.5239605118413982e-06</location_covariance>
+      </camera>
+      <camera id="121" sensor_id="1" component_id="0" master_id="120" label="out_0000066_A_D"/>
+      <camera id="122" sensor_id="2" component_id="0" master_id="120" label="out_0000066_A_U"/>
+      <camera id="123" sensor_id="3" component_id="0" master_id="120" label="out_0000066_B"/>
+      <camera id="124" sensor_id="4" component_id="0" master_id="120" label="out_0000066_E"/>
+      <camera id="125" sensor_id="5" component_id="0" master_id="120" label="out_0000066_F"/>
+      <camera id="126" sensor_id="6" component_id="0" master_id="120" label="out_0000066_F_D"/>
+      <camera id="127" sensor_id="7" component_id="0" master_id="120" label="out_0000066_F_U"/>
+      <camera id="128" sensor_id="8" component_id="0" master_id="120" label="out_0000066_G"/>
+      <camera id="129" sensor_id="9" component_id="0" master_id="120" label="out_0000066_J"/>
+      <camera id="130" sensor_id="0" component_id="0" label="out_0000069_A">
+        <transform>0.98375461389178875 -0.0404601747667762 -0.17489949658149551 0.61980396706108909 -0.034952783462830463 -0.99879479499305712 0.034456645556080023 0.27517407859210485 -0.17608282873357958 -0.0277836598132567 -0.98398318363301407 2.1634827644631569 0 0 0 1</transform>
+        <rotation_covariance>7.341749910235428e-10 5.7431845215108869e-11 1.3332125472490061e-10 5.7431845215108862e-11 7.0474872396125097e-10 -2.4245366711853502e-11 1.3332125472490066e-10 -2.4245366711853502e-11 6.2343680961959217e-10</rotation_covariance>
+        <location_covariance>6.1795472808855237e-07 1.2638094030814587e-07 8.3230712984811353e-07 1.2638094030814587e-07 4.0800201664248957e-08 1.7953820109283218e-07 8.3230712984811353e-07 1.7953820109283218e-07 1.1578711640513761e-06</location_covariance>
+      </camera>
+      <camera id="131" sensor_id="1" component_id="0" master_id="130" label="out_0000069_A_D"/>
+      <camera id="132" sensor_id="2" component_id="0" master_id="130" label="out_0000069_A_U"/>
+      <camera id="133" sensor_id="3" component_id="0" master_id="130" label="out_0000069_B"/>
+      <camera id="134" sensor_id="4" component_id="0" master_id="130" label="out_0000069_E"/>
+      <camera id="135" sensor_id="5" component_id="0" master_id="130" label="out_0000069_F"/>
+      <camera id="136" sensor_id="6" component_id="0" master_id="130" label="out_0000069_F_D"/>
+      <camera id="137" sensor_id="7" component_id="0" master_id="130" label="out_0000069_F_U"/>
+      <camera id="138" sensor_id="8" component_id="0" master_id="130" label="out_0000069_G"/>
+      <camera id="139" sensor_id="9" component_id="0" master_id="130" label="out_0000069_J"/>
+      <camera id="140" sensor_id="0" component_id="0" label="out_0000071_A">
+        <transform>0.98449023678249481 -0.076542236117574922 -0.15786152086582161 0.50507176311262347 -0.072472163258840289 -0.99687640028458224 0.031388343508973238 0.2538550885646691 -0.1597709586643731 -0.019460951820882755 -0.98696226479115845 1.9496025103714532 0 0 0 1</transform>
+        <rotation_covariance>7.1512690030852279e-10 3.877162079595745e-11 1.3126596012646948e-10 3.877162079595745e-11 6.4050091235717185e-10 -2.7173032979170818e-11 1.312659601264694e-10 -2.7173032979170824e-11 6.0225645990815234e-10</rotation_covariance>
+        <location_covariance>5.3262355158069316e-07 1.0929499080451452e-07 6.9565770421968589e-07 1.0929499080451452e-07 3.6345783446752163e-08 1.5163629146168218e-07 6.9565770421968589e-07 1.5163629146168218e-07 9.4202442083696067e-07</location_covariance>
+      </camera>
+      <camera id="141" sensor_id="1" component_id="0" master_id="140" label="out_0000071_A_D"/>
+      <camera id="142" sensor_id="2" component_id="0" master_id="140" label="out_0000071_A_U"/>
+      <camera id="143" sensor_id="3" component_id="0" master_id="140" label="out_0000071_B"/>
+      <camera id="144" sensor_id="4" component_id="0" master_id="140" label="out_0000071_E"/>
+      <camera id="145" sensor_id="5" component_id="0" master_id="140" label="out_0000071_F"/>
+      <camera id="146" sensor_id="6" component_id="0" master_id="140" label="out_0000071_F_D"/>
+      <camera id="147" sensor_id="7" component_id="0" master_id="140" label="out_0000071_F_U"/>
+      <camera id="148" sensor_id="8" component_id="0" master_id="140" label="out_0000071_G"/>
+      <camera id="149" sensor_id="9" component_id="0" master_id="140" label="out_0000071_J"/>
+      <camera id="150" sensor_id="0" component_id="0" label="out_0000077_A">
+        <transform>0.99738993310555824 -0.02271111124811484 -0.068538505714422243 0.21938190890511139 -0.021384823669048841 -0.99957078963765011 0.020023132117849285 0.13224454392827517 -0.068963835858613765 -0.0185051865443428 -0.99744751612033467 1.1642492396006807 0 0 0 1</transform>
+        <rotation_covariance>6.6448829647498877e-10 2.4035020854880148e-11 1.5124576571684912e-10 2.4035020854880154e-11 5.9700824205461428e-10 -5.4752927879579606e-12 1.5124576571684912e-10 -5.4752927879579614e-12 6.3687474704514568e-10</rotation_covariance>
+        <location_covariance>3.4908892167122969e-07 5.3854294085274851e-08 3.3764784041781378e-07 5.3854294085274851e-08 1.8669898769240249e-08 5.6426554164190001e-08 3.3764784041781378e-07 5.6426554164190001e-08 3.4641097625789457e-07</location_covariance>
+      </camera>
+      <camera id="151" sensor_id="1" component_id="0" master_id="150" label="out_0000077_A_D"/>
+      <camera id="152" sensor_id="2" component_id="0" master_id="150" label="out_0000077_A_U"/>
+      <camera id="153" sensor_id="3" component_id="0" master_id="150" label="out_0000077_B"/>
+      <camera id="154" sensor_id="4" component_id="0" master_id="150" label="out_0000077_E"/>
+      <camera id="155" sensor_id="5" component_id="0" master_id="150" label="out_0000077_F"/>
+      <camera id="156" sensor_id="6" component_id="0" master_id="150" label="out_0000077_F_D"/>
+      <camera id="157" sensor_id="7" component_id="0" master_id="150" label="out_0000077_F_U"/>
+      <camera id="158" sensor_id="8" component_id="0" master_id="150" label="out_0000077_G"/>
+      <camera id="159" sensor_id="9" component_id="0" master_id="150" label="out_0000077_J"/>
+      <camera id="160" sensor_id="0" component_id="0" label="out_0000080_A">
+        <transform>0.9984910629439292 -0.028812181984234485 0.046748854428843932 0.11507742190162749 -0.028871885807724266 -0.99958293878353643 0.00060224810056158651 0.097540018427751354 0.046712005212874511 -0.0019510669327970631 -0.99890649307471036 0.73051714383189148 0 0 0 1</transform>
+        <rotation_covariance>6.1355911890533803e-10 5.3472623913226905e-12 1.0445809746210009e-10 5.3472623913226954e-12 5.7316791984489219e-10 -2.7820568998708367e-11 1.0445809746210008e-10 -2.782056899870837e-11 6.6391058298792458e-10</rotation_covariance>
+        <location_covariance>2.9180733186394917e-07 3.9937745470931814e-08 1.9405977241168162e-07 3.9937745470931814e-08 1.4594488188560671e-08 2.8637864614889266e-08 1.9405977241168162e-07 2.8637864614889266e-08 1.4456996502073029e-07</location_covariance>
+      </camera>
+      <camera id="161" sensor_id="1" component_id="0" master_id="160" label="out_0000080_A_D"/>
+      <camera id="162" sensor_id="2" component_id="0" master_id="160" label="out_0000080_A_U"/>
+      <camera id="163" sensor_id="3" component_id="0" master_id="160" label="out_0000080_B"/>
+      <camera id="164" sensor_id="4" component_id="0" master_id="160" label="out_0000080_E"/>
+      <camera id="165" sensor_id="5" component_id="0" master_id="160" label="out_0000080_F"/>
+      <camera id="166" sensor_id="6" component_id="0" master_id="160" label="out_0000080_F_D"/>
+      <camera id="167" sensor_id="7" component_id="0" master_id="160" label="out_0000080_F_U"/>
+      <camera id="168" sensor_id="8" component_id="0" master_id="160" label="out_0000080_G"/>
+      <camera id="169" sensor_id="9" component_id="0" master_id="160" label="out_0000080_J"/>
+      <camera id="170" sensor_id="0" component_id="0" label="out_0000085_A">
+        <transform>0.9999983542640063 -0.0016142602670106076 0.00082802963067048132 0.020705834275413476 -0.0016142060341282486 -0.9999986949799865 -6.6160431157384376e-05 0.0060186519213764906 0.00082813535023050738 6.4823711848516181e-05 -0.99999965499480448 -0.0005308999497171859 0 0 0 1</transform>
+        <rotation_covariance>6.2097322836314542e-10 -5.9796263073596827e-12 1.0211044913387492e-10 -5.9796263073596835e-12 5.450955658417726e-10 -2.115718841872176e-11 1.0211044913387492e-10 -2.115718841872176e-11 6.7525497448739964e-10</rotation_covariance>
+        <location_covariance>2.4420431170486085e-07 1.4759968180019941e-08 1.8625381094035105e-09 1.4759968180019941e-08 9.5617702531919794e-09 -1.2267889556917691e-09 1.8625381094035105e-09 -1.2267889556917691e-09 1.2018143089559462e-08</location_covariance>
+      </camera>
+      <camera id="171" sensor_id="1" component_id="0" master_id="170" label="out_0000085_A_D"/>
+      <camera id="172" sensor_id="2" component_id="0" master_id="170" label="out_0000085_A_U"/>
+      <camera id="173" sensor_id="3" component_id="0" master_id="170" label="out_0000085_B"/>
+      <camera id="174" sensor_id="4" component_id="0" master_id="170" label="out_0000085_E"/>
+      <camera id="175" sensor_id="5" component_id="0" master_id="170" label="out_0000085_F"/>
+      <camera id="176" sensor_id="6" component_id="0" master_id="170" label="out_0000085_F_D"/>
+      <camera id="177" sensor_id="7" component_id="0" master_id="170" label="out_0000085_F_U"/>
+      <camera id="178" sensor_id="8" component_id="0" master_id="170" label="out_0000085_G"/>
+      <camera id="179" sensor_id="9" component_id="0" master_id="170" label="out_0000085_J"/>
+      <camera id="180" sensor_id="0" component_id="0" label="out_0000089_A">
+        <transform>0.99968806739608485 -0.0034596678688419268 -0.024734562945773732 -0.085584454055745676 -0.0030451283777846428 -0.99985460925998626 0.016777590253750141 -0.047758627536373777 -0.024789011659280626 -0.016697036856796188 -0.99955325714098819 -0.55271564817866536 0 0 0 1</transform>
+        <rotation_covariance>6.3524625949494155e-10 -2.9342951187046952e-12 5.7094094595075346e-11 -2.934295118704694e-12 6.0766186632926641e-10 -3.8029275352781214e-11 5.7094094595075353e-11 -3.8029275352781221e-11 6.8191060388089699e-10</rotation_covariance>
+        <location_covariance>1.9635243053797954e-07 1.7650690070511217e-09 -1.1675288349553218e-07 1.7650690070511217e-09 8.5813604534731337e-09 -3.7508967248794489e-09 -1.1675288349553218e-07 -3.7508967248794489e-09 8.8175400516911731e-08</location_covariance>
+      </camera>
+      <camera id="181" sensor_id="1" component_id="0" master_id="180" label="out_0000089_A_D"/>
+      <camera id="182" sensor_id="2" component_id="0" master_id="180" label="out_0000089_A_U"/>
+      <camera id="183" sensor_id="3" component_id="0" master_id="180" label="out_0000089_B"/>
+      <camera id="184" sensor_id="4" component_id="0" master_id="180" label="out_0000089_E"/>
+      <camera id="185" sensor_id="5" component_id="0" master_id="180" label="out_0000089_F"/>
+      <camera id="186" sensor_id="6" component_id="0" master_id="180" label="out_0000089_F_D"/>
+      <camera id="187" sensor_id="7" component_id="0" master_id="180" label="out_0000089_F_U"/>
+      <camera id="188" sensor_id="8" component_id="0" master_id="180" label="out_0000089_G"/>
+      <camera id="189" sensor_id="9" component_id="0" master_id="180" label="out_0000089_J"/>
+      <camera id="190" sensor_id="0" component_id="0" label="out_0000090_A">
+        <transform>0.99977139641643809 0.016070164787390172 -0.014103358154433785 -0.09313105921357348 0.016341081094989496 -0.99968001298326858 0.019309083624513113 -0.071843709455339119 -0.013788545107192638 -0.019535133618114597 -0.99971408641588566 -0.69609347412727585 0 0 0 1</transform>
+        <rotation_covariance>6.0577285475434935e-10 -5.2881240640704979e-12 3.1553546349296752e-11 -5.2881240640704963e-12 6.5697669400301513e-10 -5.4627595673413033e-11 3.1553546349296765e-11 -5.4627595673413027e-11 6.6913406793827836e-10</rotation_covariance>
+        <location_covariance>1.9331934027313033e-07 -3.3925235936362775e-09 -1.4616999626490792e-07 -3.3925235936362775e-09 8.4377108612096693e-09 -4.9480066190023004e-10 -1.4616999626490792e-07 -4.9480066190023004e-10 1.3249409438656809e-07</location_covariance>
+      </camera>
+      <camera id="191" sensor_id="1" component_id="0" master_id="190" label="out_0000090_A_D"/>
+      <camera id="192" sensor_id="2" component_id="0" master_id="190" label="out_0000090_A_U"/>
+      <camera id="193" sensor_id="3" component_id="0" master_id="190" label="out_0000090_B"/>
+      <camera id="194" sensor_id="4" component_id="0" master_id="190" label="out_0000090_E"/>
+      <camera id="195" sensor_id="5" component_id="0" master_id="190" label="out_0000090_F"/>
+      <camera id="196" sensor_id="6" component_id="0" master_id="190" label="out_0000090_F_D"/>
+      <camera id="197" sensor_id="7" component_id="0" master_id="190" label="out_0000090_F_U"/>
+      <camera id="198" sensor_id="8" component_id="0" master_id="190" label="out_0000090_G"/>
+      <camera id="199" sensor_id="9" component_id="0" master_id="190" label="out_0000090_J"/>
+      <camera id="200" sensor_id="0" component_id="0" label="out_0000093_A">
+        <transform>0.96702389320208626 0.080914790858202162 0.24149034472759615 -0.080208494365810581 0.068148183889974887 -0.99582256866892849 0.060772006401925732 -0.078032336433152022 0.24539888958342493 -0.042310853808342895 -0.96849841333955267 -1.0224480089623535 0 0 0 1</transform>
+        <rotation_covariance>7.0154623437989082e-10 -6.5199736597106971e-12 3.8239360455944494e-11 -6.5199736597106866e-12 8.065096283561436e-10 -1.1674003987117585e-10 3.8239360455944494e-11 -1.1674003987117587e-10 7.8193572069272969e-10</rotation_covariance>
+        <location_covariance>2.0004139958586596e-07 -4.5125157787710721e-09 -2.181492490401287e-07 -4.5125157787710721e-09 9.5140964358045535e-09 1.1684641706820705e-09 -2.181492490401287e-07 1.1684641706820705e-09 2.7649054647239655e-07</location_covariance>
+      </camera>
+      <camera id="201" sensor_id="1" component_id="0" master_id="200" label="out_0000093_A_D"/>
+      <camera id="202" sensor_id="2" component_id="0" master_id="200" label="out_0000093_A_U"/>
+      <camera id="203" sensor_id="3" component_id="0" master_id="200" label="out_0000093_B"/>
+      <camera id="204" sensor_id="4" component_id="0" master_id="200" label="out_0000093_E"/>
+      <camera id="205" sensor_id="5" component_id="0" master_id="200" label="out_0000093_F"/>
+      <camera id="206" sensor_id="6" component_id="0" master_id="200" label="out_0000093_F_D"/>
+      <camera id="207" sensor_id="7" component_id="0" master_id="200" label="out_0000093_F_U"/>
+      <camera id="208" sensor_id="8" component_id="0" master_id="200" label="out_0000093_G"/>
+      <camera id="209" sensor_id="9" component_id="0" master_id="200" label="out_0000093_J"/>
+      <camera id="210" sensor_id="0" component_id="0" label="out_0000100_A">
+        <transform>0.19624083072435727 0.13939440197300129 0.97059710336225713 0.27730410583986148 0.11301812831153196 -0.98646245023250612 0.11882229148706897 -0.10666892401139541 0.97402075903420726 0.086377282776602504 -0.20933830512010576 -1.4397164256962902 0 0 0 1</transform>
+        <rotation_covariance>1.0002063628122266e-09 1.0488764145870068e-10 -2.5787463951580316e-11 1.0488764145870067e-10 1.4553774590381094e-09 -8.5918429882713632e-11 -2.5787463951580368e-11 -8.5918429882713645e-11 1.3561267131556433e-09</rotation_covariance>
+        <location_covariance>4.0293444895537223e-07 -1.4278961273382917e-08 -4.3564708323934601e-07 -1.4278961273382917e-08 1.5440531386346115e-08 1.1622695588456981e-08 -4.3564708323934601e-07 1.1622695588456981e-08 5.5379617164381934e-07</location_covariance>
+      </camera>
+      <camera id="211" sensor_id="1" component_id="0" master_id="210" label="out_0000100_A_D"/>
+      <camera id="212" sensor_id="2" component_id="0" master_id="210" label="out_0000100_A_U"/>
+      <camera id="213" sensor_id="3" component_id="0" master_id="210" label="out_0000100_B"/>
+      <camera id="214" sensor_id="4" component_id="0" master_id="210" label="out_0000100_E"/>
+      <camera id="215" sensor_id="5" component_id="0" master_id="210" label="out_0000100_F"/>
+      <camera id="216" sensor_id="6" component_id="0" master_id="210" label="out_0000100_F_D"/>
+      <camera id="217" sensor_id="7" component_id="0" master_id="210" label="out_0000100_F_U"/>
+      <camera id="218" sensor_id="8" component_id="0" master_id="210" label="out_0000100_G"/>
+      <camera id="219" sensor_id="9" component_id="0" master_id="210" label="out_0000100_J"/>
+      <camera id="220" sensor_id="0" component_id="0" label="out_0000106_A">
+        <transform>-0.75983364063431924 0.085877879627546477 0.64442053687873146 0.64056916642644757 0.017994153906778901 -0.98807907988095001 0.15289193022129899 -0.059759879255082533 0.64986848591509272 0.12776823428494299 0.74923042471734469 -1.1478510413846421 0 0 0 1</transform>
+        <rotation_covariance>1.1444221492915989e-09 7.750113241741679e-13 3.5862793828620394e-11 7.7501132417418083e-13 1.0444077171184703e-09 2.4563893135392776e-11 3.5862793828620394e-11 2.4563893135392789e-11 1.0876284978984478e-09</rotation_covariance>
+        <location_covariance>6.4411200084999207e-07 -1.1277599068654237e-09 -4.4936405356839652e-07 -1.1277599068654237e-09 1.2601477913682588e-08 -3.4500451173095565e-09 -4.4936405356839652e-07 -3.4500451173095565e-09 3.4876727762341719e-07</location_covariance>
+      </camera>
+      <camera id="221" sensor_id="1" component_id="0" master_id="220" label="out_0000106_A_D"/>
+      <camera id="222" sensor_id="2" component_id="0" master_id="220" label="out_0000106_A_U"/>
+      <camera id="223" sensor_id="3" component_id="0" master_id="220" label="out_0000106_B"/>
+      <camera id="224" sensor_id="4" component_id="0" master_id="220" label="out_0000106_E"/>
+      <camera id="225" sensor_id="5" component_id="0" master_id="220" label="out_0000106_F"/>
+      <camera id="226" sensor_id="6" component_id="0" master_id="220" label="out_0000106_F_D"/>
+      <camera id="227" sensor_id="7" component_id="0" master_id="220" label="out_0000106_F_U"/>
+      <camera id="228" sensor_id="8" component_id="0" master_id="220" label="out_0000106_G"/>
+      <camera id="229" sensor_id="9" component_id="0" master_id="220" label="out_0000106_J"/>
+      <camera id="230" sensor_id="0" component_id="0" label="out_0000109_A">
+        <transform>-0.89785358752562106 0.033135593155036752 0.43904551909071521 0.76322655190766442 0.025212383094291444 -0.99165864759888978 0.12640198725117646 -0.051696112537571011 0.43957169051939471 0.12455986154698367 0.88952884707878765 -0.88746517336737163 0 0 0 1</transform>
+        <rotation_covariance>1.158935392273568e-09 4.1153688986978915e-11 1.3936886341299363e-10 4.1153688986978922e-11 9.1247928488983687e-10 7.5461489484063759e-13 1.3936886341299368e-10 7.5461489484063759e-13 1.0491610196239177e-09</rotation_covariance>
+        <location_covariance>7.437431780463669e-07 3.4307626633875959e-09 -3.7461616686315057e-07 3.4307626633875959e-09 1.1984281787470489e-08 -4.7897807244454385e-09 -3.7461616686315057e-07 -4.7897807244454385e-09 2.1352294707432631e-07</location_covariance>
+      </camera>
+      <camera id="231" sensor_id="1" component_id="0" master_id="230" label="out_0000109_A_D"/>
+      <camera id="232" sensor_id="2" component_id="0" master_id="230" label="out_0000109_A_U"/>
+      <camera id="233" sensor_id="3" component_id="0" master_id="230" label="out_0000109_B"/>
+      <camera id="234" sensor_id="4" component_id="0" master_id="230" label="out_0000109_E"/>
+      <camera id="235" sensor_id="5" component_id="0" master_id="230" label="out_0000109_F"/>
+      <camera id="236" sensor_id="6" component_id="0" master_id="230" label="out_0000109_F_D"/>
+      <camera id="237" sensor_id="7" component_id="0" master_id="230" label="out_0000109_F_U"/>
+      <camera id="238" sensor_id="8" component_id="0" master_id="230" label="out_0000109_G"/>
+      <camera id="239" sensor_id="9" component_id="0" master_id="230" label="out_0000109_J"/>
+      <camera id="240" sensor_id="0" component_id="0" label="out_0000117_A">
+        <transform>-0.98820843713962736 0.030660316867761557 0.1500134318506943 0.7747706283819894 -0.016016610642105543 -0.99507056745157141 0.097867430614823919 0.056139805976235947 0.1522745971907121 0.094310713925707376 0.98382820466239429 0.050141816480785473 0 0 0 1</transform>
+        <rotation_covariance>9.25722072666316e-10 -9.3916711284115129e-12 2.1361343179487685e-10 -9.3916711284115129e-12 7.5249673781943609e-10 -1.3339004704778008e-11 2.1361343179487691e-10 -1.3339004704778002e-11 8.7551958550689577e-10</rotation_covariance>
+        <location_covariance>7.5111358339210281e-07 4.9187544794790817e-08 2.4398718411948262e-08 4.9187544794790817e-08 1.3811216510592726e-08 -1.1801635007810428e-09 2.4398718411948262e-08 -1.1801635007810428e-09 1.6157153346863949e-08</location_covariance>
+      </camera>
+      <camera id="241" sensor_id="1" component_id="0" master_id="240" label="out_0000117_A_D"/>
+      <camera id="242" sensor_id="2" component_id="0" master_id="240" label="out_0000117_A_U"/>
+      <camera id="243" sensor_id="3" component_id="0" master_id="240" label="out_0000117_B"/>
+      <camera id="244" sensor_id="4" component_id="0" master_id="240" label="out_0000117_E"/>
+      <camera id="245" sensor_id="5" component_id="0" master_id="240" label="out_0000117_F"/>
+      <camera id="246" sensor_id="6" component_id="0" master_id="240" label="out_0000117_F_D"/>
+      <camera id="247" sensor_id="7" component_id="0" master_id="240" label="out_0000117_F_U"/>
+      <camera id="248" sensor_id="8" component_id="0" master_id="240" label="out_0000117_G"/>
+      <camera id="249" sensor_id="9" component_id="0" master_id="240" label="out_0000117_J"/>
+      <camera id="250" sensor_id="0" component_id="0" label="out_0000120_A">
+        <transform>-0.89459422218289908 -0.0013016482490935677 0.44687748136240846 0.76228680997099785 0.049560863835734319 -0.99411585644543565 0.096319181576741103 0.064048705147529278 0.44412261641671658 0.10831421732899701 0.88939481216812655 0.30633351412803089 0 0 0 1</transform>
+        <rotation_covariance>1.0200308737110035e-09 1.4771230352781962e-11 5.5479325737995333e-11 1.4771230352781969e-11 8.3214608144193915e-10 1.7949553041142678e-11 5.5479325737995385e-11 1.7949553041142639e-11 9.2055982715007415e-10</rotation_covariance>
+        <location_covariance>7.4140815630088077e-07 5.1076359092165952e-08 1.3148426514546004e-07 5.1076359092165952e-08 1.3490681506804222e-08 8.0045904664636261e-09 1.3148426514546004e-07 8.0045904664636261e-09 4.0613967948247265e-08</location_covariance>
+      </camera>
+      <camera id="251" sensor_id="1" component_id="0" master_id="250" label="out_0000120_A_D"/>
+      <camera id="252" sensor_id="2" component_id="0" master_id="250" label="out_0000120_A_U"/>
+      <camera id="253" sensor_id="3" component_id="0" master_id="250" label="out_0000120_B"/>
+      <camera id="254" sensor_id="4" component_id="0" master_id="250" label="out_0000120_E"/>
+      <camera id="255" sensor_id="5" component_id="0" master_id="250" label="out_0000120_F"/>
+      <camera id="256" sensor_id="6" component_id="0" master_id="250" label="out_0000120_F_D"/>
+      <camera id="257" sensor_id="7" component_id="0" master_id="250" label="out_0000120_F_U"/>
+      <camera id="258" sensor_id="8" component_id="0" master_id="250" label="out_0000120_G"/>
+      <camera id="259" sensor_id="9" component_id="0" master_id="250" label="out_0000120_J"/>
+      <camera id="260" sensor_id="0" component_id="0" label="out_0000126_A">
+        <transform>-0.6149463826442565 0.041049890116858001 0.78749974793274546 1.1964379820478379 0.041006535176707291 -0.99562836376354369 0.083920351180932162 0.10738292238099655 0.78750200669302739 0.083899152504201907 0.61057474699133418 0.50616194080408938 0 0 0 1</transform>
+        <rotation_covariance>1.0758759525753672e-09 -4.4988599868788654e-11 3.0683270708461924e-11 -4.4988599868788641e-11 7.1399551055361179e-10 3.512284647653148e-12 3.0683270708462027e-11 3.5122846476531286e-12 6.9706683078544159e-10</rotation_covariance>
+        <location_covariance>1.1571815312083639e-06 8.9148611204466122e-08 2.7308595473696393e-07 8.9148611204466122e-08 1.8487637783511227e-08 2.04404958712247e-08 2.7308595473696393e-07 2.04404958712247e-08 8.2405533838843585e-08</location_covariance>
+      </camera>
+      <camera id="261" sensor_id="1" component_id="0" master_id="260" label="out_0000126_A_D"/>
+      <camera id="262" sensor_id="2" component_id="0" master_id="260" label="out_0000126_A_U"/>
+      <camera id="263" sensor_id="3" component_id="0" master_id="260" label="out_0000126_B"/>
+      <camera id="264" sensor_id="4" component_id="0" master_id="260" label="out_0000126_E"/>
+      <camera id="265" sensor_id="5" component_id="0" master_id="260" label="out_0000126_F"/>
+      <camera id="266" sensor_id="6" component_id="0" master_id="260" label="out_0000126_F_D"/>
+      <camera id="267" sensor_id="7" component_id="0" master_id="260" label="out_0000126_F_U"/>
+      <camera id="268" sensor_id="8" component_id="0" master_id="260" label="out_0000126_G"/>
+      <camera id="269" sensor_id="9" component_id="0" master_id="260" label="out_0000126_J"/>
+      <camera id="270" sensor_id="0" component_id="0" label="out_0000132_A">
+        <transform>-0.78328356795751541 0.076616027815087584 0.61692530864731243 1.6342672308279682 -0.05343620685687888 -0.99700135417996838 0.055972060530752391 0.17748631529763786 0.61936372509575732 0.010875846870340128 0.78502884787143967 1.0745436451548915 0 0 0 1</transform>
+        <rotation_covariance>1.0473144085804164e-09 -4.8928117637022399e-11 8.5316611898469737e-11 -4.8928117637022399e-11 7.5025663502969419e-10 -4.5855610553213647e-13 8.5316611898469788e-11 -4.5855610553215424e-13 7.456516954748023e-10</rotation_covariance>
+        <location_covariance>1.6589912228872901e-06 1.5050181756539873e-07 6.865334219691028e-07 1.5050181756539873e-07 2.8373938354925019e-08 6.2857498147652955e-08 6.865334219691028e-07 6.2857498147652955e-08 3.0557928836389708e-07</location_covariance>
+      </camera>
+      <camera id="271" sensor_id="1" component_id="0" master_id="270" label="out_0000132_A_D"/>
+      <camera id="272" sensor_id="2" component_id="0" master_id="270" label="out_0000132_A_U"/>
+      <camera id="273" sensor_id="3" component_id="0" master_id="270" label="out_0000132_B"/>
+      <camera id="274" sensor_id="4" component_id="0" master_id="270" label="out_0000132_E"/>
+      <camera id="275" sensor_id="5" component_id="0" master_id="270" label="out_0000132_F"/>
+      <camera id="276" sensor_id="6" component_id="0" master_id="270" label="out_0000132_F_D"/>
+      <camera id="277" sensor_id="7" component_id="0" master_id="270" label="out_0000132_F_U"/>
+      <camera id="278" sensor_id="8" component_id="0" master_id="270" label="out_0000132_G"/>
+      <camera id="279" sensor_id="9" component_id="0" master_id="270" label="out_0000132_J"/>
+      <camera id="280" sensor_id="0" component_id="0" label="out_0000138_A">
+        <transform>-0.89959744194355662 -0.0070429741261262054 0.43666330159983391 2.0472938981638005 0.019660627817236868 -0.999509345775078 0.024382933008720388 0.21521121831397905 0.43627732253973611 0.030519898815926164 0.89929451995095844 1.5577449613401453 0 0 0 1</transform>
+        <rotation_covariance>1.0774429674347435e-09 -4.1477072328645732e-11 1.1333829277152621e-10 -4.1477072328645744e-11 8.3094317999814549e-10 -2.9278243245182281e-11 1.1333829277152626e-10 -2.9278243245182281e-11 8.6099332120680269e-10</rotation_covariance>
+        <location_covariance>2.2187616019393013e-06 1.9865303875956484e-07 1.1494900701875195e-06 1.9865303875956484e-07 3.5527463493522413e-08 1.0425028399399363e-07 1.1494900701875195e-06 1.0425028399399363e-07 6.2055160442555542e-07</location_covariance>
+      </camera>
+      <camera id="281" sensor_id="1" component_id="0" master_id="280" label="out_0000138_A_D"/>
+      <camera id="282" sensor_id="2" component_id="0" master_id="280" label="out_0000138_A_U"/>
+      <camera id="283" sensor_id="3" component_id="0" master_id="280" label="out_0000138_B"/>
+      <camera id="284" sensor_id="4" component_id="0" master_id="280" label="out_0000138_E"/>
+      <camera id="285" sensor_id="5" component_id="0" master_id="280" label="out_0000138_F"/>
+      <camera id="286" sensor_id="6" component_id="0" master_id="280" label="out_0000138_F_D"/>
+      <camera id="287" sensor_id="7" component_id="0" master_id="280" label="out_0000138_F_U"/>
+      <camera id="288" sensor_id="8" component_id="0" master_id="280" label="out_0000138_G"/>
+      <camera id="289" sensor_id="9" component_id="0" master_id="280" label="out_0000138_J"/>
+      <camera id="290" sensor_id="0" component_id="0" label="out_0000140_A">
+        <transform>-0.88216326371049147 -0.017697246287906615 0.47061107470338831 2.1283387728029135 0.029158896897746138 -0.99942893546512601 0.017075177502764129 0.21556255613118616 0.47004014178723025 0.02878559412048768 0.8821755237365011 1.6989722448343194 0 0 0 1</transform>
+        <rotation_covariance>1.1125994641420738e-09 -2.7676045561731749e-11 1.1209533796852158e-10 -2.7676045561731746e-11 8.3907188150340622e-10 -2.0981323213210591e-11 1.1209533796852142e-10 -2.0981323213210591e-11 8.7535257272278798e-10</rotation_covariance>
+        <location_covariance>2.3363724732054717e-06 2.0318977285256712e-07 1.2849644442648428e-06 2.0318977285256712e-07 3.6351120905291878e-08 1.1342418753885298e-07 1.2849644442648428e-06 1.1342418753885298e-07 7.3313560704107454e-07</location_covariance>
+      </camera>
+      <camera id="291" sensor_id="1" component_id="0" master_id="290" label="out_0000140_A_D"/>
+      <camera id="292" sensor_id="2" component_id="0" master_id="290" label="out_0000140_A_U"/>
+      <camera id="293" sensor_id="3" component_id="0" master_id="290" label="out_0000140_B"/>
+      <camera id="294" sensor_id="4" component_id="0" master_id="290" label="out_0000140_E"/>
+      <camera id="295" sensor_id="5" component_id="0" master_id="290" label="out_0000140_F"/>
+      <camera id="296" sensor_id="6" component_id="0" master_id="290" label="out_0000140_F_D"/>
+      <camera id="297" sensor_id="7" component_id="0" master_id="290" label="out_0000140_F_U"/>
+      <camera id="298" sensor_id="8" component_id="0" master_id="290" label="out_0000140_G"/>
+      <camera id="299" sensor_id="9" component_id="0" master_id="290" label="out_0000140_J"/>
+      <camera id="300" sensor_id="0" component_id="0" label="out_0000146_A">
+        <transform>-0.89343413731344135 0.020426495842275724 0.448729540537051 2.350733925913135 -0.0076408006886493959 -0.99951208572849681 0.030285452737355056 -0.0010280808976558435 0.44912922466459881 0.023629404357193289 0.89315429283069614 2.1020124481409819 0 0 0 1</transform>
+        <rotation_covariance>1.2014305885152319e-09 -2.3970198572191158e-11 1.7160500896920184e-10 -2.3970198572191151e-11 8.8867325704643658e-10 -6.284106253640448e-11 1.7160500896920184e-10 -6.2841062536404505e-11 9.0561735459103418e-10</rotation_covariance>
+        <location_covariance>2.6735209798414767e-06 4.4573573697166851e-08 1.6952437268029388e-06 4.4573573697166851e-08 1.9964726676817864e-08 2.9544017084009084e-08 1.6952437268029388e-06 2.9544017084009084e-08 1.1033910041255414e-06</location_covariance>
+      </camera>
+      <camera id="301" sensor_id="1" component_id="0" master_id="300" label="out_0000146_A_D"/>
+      <camera id="302" sensor_id="2" component_id="0" master_id="300" label="out_0000146_A_U"/>
+      <camera id="303" sensor_id="3" component_id="0" master_id="300" label="out_0000146_B"/>
+      <camera id="304" sensor_id="4" component_id="0" master_id="300" label="out_0000146_E"/>
+      <camera id="305" sensor_id="5" component_id="0" master_id="300" label="out_0000146_F"/>
+      <camera id="306" sensor_id="6" component_id="0" master_id="300" label="out_0000146_F_D"/>
+      <camera id="307" sensor_id="7" component_id="0" master_id="300" label="out_0000146_F_U"/>
+      <camera id="308" sensor_id="8" component_id="0" master_id="300" label="out_0000146_G"/>
+      <camera id="309" sensor_id="9" component_id="0" master_id="300" label="out_0000146_J"/>
+      <camera id="310" sensor_id="0" component_id="0" label="out_0000150_A">
+        <transform>-0.90604382194490307 0.015170988755458803 0.42291185111752827 2.4347945366474693 0.0017628396461588647 -0.99921321811811969 0.039621170280709328 -0.1698598311329893 0.42318020406424334 0.036644042329043967 0.90530421906115743 2.4057689216712883 0 0 0 1</transform>
+        <rotation_covariance>1.2909730531775625e-09 -8.3226897555997545e-12 2.0822502867002458e-10 -8.3226897555997577e-12 9.4879526406279896e-10 -9.7150616471780823e-11 2.0822502867002466e-10 -9.7150616471780823e-11 9.8196246137257924e-10</rotation_covariance>
+        <location_covariance>2.805128226116158e-06 -9.1475892524395553e-08 1.9818959777399957e-06 -9.1475892524395553e-08 2.3380450826588496e-08 -6.4226801240469943e-08 1.9818959777399957e-06 -6.4226801240469943e-08 1.4322956494246392e-06</location_covariance>
+      </camera>
+      <camera id="311" sensor_id="1" component_id="0" master_id="310" label="out_0000150_A_D"/>
+      <camera id="312" sensor_id="2" component_id="0" master_id="310" label="out_0000150_A_U"/>
+      <camera id="313" sensor_id="3" component_id="0" master_id="310" label="out_0000150_B"/>
+      <camera id="314" sensor_id="4" component_id="0" master_id="310" label="out_0000150_E"/>
+      <camera id="315" sensor_id="5" component_id="0" master_id="310" label="out_0000150_F"/>
+      <camera id="316" sensor_id="6" component_id="0" master_id="310" label="out_0000150_F_D"/>
+      <camera id="317" sensor_id="7" component_id="0" master_id="310" label="out_0000150_F_U"/>
+      <camera id="318" sensor_id="8" component_id="0" master_id="310" label="out_0000150_G"/>
+      <camera id="319" sensor_id="9" component_id="0" master_id="310" label="out_0000150_J"/>
+      <camera id="320" sensor_id="0" component_id="0" label="out_0000153_A">
+        <transform>-0.92068092618134112 0.049935792535967638 0.38710857493689355 2.5459523479087021 -0.035312876054401476 -0.99837164032025416 0.044800319072652556 -0.2810274165250311 0.38871536238053944 0.027576882130686903 0.9209451029357375 2.5941627588645324 0 0 0 1</transform>
+        <rotation_covariance>1.3849409041663084e-09 4.6537082203173812e-12 2.5185108024822653e-10 4.653708220317365e-12 1.0063398507484492e-09 -1.3109348306052376e-10 2.5185108024822653e-10 -1.3109348306052376e-10 1.0815635150827989e-09</rotation_covariance>
+        <location_covariance>2.9850283722829147e-06 -1.8764604755246829e-07 2.2017655076192854e-06 -1.8764604755246829e-07 3.3733642188784203e-08 -1.392787565426619e-07 2.2017655076192854e-06 -1.392787565426619e-07 1.6587627544629421e-06</location_covariance>
+      </camera>
+      <camera id="321" sensor_id="1" component_id="0" master_id="320" label="out_0000153_A_D"/>
+      <camera id="322" sensor_id="2" component_id="0" master_id="320" label="out_0000153_A_U"/>
+      <camera id="323" sensor_id="3" component_id="0" master_id="320" label="out_0000153_B"/>
+      <camera id="324" sensor_id="4" component_id="0" master_id="320" label="out_0000153_E"/>
+      <camera id="325" sensor_id="5" component_id="0" master_id="320" label="out_0000153_F"/>
+      <camera id="326" sensor_id="6" component_id="0" master_id="320" label="out_0000153_F_D"/>
+      <camera id="327" sensor_id="7" component_id="0" master_id="320" label="out_0000153_F_U"/>
+      <camera id="328" sensor_id="8" component_id="0" master_id="320" label="out_0000153_G"/>
+      <camera id="329" sensor_id="9" component_id="0" master_id="320" label="out_0000153_J"/>
+      <camera id="330" sensor_id="0" component_id="0" label="out_0000160_A">
+        <transform>-0.92726626891153374 0.018377257076328105 0.37395125746711 2.8463525652440276 -0.0024295065555956438 -0.99906895695448339 0.04307338793009656 -0.59028557005637072 0.37439466347262296 0.039031982683830138 0.92644759176706282 3.0199911459280595 0 0 0 1</transform>
+        <rotation_covariance>1.6715513293791063e-09 6.6405297018721759e-11 3.1744470040406226e-10 6.6405297018721746e-11 1.1623619371578273e-09 -1.6886465019927035e-10 3.1744470040406237e-10 -1.6886465019927035e-10 1.2628192028379607e-09</rotation_covariance>
+        <location_covariance>3.4938863614308328e-06 -4.7862657353629626e-07 2.7608810841485519e-06 -4.7862657353629626e-07 9.6622992138484754e-08 -3.8525701375448837e-07 2.7608810841485519e-06 -3.8525701375448837e-07 2.2254675667303694e-06</location_covariance>
+      </camera>
+      <camera id="331" sensor_id="1" component_id="0" master_id="330" label="out_0000160_A_D"/>
+      <camera id="332" sensor_id="2" component_id="0" master_id="330" label="out_0000160_A_U"/>
+      <camera id="333" sensor_id="3" component_id="0" master_id="330" label="out_0000160_B"/>
+      <camera id="334" sensor_id="4" component_id="0" master_id="330" label="out_0000160_E"/>
+      <camera id="335" sensor_id="5" component_id="0" master_id="330" label="out_0000160_F"/>
+      <camera id="336" sensor_id="6" component_id="0" master_id="330" label="out_0000160_F_D"/>
+      <camera id="337" sensor_id="7" component_id="0" master_id="330" label="out_0000160_F_U"/>
+      <camera id="338" sensor_id="8" component_id="0" master_id="330" label="out_0000160_G"/>
+      <camera id="339" sensor_id="9" component_id="0" master_id="330" label="out_0000160_J"/>
+      <camera id="340" sensor_id="0" component_id="0" label="out_0000163_A">
+        <transform>-0.91655978339415434 -0.0074070601162082566 0.39982908714211329 2.9725449463201445 0.01070565677960484 -0.99992458794387362 0.0060172533760072134 -0.69843518128278537 0.39975436505106265 0.0097956054283869932 0.91656996117967571 3.234105459474788 0 0 0 1</transform>
+        <rotation_covariance>1.7908348553779607e-09 8.9996342988964107e-11 3.2183985356303577e-10 8.9996342988964133e-11 1.2525474258293404e-09 -1.9973674186368701e-10 3.2183985356303567e-10 -1.9973674186368704e-10 1.3021642834008979e-09</rotation_covariance>
+        <location_covariance>3.7184255401264846e-06 -5.9479723014859479e-07 3.0459063256841238e-06 -5.9479723014859479e-07 1.3078400790490051e-07 -4.9822369671976755e-07 3.0459063256841238e-06 -4.9822369671976755e-07 2.5448185017787154e-06</location_covariance>
+      </camera>
+      <camera id="341" sensor_id="1" component_id="0" master_id="340" label="out_0000163_A_D"/>
+      <camera id="342" sensor_id="2" component_id="0" master_id="340" label="out_0000163_A_U"/>
+      <camera id="343" sensor_id="3" component_id="0" master_id="340" label="out_0000163_B"/>
+      <camera id="344" sensor_id="4" component_id="0" master_id="340" label="out_0000163_E"/>
+      <camera id="345" sensor_id="5" component_id="0" master_id="340" label="out_0000163_F"/>
+      <camera id="346" sensor_id="6" component_id="0" master_id="340" label="out_0000163_F_D"/>
+      <camera id="347" sensor_id="7" component_id="0" master_id="340" label="out_0000163_F_U"/>
+      <camera id="348" sensor_id="8" component_id="0" master_id="340" label="out_0000163_G"/>
+      <camera id="349" sensor_id="9" component_id="0" master_id="340" label="out_0000163_J"/>
+      <camera id="350" sensor_id="0" component_id="0" label="out_0000170_A">
+        <transform>-0.96172764077798623 0.073260451324213119 0.26403191328962816 3.1367441454497209 -0.050482756604641417 -0.99447360024992026 0.092052972203826189 -0.94210068659543245 0.2693166096793988 0.075200828969729155 0.96011113891729227 3.6952828085569229 0 0 0 1</transform>
+        <rotation_covariance>1.8610796496038742e-09 9.7022841648493971e-11 3.6316759463459574e-10 9.7022841648493958e-11 1.4386117763014839e-09 -2.5847412937874407e-10 3.6316759463459579e-10 -2.5847412937874407e-10 1.7712522550824996e-09</rotation_covariance>
+        <location_covariance>4.0090948120869967e-06 -8.4287880019755135e-07 3.5891145290466971e-06 -8.4287880019755135e-07 2.3229648564918859e-07 -7.8043485379749431e-07 3.5891145290466971e-06 -7.8043485379749431e-07 3.2952758485656356e-06</location_covariance>
+      </camera>
+      <camera id="351" sensor_id="1" component_id="0" master_id="350" label="out_0000170_A_D"/>
+      <camera id="352" sensor_id="2" component_id="0" master_id="350" label="out_0000170_A_U"/>
+      <camera id="353" sensor_id="3" component_id="0" master_id="350" label="out_0000170_B"/>
+      <camera id="354" sensor_id="4" component_id="0" master_id="350" label="out_0000170_E"/>
+      <camera id="355" sensor_id="5" component_id="0" master_id="350" label="out_0000170_F"/>
+      <camera id="356" sensor_id="6" component_id="0" master_id="350" label="out_0000170_F_D"/>
+      <camera id="357" sensor_id="7" component_id="0" master_id="350" label="out_0000170_F_U"/>
+      <camera id="358" sensor_id="8" component_id="0" master_id="350" label="out_0000170_G"/>
+      <camera id="359" sensor_id="9" component_id="0" master_id="350" label="out_0000170_J"/>
+      <camera id="360" sensor_id="0" component_id="0" label="out_0000174_A">
+        <transform>-0.99665392553058352 0.046949321466409157 0.066908250151400242 3.2207586131480239 -0.041847308830303645 -0.99625092274650218 0.075715927455225235 -1.0436065942625947 0.07021221737090895 0.072662646116058244 0.99488209572354491 4.0514297642664348 0 0 0 1</transform>
+        <rotation_covariance>1.8162488092658992e-09 9.747249405891937e-11 4.3190959707509585e-10 9.747249405891937e-11 1.573854368541848e-09 -2.3924330144856041e-10 4.3190959707509585e-10 -2.3924330144856046e-10 2.0498547250507634e-09</rotation_covariance>
+        <location_covariance>4.1603077648380235e-06 -9.5577150195443872e-07 3.9942400479720795e-06 -9.5577150195443872e-07 2.8362206161428699e-07 -9.5838593026882179e-07 3.9942400479720795e-06 -9.5838593026882179e-07 3.9607384657502672e-06</location_covariance>
+      </camera>
+      <camera id="361" sensor_id="1" component_id="0" master_id="360" label="out_0000174_A_D"/>
+      <camera id="362" sensor_id="2" component_id="0" master_id="360" label="out_0000174_A_U"/>
+      <camera id="363" sensor_id="3" component_id="0" master_id="360" label="out_0000174_B"/>
+      <camera id="364" sensor_id="4" component_id="0" master_id="360" label="out_0000174_E"/>
+      <camera id="365" sensor_id="5" component_id="0" master_id="360" label="out_0000174_F"/>
+      <camera id="366" sensor_id="6" component_id="0" master_id="360" label="out_0000174_F_D"/>
+      <camera id="367" sensor_id="7" component_id="0" master_id="360" label="out_0000174_F_U"/>
+      <camera id="368" sensor_id="8" component_id="0" master_id="360" label="out_0000174_G"/>
+      <camera id="369" sensor_id="9" component_id="0" master_id="360" label="out_0000174_J"/>
+      <camera id="370" sensor_id="0" component_id="0" label="out_0000181_A">
+        <transform>-0.81491966110235814 0.1394493369643017 -0.56254762320094653 3.0615575333086045 -0.13668339386390707 -0.98948585967500469 -0.047279840789293426 -1.0330678057482399 -0.56322606100096384 0.038361646516195336 0.82541189008028271 4.6373218847734048 0 0 0 1</transform>
+        <rotation_covariance>1.5319546211676152e-09 2.923272871442592e-11 5.8474914784767688e-11 2.9232728714425875e-11 2.1307716487132202e-09 -2.4085881426068228e-10 5.8474914784767585e-11 -2.4085881426068223e-10 2.3038594759789138e-09</rotation_covariance>
+        <location_covariance>3.8740828230890121e-06 -8.9613366706778321e-07 4.371026502727774e-06 -8.9613366706778321e-07 2.894748398413405e-07 -1.0671767263614652e-06 4.371026502727774e-06 -1.0671767263614652e-06 5.1908237251372353e-06</location_covariance>
+      </camera>
+      <camera id="371" sensor_id="1" component_id="0" master_id="370" label="out_0000181_A_D"/>
+      <camera id="372" sensor_id="2" component_id="0" master_id="370" label="out_0000181_A_U"/>
+      <camera id="373" sensor_id="3" component_id="0" master_id="370" label="out_0000181_B"/>
+      <camera id="374" sensor_id="4" component_id="0" master_id="370" label="out_0000181_E"/>
+      <camera id="375" sensor_id="5" component_id="0" master_id="370" label="out_0000181_F"/>
+      <camera id="376" sensor_id="6" component_id="0" master_id="370" label="out_0000181_F_D"/>
+      <camera id="377" sensor_id="7" component_id="0" master_id="370" label="out_0000181_F_U"/>
+      <camera id="378" sensor_id="8" component_id="0" master_id="370" label="out_0000181_G"/>
+      <camera id="379" sensor_id="9" component_id="0" master_id="370" label="out_0000181_J"/>
+      <camera id="380" sensor_id="0" component_id="0" label="out_0000188_A">
+        <transform>-0.56608568578758423 0.045164220495543028 -0.82310824897666468 2.7336033651890186 -0.044775760422192626 -0.99870860404535744 -0.024005322001338703 -1.1286195791100104 -0.82312947196963837 0.023266228590029914 0.56737690733954005 5.0044213683485177 0 0 0 1</transform>
+        <rotation_covariance>1.5834821158028075e-09 8.0573317740728201e-11 -2.8330924329722666e-10 8.0573317740728226e-11 2.2409389948142513e-09 -1.0995234885450539e-10 -2.8330924329722676e-10 -1.0995234885450539e-10 2.355363617294365e-09</rotation_covariance>
+        <location_covariance>3.3021361607793012e-06 -8.9024556166706339e-07 4.2931035740610618e-06 -8.9024556166706339e-07 3.4221282879139837e-07 -1.2699972788225522e-06 4.2931035740610618e-06 -1.2699972788225522e-06 6.0359219980939737e-06</location_covariance>
+      </camera>
+      <camera id="381" sensor_id="1" component_id="0" master_id="380" label="out_0000188_A_D"/>
+      <camera id="382" sensor_id="2" component_id="0" master_id="380" label="out_0000188_A_U"/>
+      <camera id="383" sensor_id="3" component_id="0" master_id="380" label="out_0000188_B"/>
+      <camera id="384" sensor_id="4" component_id="0" master_id="380" label="out_0000188_E"/>
+      <camera id="385" sensor_id="5" component_id="0" master_id="380" label="out_0000188_F"/>
+      <camera id="386" sensor_id="6" component_id="0" master_id="380" label="out_0000188_F_D"/>
+      <camera id="387" sensor_id="7" component_id="0" master_id="380" label="out_0000188_F_U"/>
+      <camera id="388" sensor_id="8" component_id="0" master_id="380" label="out_0000188_G"/>
+      <camera id="389" sensor_id="9" component_id="0" master_id="380" label="out_0000188_J"/>
+      <camera id="390" sensor_id="0" component_id="0" label="out_0000196_A">
+        <transform>-0.45386568396316451 0.10171609187230807 -0.88524560296839294 2.3261253132165587 -0.1245777136657448 -0.99094971137728438 -0.049990626912380765 -1.4168041322086804 -0.88231872595931282 0.087592843175121005 0.46242962669581811 5.2206673155204539 0 0 0 1</transform>
+        <rotation_covariance>1.7046616118474613e-09 2.0425079944447609e-10 -4.1559243944719961e-10 2.0425079944447611e-10 2.1116661290136015e-09 -4.8521307487479529e-11 -4.1559243944719966e-10 -4.8521307487479522e-11 2.2795661992624347e-09</rotation_covariance>
+        <location_covariance>2.6513528004987419e-06 -9.8643934686735834e-07 3.9531163217174857e-06 -9.8643934686735834e-07 5.193618481200711e-07 -1.6872229822900565e-06 3.9531163217174857e-06 -1.6872229822900565e-06 6.5473046928480431e-06</location_covariance>
+      </camera>
+      <camera id="391" sensor_id="1" component_id="0" master_id="390" label="out_0000196_A_D"/>
+      <camera id="392" sensor_id="2" component_id="0" master_id="390" label="out_0000196_A_U"/>
+      <camera id="393" sensor_id="3" component_id="0" master_id="390" label="out_0000196_B"/>
+      <camera id="394" sensor_id="4" component_id="0" master_id="390" label="out_0000196_E"/>
+      <camera id="395" sensor_id="5" component_id="0" master_id="390" label="out_0000196_F"/>
+      <camera id="396" sensor_id="6" component_id="0" master_id="390" label="out_0000196_F_D"/>
+      <camera id="397" sensor_id="7" component_id="0" master_id="390" label="out_0000196_F_U"/>
+      <camera id="398" sensor_id="8" component_id="0" master_id="390" label="out_0000196_G"/>
+      <camera id="399" sensor_id="9" component_id="0" master_id="390" label="out_0000196_J"/>
+      <camera id="400" sensor_id="0" component_id="0" label="out_0000200_A">
+        <transform>-0.4219637220161227 0.052565436327882555 -0.90508756051884853 2.1236789922451154 -0.063818214223031022 -0.99756349920465237 -0.028183338836152823 -1.5784275818843498 -0.90436378346088353 0.04586872527364793 0.42429023934812238 5.2941323998186363 0 0 0 1</transform>
+        <rotation_covariance>1.7479969174865857e-09 1.8497331311631907e-10 -4.3007329458567866e-10 1.8497331311631904e-10 2.1667246522378362e-09 -8.954126029267568e-11 -4.3007329458567882e-10 -8.9541260292675667e-11 2.3292522183956228e-09</rotation_covariance>
+        <location_covariance>2.3569750532152523e-06 -1.0289130885545233e-06 3.7521874795723578e-06 -1.0289130885545233e-06 6.3022550973668881e-07 -1.9101429500885995e-06 3.7521874795723578e-06 -1.9101429500885995e-06 6.7208588341404362e-06</location_covariance>
+      </camera>
+      <camera id="401" sensor_id="1" component_id="0" master_id="400" label="out_0000200_A_D"/>
+      <camera id="402" sensor_id="2" component_id="0" master_id="400" label="out_0000200_A_U"/>
+      <camera id="403" sensor_id="3" component_id="0" master_id="400" label="out_0000200_B"/>
+      <camera id="404" sensor_id="4" component_id="0" master_id="400" label="out_0000200_E"/>
+      <camera id="405" sensor_id="5" component_id="0" master_id="400" label="out_0000200_F"/>
+      <camera id="406" sensor_id="6" component_id="0" master_id="400" label="out_0000200_F_D"/>
+      <camera id="407" sensor_id="7" component_id="0" master_id="400" label="out_0000200_F_U"/>
+      <camera id="408" sensor_id="8" component_id="0" master_id="400" label="out_0000200_G"/>
+      <camera id="409" sensor_id="9" component_id="0" master_id="400" label="out_0000200_J"/>
+      <camera id="410" sensor_id="0" component_id="0" label="out_0000204_A">
+        <transform>-0.42907232406672791 0.042200179864690102 -0.90228381651194689 1.9655575282228726 -0.12265941852912834 -0.99237728979220696 0.011915609542531735 -1.7449564498017425 -0.89490312758760271 0.11578626656068382 0.43097787960621081 5.404408422036199 0 0 0 1</transform>
+        <rotation_covariance>1.7845662378482488e-09 1.899810609263822e-10 -4.2257767332741018e-10 1.8998106092638213e-10 2.1416722946906846e-09 -6.2563101560404449e-11 -4.2257767332741028e-10 -6.2563101560404462e-11 2.3366669418981963e-09</rotation_covariance>
+        <location_covariance>2.1427749876656849e-06 -1.0743880621658577e-06 3.6226861512796529e-06 -1.0743880621658577e-06 7.5973312442648913e-07 -2.1609174740998097e-06 3.6226861512796529e-06 -2.1609174740998097e-06 6.9917091032866495e-06</location_covariance>
+      </camera>
+      <camera id="411" sensor_id="1" component_id="0" master_id="410" label="out_0000204_A_D"/>
+      <camera id="412" sensor_id="2" component_id="0" master_id="410" label="out_0000204_A_U"/>
+      <camera id="413" sensor_id="3" component_id="0" master_id="410" label="out_0000204_B"/>
+      <camera id="414" sensor_id="4" component_id="0" master_id="410" label="out_0000204_E"/>
+      <camera id="415" sensor_id="5" component_id="0" master_id="410" label="out_0000204_F"/>
+      <camera id="416" sensor_id="6" component_id="0" master_id="410" label="out_0000204_F_D"/>
+      <camera id="417" sensor_id="7" component_id="0" master_id="410" label="out_0000204_F_U"/>
+      <camera id="418" sensor_id="8" component_id="0" master_id="410" label="out_0000204_G"/>
+      <camera id="419" sensor_id="9" component_id="0" master_id="410" label="out_0000204_J"/>
+      <camera id="420" sensor_id="0" component_id="0" label="out_0000212_A">
+        <transform>-0.42150396022256742 0.079089222121218994 -0.90337107904833458 1.5596239217772356 -0.098142318234237635 -0.99431673244424135 -0.041259192345671908 -1.9901211055677821 -0.90150013693193709 0.071268018954282933 0.42687044004712982 5.6097642062816639 0 0 0 1</transform>
+        <rotation_covariance>1.8206006217087992e-09 2.1832829557093018e-10 -3.7905081927545377e-10 2.1832829557093023e-10 2.1806955721907052e-09 -1.2110645261336389e-10 -3.7905081927545356e-10 -1.2110645261336389e-10 2.39985623419804e-09</rotation_covariance>
+        <location_covariance>1.6519989479994412e-06 -1.0402424369922263e-06 3.217972200260986e-06 -1.0402424369922263e-06 9.6907791629180296e-07 -2.559758235646765e-06 3.217972200260986e-06 -2.559758235646765e-06 7.5062764955138089e-06</location_covariance>
+      </camera>
+      <camera id="421" sensor_id="1" component_id="0" master_id="420" label="out_0000212_A_D"/>
+      <camera id="422" sensor_id="2" component_id="0" master_id="420" label="out_0000212_A_U"/>
+      <camera id="423" sensor_id="3" component_id="0" master_id="420" label="out_0000212_B"/>
+      <camera id="424" sensor_id="4" component_id="0" master_id="420" label="out_0000212_E"/>
+      <camera id="425" sensor_id="5" component_id="0" master_id="420" label="out_0000212_F"/>
+      <camera id="426" sensor_id="6" component_id="0" master_id="420" label="out_0000212_F_D"/>
+      <camera id="427" sensor_id="7" component_id="0" master_id="420" label="out_0000212_F_U"/>
+      <camera id="428" sensor_id="8" component_id="0" master_id="420" label="out_0000212_G"/>
+      <camera id="429" sensor_id="9" component_id="0" master_id="420" label="out_0000212_J"/>
+      <camera id="430" sensor_id="0" component_id="0" label="out_0000220_A">
+        <transform>-0.41120029850054929 0.072752166895216658 -0.90863713149150416 1.1546820603164789 -0.090656213815299105 -0.99513190908976945 -0.038651447683439005 -2.3473453253604917 -0.90702577990359956 0.066480115248105445 0.4157939740627139 5.8860767449607989 0 0 0 1</transform>
+        <rotation_covariance>1.9054080528655225e-09 2.105671254892303e-10 -3.2441981951625772e-10 2.1056712548923038e-10 2.2479576417175392e-09 -1.4168871357141257e-10 -3.2441981951625777e-10 -1.4168871357141257e-10 2.5050865547523605e-09</rotation_covariance>
+        <location_covariance>1.2272714529336587e-06 -1.0209315950533053e-06 2.8210384875734669e-06 -1.0209315950533053e-06 1.3148368353770789e-06 -3.1566815590663959e-06 2.8210384875734669e-06 -3.1566815590663959e-06 8.2221765307857391e-06</location_covariance>
+      </camera>
+      <camera id="431" sensor_id="1" component_id="0" master_id="430" label="out_0000220_A_D"/>
+      <camera id="432" sensor_id="2" component_id="0" master_id="430" label="out_0000220_A_U"/>
+      <camera id="433" sensor_id="3" component_id="0" master_id="430" label="out_0000220_B"/>
+      <camera id="434" sensor_id="4" component_id="0" master_id="430" label="out_0000220_E"/>
+      <camera id="435" sensor_id="5" component_id="0" master_id="430" label="out_0000220_F"/>
+      <camera id="436" sensor_id="6" component_id="0" master_id="430" label="out_0000220_F_D"/>
+      <camera id="437" sensor_id="7" component_id="0" master_id="430" label="out_0000220_F_U"/>
+      <camera id="438" sensor_id="8" component_id="0" master_id="430" label="out_0000220_G"/>
+      <camera id="439" sensor_id="9" component_id="0" master_id="430" label="out_0000220_J"/>
+      <camera id="440" sensor_id="0" component_id="0" label="out_0000227_A">
+        <transform>-0.46728197119367482 0.058647260317281291 -0.88216101605921771 0.84087462773159016 -0.12228375627519852 -0.99249444456681735 -0.0012084929591273906 -2.595728218954533 -0.87561078245335833 0.10730925571115217 0.47094636774280002 6.1195121056677193 0 0 0 1</transform>
+        <rotation_covariance>1.8801874024864812e-09 1.8890161385322202e-10 -2.5955759006332233e-10 1.8890161385322213e-10 2.1944493499033293e-09 -1.3317234773399997e-10 -2.5955759006332222e-10 -1.3317234773399994e-10 2.6287080799369083e-09</rotation_covariance>
+        <location_covariance>9.4214395114208536e-07 -9.6103017641646913e-07 2.4986288847811955e-06 -9.6103017641646913e-07 1.5753067532468917e-06 -3.6108292686576466e-06 2.4986288847811955e-06 -3.6108292686576466e-06 8.8383444546147802e-06</location_covariance>
+      </camera>
+      <camera id="441" sensor_id="1" component_id="0" master_id="440" label="out_0000227_A_D"/>
+      <camera id="442" sensor_id="2" component_id="0" master_id="440" label="out_0000227_A_U"/>
+      <camera id="443" sensor_id="3" component_id="0" master_id="440" label="out_0000227_B"/>
+      <camera id="444" sensor_id="4" component_id="0" master_id="440" label="out_0000227_E"/>
+      <camera id="445" sensor_id="5" component_id="0" master_id="440" label="out_0000227_F"/>
+      <camera id="446" sensor_id="6" component_id="0" master_id="440" label="out_0000227_F_D"/>
+      <camera id="447" sensor_id="7" component_id="0" master_id="440" label="out_0000227_F_U"/>
+      <camera id="448" sensor_id="8" component_id="0" master_id="440" label="out_0000227_G"/>
+      <camera id="449" sensor_id="9" component_id="0" master_id="440" label="out_0000227_J"/>
+      <camera id="450" sensor_id="0" component_id="0" label="out_0000230_A">
+        <transform>-0.47693565720188513 0.029713131288744601 -0.87843583073462095 0.68936910059293 -0.11749808711815943 -0.99261322604596292 0.030218917952169924 -2.7022613865732326 -0.87104912514334065 0.11762700926081726 0.47690387740023299 6.1225014587532192 0 0 0 1</transform>
+        <rotation_covariance>1.8789942327478993e-09 1.9086028945176152e-10 -2.5775421696486831e-10 1.908602894517616e-10 2.1971036131779563e-09 -1.2467938596433784e-10 -2.577542169648682e-10 -1.2467938596433786e-10 2.6708189328040629e-09</rotation_covariance>
+        <location_covariance>8.22338304055037e-07 -9.1443381275955681e-07 2.2921109528265826e-06 -9.1443381275955681e-07 1.6951726203215973e-06 -3.7561693728415133e-06 2.2921109528265826e-06 -3.7561693728415133e-06 8.8419953439766687e-06</location_covariance>
+      </camera>
+      <camera id="451" sensor_id="1" component_id="0" master_id="450" label="out_0000230_A_D"/>
+      <camera id="452" sensor_id="2" component_id="0" master_id="450" label="out_0000230_A_U"/>
+      <camera id="453" sensor_id="3" component_id="0" master_id="450" label="out_0000230_B"/>
+      <camera id="454" sensor_id="4" component_id="0" master_id="450" label="out_0000230_E"/>
+      <camera id="455" sensor_id="5" component_id="0" master_id="450" label="out_0000230_F"/>
+      <camera id="456" sensor_id="6" component_id="0" master_id="450" label="out_0000230_F_D"/>
+      <camera id="457" sensor_id="7" component_id="0" master_id="450" label="out_0000230_F_U"/>
+      <camera id="458" sensor_id="8" component_id="0" master_id="450" label="out_0000230_G"/>
+      <camera id="459" sensor_id="9" component_id="0" master_id="450" label="out_0000230_J"/>
+      <camera id="460" sensor_id="0" component_id="0" label="out_0000234_A">
+        <transform>-0.66828503116100402 -0.0026465178494362862 -0.74390060698282046 0.50846213580957511 -0.13330364304989364 -0.98338143198906947 0.1232521722678932 -2.8785364030273586 -0.73186423322619221 0.18153224276254754 0.6568263004492414 6.3764122090104767 0 0 0 1</transform>
+        <rotation_covariance>1.8923520595993431e-09 1.8529731529209857e-10 -3.7859619022057009e-11 1.852973152920986e-10 2.2021102618896233e-09 -1.3213556213781401e-10 -3.7859619022057112e-11 -1.3213556213781401e-10 2.88374558389576e-09</rotation_covariance>
+        <location_covariance>6.9351845031149766e-07 -8.639750940191066e-07 2.1227448502663303e-06 -8.639750940191066e-07 1.907792146875981e-06 -4.1561195996199438e-06 2.1227448502663303e-06 -4.1561195996199438e-06 9.5469403599173278e-06</location_covariance>
+      </camera>
+      <camera id="461" sensor_id="1" component_id="0" master_id="460" label="out_0000234_A_D"/>
+      <camera id="462" sensor_id="2" component_id="0" master_id="460" label="out_0000234_A_U"/>
+      <camera id="463" sensor_id="3" component_id="0" master_id="460" label="out_0000234_B"/>
+      <camera id="464" sensor_id="4" component_id="0" master_id="460" label="out_0000234_E"/>
+      <camera id="465" sensor_id="5" component_id="0" master_id="460" label="out_0000234_F"/>
+      <camera id="466" sensor_id="6" component_id="0" master_id="460" label="out_0000234_F_D"/>
+      <camera id="467" sensor_id="7" component_id="0" master_id="460" label="out_0000234_F_U"/>
+      <camera id="468" sensor_id="8" component_id="0" master_id="460" label="out_0000234_G"/>
+      <camera id="469" sensor_id="9" component_id="0" master_id="460" label="out_0000234_J"/>
+      <camera id="470" sensor_id="0" component_id="0" label="out_0000240_A">
+        <transform>-0.99475620266425513 0.082513444438748348 0.060428707977621898 0.42256623115438446 -0.069126048036745241 -0.97789254837441275 0.1973518515662277 -2.8569596637386696 0.075376964278303912 0.19213978068232085 0.97846850635855276 7.0907193200306748 0 0 0 1</transform>
+        <rotation_covariance>2.8133215511415457e-09 -1.3701459057889098e-10 5.9486568867701939e-10 -1.3701459057889098e-10 2.6458543867847376e-09 -1.5956686994992896e-10 5.9486568867701949e-10 -1.5956686994992891e-10 2.6561058744540163e-09</rotation_covariance>
+        <location_covariance>6.4045453221287174e-07 -8.0857532867904148e-07 2.2097463010720303e-06 -8.0857532867904148e-07 1.8784010318159268e-06 -4.5705172454510928e-06 2.2097463010720303e-06 -4.5705172454510928e-06 1.1749108846687321e-05</location_covariance>
+      </camera>
+      <camera id="471" sensor_id="1" component_id="0" master_id="470" label="out_0000240_A_D"/>
+      <camera id="472" sensor_id="2" component_id="0" master_id="470" label="out_0000240_A_U"/>
+      <camera id="473" sensor_id="3" component_id="0" master_id="470" label="out_0000240_B"/>
+      <camera id="474" sensor_id="4" component_id="0" master_id="470" label="out_0000240_E"/>
+      <camera id="475" sensor_id="5" component_id="0" master_id="470" label="out_0000240_F"/>
+      <camera id="476" sensor_id="6" component_id="0" master_id="470" label="out_0000240_F_D"/>
+      <camera id="477" sensor_id="7" component_id="0" master_id="470" label="out_0000240_F_U"/>
+      <camera id="478" sensor_id="8" component_id="0" master_id="470" label="out_0000240_G"/>
+      <camera id="479" sensor_id="9" component_id="0" master_id="470" label="out_0000240_J"/>
+      <camera id="480" sensor_id="0" component_id="0" label="out_0000247_A">
+        <transform>-0.83473226203505402 0.14966853324204651 0.52992582582378112 1.0946013977706934 -0.083973566927882659 -0.98569652336488933 0.14611914276979049 -2.7659116199928522 0.54421548193270863 0.077470600769223352 0.83536088922166152 8.1137816686320825 0 0 0 1</transform>
+        <rotation_covariance>3.7251934823942013e-09 -5.3484280654547455e-10 3.4268680597336526e-10 -5.3484280654547455e-10 3.0454459365325161e-09 -8.3070033745985213e-11 3.4268680597336505e-10 -8.3070033745985149e-11 2.6552690831053962e-09</rotation_covariance>
+        <location_covariance>1.161383434241577e-06 -1.1919906028290434e-06 3.74685005736038e-06 -1.1919906028290434e-06 1.7876149482890689e-06 -5.0399818214444535e-06 3.74685005736038e-06 -5.0399818214444535e-06 1.5301381738968227e-05</location_covariance>
+      </camera>
+      <camera id="481" sensor_id="1" component_id="0" master_id="480" label="out_0000247_A_D"/>
+      <camera id="482" sensor_id="2" component_id="0" master_id="480" label="out_0000247_A_U"/>
+      <camera id="483" sensor_id="3" component_id="0" master_id="480" label="out_0000247_B"/>
+      <camera id="484" sensor_id="4" component_id="0" master_id="480" label="out_0000247_E"/>
+      <camera id="485" sensor_id="5" component_id="0" master_id="480" label="out_0000247_F"/>
+      <camera id="486" sensor_id="6" component_id="0" master_id="480" label="out_0000247_F_D"/>
+      <camera id="487" sensor_id="7" component_id="0" master_id="480" label="out_0000247_F_U"/>
+      <camera id="488" sensor_id="8" component_id="0" master_id="480" label="out_0000247_G"/>
+      <camera id="489" sensor_id="9" component_id="0" master_id="480" label="out_0000247_J"/>
+      <camera id="490" sensor_id="0" component_id="0" label="out_0000253_A">
+        <transform>-0.97873938986564823 0.15359354549119419 -0.13593465161195434 1.3706029895325111 -0.17027835056850593 -0.97793355479270772 0.12104233035664308 -2.6984976717281017 -0.11434373639639359 0.14161562482276535 0.98329574633116867 8.8504668195343452 0 0 0 1</transform>
+        <rotation_covariance>3.2734725897943844e-09 -4.645082177699307e-10 6.1912073744794103e-10 -4.6450821776993065e-10 3.4904912451239903e-09 -3.2437006530425225e-10 6.1912073744794114e-10 -3.2437006530425209e-10 3.8805438693536427e-09</rotation_covariance>
+        <location_covariance>1.4119992539708852e-06 -1.3122635012958616e-06 4.5372532778509797e-06 -1.3122635012958616e-06 1.7299012144825912e-06 -5.3221944389309358e-06 4.5372532778509797e-06 -5.3221944389309358e-06 1.7926414905962032e-05</location_covariance>
+      </camera>
+      <camera id="491" sensor_id="1" component_id="0" master_id="490" label="out_0000253_A_D"/>
+      <camera id="492" sensor_id="2" component_id="0" master_id="490" label="out_0000253_A_U"/>
+      <camera id="493" sensor_id="3" component_id="0" master_id="490" label="out_0000253_B"/>
+      <camera id="494" sensor_id="4" component_id="0" master_id="490" label="out_0000253_E"/>
+      <camera id="495" sensor_id="5" component_id="0" master_id="490" label="out_0000253_F"/>
+      <camera id="496" sensor_id="6" component_id="0" master_id="490" label="out_0000253_F_D"/>
+      <camera id="497" sensor_id="7" component_id="0" master_id="490" label="out_0000253_F_U"/>
+      <camera id="498" sensor_id="8" component_id="0" master_id="490" label="out_0000253_G"/>
+      <camera id="499" sensor_id="9" component_id="0" master_id="490" label="out_0000253_J"/>
+      <camera id="500" sensor_id="0" component_id="0" label="out_0000256_A">
+        <transform>-0.83873363779550525 0.11922976653914458 -0.53132866250686961 1.1562279837471274 -0.20132735878249278 -0.97449489835736069 0.099131164025965168 -2.665704594953854 -0.50595768542041464 0.19011563809034365 0.84134586509800979 9.1972577303799454 0 0 0 1</transform>
+        <rotation_covariance>3.0713216963508061e-09 -4.21424612961826e-10 1.4022836055773726e-10 -4.2142461296182595e-10 3.5943971199801405e-09 -3.0559434387848753e-10 1.4022836055773684e-10 -3.0559434387848774e-10 4.3629165313939872e-09</rotation_covariance>
+        <location_covariance>1.2154406670020042e-06 -1.1805690545979169e-06 4.2750535554014124e-06 -1.1805690545979169e-06 1.6990812340355882e-06 -5.4469067472428752e-06 4.2750535554014124e-06 -5.4469067472428752e-06 1.9227189514062708e-05</location_covariance>
+      </camera>
+      <camera id="501" sensor_id="1" component_id="0" master_id="500" label="out_0000256_A_D"/>
+      <camera id="502" sensor_id="2" component_id="0" master_id="500" label="out_0000256_A_U"/>
+      <camera id="503" sensor_id="3" component_id="0" master_id="500" label="out_0000256_B"/>
+      <camera id="504" sensor_id="4" component_id="0" master_id="500" label="out_0000256_E"/>
+      <camera id="505" sensor_id="5" component_id="0" master_id="500" label="out_0000256_F"/>
+      <camera id="506" sensor_id="6" component_id="0" master_id="500" label="out_0000256_F_D"/>
+      <camera id="507" sensor_id="7" component_id="0" master_id="500" label="out_0000256_F_U"/>
+      <camera id="508" sensor_id="8" component_id="0" master_id="500" label="out_0000256_G"/>
+      <camera id="509" sensor_id="9" component_id="0" master_id="500" label="out_0000256_J"/>
+      <camera id="510" sensor_id="0" component_id="0" label="out_0000259_A">
+        <transform>-0.71930274809894379 0.079645809149785377 -0.6901160059455097 0.95629871793300025 -0.19549507185901535 -0.97646709818453692 0.091069660380985712 -2.650877548208975 -0.66662225694627486 0.2004209351538547 0.71794583033534565 9.5665077124049347 0 0 0 1</transform>
+        <rotation_covariance>3.1687733865607199e-09 -3.231817698377343e-10 -1.3119757310453421e-10 -3.231817698377345e-10 3.4497340985232604e-09 -2.489127319762724e-10 -1.31197573104534e-10 -2.489127319762724e-10 4.3926688727794154e-09</rotation_covariance>
+        <location_covariance>1.0564905868331392e-06 -1.0703582283112321e-06 4.0306517771458634e-06 -1.0703582283112321e-06 1.6881072454703838e-06 -5.6101509019980841e-06 4.0306517771458634e-06 -5.6101509019980841e-06 2.0634932392952136e-05</location_covariance>
+      </camera>
+      <camera id="511" sensor_id="1" component_id="0" master_id="510" label="out_0000259_A_D"/>
+      <camera id="512" sensor_id="2" component_id="0" master_id="510" label="out_0000259_A_U"/>
+      <camera id="513" sensor_id="3" component_id="0" master_id="510" label="out_0000259_B"/>
+      <camera id="514" sensor_id="4" component_id="0" master_id="510" label="out_0000259_E"/>
+      <camera id="515" sensor_id="5" component_id="0" master_id="510" label="out_0000259_F"/>
+      <camera id="516" sensor_id="6" component_id="0" master_id="510" label="out_0000259_F_D"/>
+      <camera id="517" sensor_id="7" component_id="0" master_id="510" label="out_0000259_F_U"/>
+      <camera id="518" sensor_id="8" component_id="0" master_id="510" label="out_0000259_G"/>
+      <camera id="519" sensor_id="9" component_id="0" master_id="510" label="out_0000259_J"/>
+      <camera id="520" sensor_id="0" component_id="0" label="out_0000260_A">
+        <transform>-0.67424285149090701 0.089676067421831318 -0.73304486912136979 0.86337567968756845 -0.19983036297783702 -0.97772553086943981 0.064191995748837494 -2.6392353772512362 -0.71096019807409494 0.18976561653215279 0.67714445101220089 9.7000737701751394 0 0 0 1</transform>
+        <rotation_covariance>3.375178869040222e-09 -3.0543509527240422e-10 -2.4984751238751745e-10 -3.0543509527240422e-10 3.4557095636789536e-09 -2.3017468617347008e-10 -2.4984751238751807e-10 -2.3017468617346998e-10 4.3254341740913071e-09</rotation_covariance>
+        <location_covariance>9.907791332462794e-07 -1.0178667709618491e-06 3.892416332671181e-06 -1.0178667709618491e-06 1.6791547552521067e-06 -5.65639490345926e-06 3.892416332671181e-06 -5.65639490345926e-06 2.115618581396773e-05</location_covariance>
+      </camera>
+      <camera id="521" sensor_id="1" component_id="0" master_id="520" label="out_0000260_A_D"/>
+      <camera id="522" sensor_id="2" component_id="0" master_id="520" label="out_0000260_A_U"/>
+      <camera id="523" sensor_id="3" component_id="0" master_id="520" label="out_0000260_B"/>
+      <camera id="524" sensor_id="4" component_id="0" master_id="520" label="out_0000260_E"/>
+      <camera id="525" sensor_id="5" component_id="0" master_id="520" label="out_0000260_F"/>
+      <camera id="526" sensor_id="6" component_id="0" master_id="520" label="out_0000260_F_D"/>
+      <camera id="527" sensor_id="7" component_id="0" master_id="520" label="out_0000260_F_U"/>
+      <camera id="528" sensor_id="8" component_id="0" master_id="520" label="out_0000260_G"/>
+      <camera id="529" sensor_id="9" component_id="0" master_id="520" label="out_0000260_J"/>
+      <camera id="530" sensor_id="0" component_id="0" label="out_0000263_A">
+        <transform>-0.74689170097638768 0.11140695061422975 -0.655546549352094 0.63021209052155414 -0.19113714409337074 -0.98022784351921932 0.051185612602478753 -2.6445682259242993 -0.63688254738250505 0.16352940452560683 0.75341804776304078 10.122246239306044 0 0 0 1</transform>
+        <rotation_covariance>3.370941018772155e-09 -3.0814533223402008e-10 -1.663482376202334e-10 -3.0814533223402008e-10 3.5234134019734054e-09 -2.7048616342657792e-10 -1.663482376202336e-10 -2.7048616342657782e-10 4.435974004483352e-09</rotation_covariance>
+        <location_covariance>8.4192759493547883e-07 -9.004555088566587e-07 3.5628599370105333e-06 -9.004555088566587e-07 1.6890131304813445e-06 -5.8824911572209994e-06 3.5628599370105333e-06 -5.8824911572209994e-06 2.2832933095212988e-05</location_covariance>
+      </camera>
+      <camera id="531" sensor_id="1" component_id="0" master_id="530" label="out_0000263_A_D"/>
+      <camera id="532" sensor_id="2" component_id="0" master_id="530" label="out_0000263_A_U"/>
+      <camera id="533" sensor_id="3" component_id="0" master_id="530" label="out_0000263_B"/>
+      <camera id="534" sensor_id="4" component_id="0" master_id="530" label="out_0000263_E"/>
+      <camera id="535" sensor_id="5" component_id="0" master_id="530" label="out_0000263_F"/>
+      <camera id="536" sensor_id="6" component_id="0" master_id="530" label="out_0000263_F_D"/>
+      <camera id="537" sensor_id="7" component_id="0" master_id="530" label="out_0000263_F_U"/>
+      <camera id="538" sensor_id="8" component_id="0" master_id="530" label="out_0000263_G"/>
+      <camera id="539" sensor_id="9" component_id="0" master_id="530" label="out_0000263_J"/>
+      <camera id="540" sensor_id="0" component_id="0" label="out_0000268_A">
+        <transform>-0.96013038264939365 0.069626598711588272 -0.27074302403826578 0.63947359186373387 -0.10515275768819653 -0.98731095536662039 0.1189956930465067 -2.5484559348987581 -0.25902228835391167 0.14272075590083777 0.95526867423306439 10.982303084496474 0 0 0 1</transform>
+        <rotation_covariance>3.9644810673743293e-09 -4.3978237957542128e-10 -6.9298945179827735e-12 -4.3978237957542128e-10 3.5247390264946617e-09 2.0566950686366991e-11 -6.9298945179829803e-12 2.0566950686366991e-11 4.7254105400318874e-09</rotation_covariance>
+        <location_covariance>8.6499737673174624e-07 -8.7780973729098922e-07 3.8318823246486429e-06 -8.7780973729098922e-07 1.6225864349428087e-06 -6.1017104160627516e-06 3.8318823246486429e-06 -6.1017104160627516e-06 2.642268605527871e-05</location_covariance>
+      </camera>
+      <camera id="541" sensor_id="1" component_id="0" master_id="540" label="out_0000268_A_D"/>
+      <camera id="542" sensor_id="2" component_id="0" master_id="540" label="out_0000268_A_U"/>
+      <camera id="543" sensor_id="3" component_id="0" master_id="540" label="out_0000268_B"/>
+      <camera id="544" sensor_id="4" component_id="0" master_id="540" label="out_0000268_E"/>
+      <camera id="545" sensor_id="5" component_id="0" master_id="540" label="out_0000268_F"/>
+      <camera id="546" sensor_id="6" component_id="0" master_id="540" label="out_0000268_F_D"/>
+      <camera id="547" sensor_id="7" component_id="0" master_id="540" label="out_0000268_F_U"/>
+      <camera id="548" sensor_id="8" component_id="0" master_id="540" label="out_0000268_G"/>
+      <camera id="549" sensor_id="9" component_id="0" master_id="540" label="out_0000268_J"/>
+      <camera id="550" sensor_id="0" component_id="0" label="out_0000272_A">
+        <transform>-0.99581432727918906 0.087877734732231871 0.025126267606383437 0.60317960178876118 -0.081822298174740543 -0.97962973028570322 0.18338675814181526 -2.5283273252997867 0.0407300516437182 0.18056327223079521 0.98271967906133217 11.654338965266671 0 0 0 1</transform>
+        <rotation_covariance>4.2185699816810173e-09 -3.9674625988771528e-10 7.3093320402907896e-11 -3.9674625988771523e-10 3.6545882582771288e-09 2.3883018642109576e-10 7.3093320402907896e-11 2.3883018642109576e-10 4.9706459497126209e-09</rotation_covariance>
+        <location_covariance>8.591415853399908e-07 -8.544589850117562e-07 3.9585660943203611e-06 -8.544589850117562e-07 1.6229061626872517e-06 -6.3786975602349204e-06 3.9585660943203611e-06 -6.3786975602349204e-06 2.9407092780348652e-05</location_covariance>
+      </camera>
+      <camera id="551" sensor_id="1" component_id="0" master_id="550" label="out_0000272_A_D"/>
+      <camera id="552" sensor_id="2" component_id="0" master_id="550" label="out_0000272_A_U"/>
+      <camera id="553" sensor_id="3" component_id="0" master_id="550" label="out_0000272_B"/>
+      <camera id="554" sensor_id="4" component_id="0" master_id="550" label="out_0000272_E"/>
+      <camera id="555" sensor_id="5" component_id="0" master_id="550" label="out_0000272_F"/>
+      <camera id="556" sensor_id="6" component_id="0" master_id="550" label="out_0000272_F_D"/>
+      <camera id="557" sensor_id="7" component_id="0" master_id="550" label="out_0000272_F_U"/>
+      <camera id="558" sensor_id="8" component_id="0" master_id="550" label="out_0000272_G"/>
+      <camera id="559" sensor_id="9" component_id="0" master_id="550" label="out_0000272_J"/>
+      <camera id="560" sensor_id="0" component_id="0" label="out_0000280_A">
+        <transform>-0.28149514863720815 0.0013070636808818481 -0.95956176084619538 0.15189075378829425 -0.17884527370112821 -0.98254789445683399 0.051127323157110827 -2.5133903307092149 -0.94274856105352123 0.18600517918320786 0.27681622775505432 12.37004921624092 0 0 0 1</transform>
+        <rotation_covariance>6.1955466353910498e-09 -5.5019866375674575e-10 5.5383121764224243e-10 -5.5019866375674585e-10 3.7864608714565618e-09 -2.986039099661854e-10 5.5383121764224243e-10 -2.9860390996618545e-10 4.6059333952978731e-09</rotation_covariance>
+        <location_covariance>6.561033437524054e-07 -6.2000019000919501e-07 3.0893824018694704e-06 -6.2000019000919501e-07 1.6337337491219582e-06 -6.6931549681854577e-06 3.0893824018694704e-06 -6.6931549681854577e-06 3.2750715475265293e-05</location_covariance>
+      </camera>
+      <camera id="561" sensor_id="1" component_id="0" master_id="560" label="out_0000280_A_D"/>
+      <camera id="562" sensor_id="2" component_id="0" master_id="560" label="out_0000280_A_U"/>
+      <camera id="563" sensor_id="3" component_id="0" master_id="560" label="out_0000280_B"/>
+      <camera id="564" sensor_id="4" component_id="0" master_id="560" label="out_0000280_E"/>
+      <camera id="565" sensor_id="5" component_id="0" master_id="560" label="out_0000280_F"/>
+      <camera id="566" sensor_id="6" component_id="0" master_id="560" label="out_0000280_F_D"/>
+      <camera id="567" sensor_id="7" component_id="0" master_id="560" label="out_0000280_F_U"/>
+      <camera id="568" sensor_id="8" component_id="0" master_id="560" label="out_0000280_G"/>
+      <camera id="569" sensor_id="9" component_id="0" master_id="560" label="out_0000280_J"/>
+      <camera id="570" sensor_id="0" component_id="0" label="out_0000287_A">
+        <transform>0.48177455460811203 0.022545825532973796 -0.87600511658505298 -0.76682280767968869 -0.10864194743660985 -0.9904196355464796 -0.085240089049460788 -2.5650215355775923 -0.86953447648114368 0.13623740776679463 -0.47470955639806556 12.196543940595442 0 0 0 1</transform>
+        <rotation_covariance>4.4035405740194606e-09 -9.094336357760079e-11 6.8496865920038083e-10 -9.094336357760079e-11 3.662894449282064e-09 -3.4133724297501529e-10 6.8496865920038062e-10 -3.4133724297501524e-10 4.3141201062884653e-09</rotation_covariance>
+        <location_covariance>3.6660812120488593e-07 -1.3977697905805553e-07 7.6071423867189222e-07 -1.3977697905805553e-07 1.6625793198325756e-06 -6.7147520134733016e-06 7.6071423867189222e-07 -6.7147520134733016e-06 3.1815054140079382e-05</location_covariance>
+      </camera>
+      <camera id="571" sensor_id="1" component_id="0" master_id="570" label="out_0000287_A_D"/>
+      <camera id="572" sensor_id="2" component_id="0" master_id="570" label="out_0000287_A_U"/>
+      <camera id="573" sensor_id="3" component_id="0" master_id="570" label="out_0000287_B"/>
+      <camera id="574" sensor_id="4" component_id="0" master_id="570" label="out_0000287_E"/>
+      <camera id="575" sensor_id="5" component_id="0" master_id="570" label="out_0000287_F"/>
+      <camera id="576" sensor_id="6" component_id="0" master_id="570" label="out_0000287_F_D"/>
+      <camera id="577" sensor_id="7" component_id="0" master_id="570" label="out_0000287_F_U"/>
+      <camera id="578" sensor_id="8" component_id="0" master_id="570" label="out_0000287_G"/>
+      <camera id="579" sensor_id="9" component_id="0" master_id="570" label="out_0000287_J"/>
+      <camera id="580" sensor_id="0" component_id="0" label="out_0000290_A">
+        <transform>0.43826018831384256 0.039205621127112844 -0.89799272080076054 -1.231554339363701 -0.097052653232294839 -0.99114350389442007 -0.090638497276066488 -2.5726586329356307 -0.89359319034988594 0.12687582102169376 -0.43057372911080377 11.974466830389602 0 0 0 1</transform>
+        <rotation_covariance>4.382331386570624e-09 -6.8558148513916106e-11 6.2748090482164186e-10 -6.8558148513916003e-11 3.6698463341077186e-09 -2.9973704114207456e-10 6.2748090482164186e-10 -2.9973704114207466e-10 4.1958839938499513e-09</rotation_covariance>
+        <location_covariance>3.5338542350183842e-07 1.153639451388684e-07 -3.9846580672972442e-07 1.153639451388684e-07 1.6600350291817484e-06 -6.6088769974359609e-06 -3.9846580672972442e-07 -6.6088769974359609e-06 3.0679571301690941e-05</location_covariance>
+      </camera>
+      <camera id="581" sensor_id="1" component_id="0" master_id="580" label="out_0000290_A_D"/>
+      <camera id="582" sensor_id="2" component_id="0" master_id="580" label="out_0000290_A_U"/>
+      <camera id="583" sensor_id="3" component_id="0" master_id="580" label="out_0000290_B"/>
+      <camera id="584" sensor_id="4" component_id="0" master_id="580" label="out_0000290_E"/>
+      <camera id="585" sensor_id="5" component_id="0" master_id="580" label="out_0000290_F"/>
+      <camera id="586" sensor_id="6" component_id="0" master_id="580" label="out_0000290_F_D"/>
+      <camera id="587" sensor_id="7" component_id="0" master_id="580" label="out_0000290_F_U"/>
+      <camera id="588" sensor_id="8" component_id="0" master_id="580" label="out_0000290_G"/>
+      <camera id="589" sensor_id="9" component_id="0" master_id="580" label="out_0000290_J"/>
+      <camera id="590" sensor_id="0" component_id="0" label="out_0000294_A">
+        <transform>0.51593409773831989 -0.011146000698939673 -0.85655576202566319 -1.9014371526375256 -0.096271891531449966 -0.99433510387711588 -0.045049129832238188 -2.6275080623336033 -0.85120134497773348 0.10570462556626521 -0.51408443123867642 11.695919592660854 0 0 0 1</transform>
+        <rotation_covariance>4.2386572855166555e-09 -6.2431171988012591e-12 5.8047180566607565e-10 -6.2431171988012074e-12 3.6365295484027369e-09 -2.3434234699208743e-10 5.8047180566607523e-10 -2.3434234699208743e-10 4.2709537960372465e-09</rotation_covariance>
+        <location_covariance>4.9538713680446793e-07 4.9648250899053865e-07 -2.0114562357905366e-06 4.9648250899053865e-07 1.7114474531600555e-06 -6.5826565098722358e-06 -2.0114562357905366e-06 -6.5826565098722358e-06 2.9274860641956727e-05</location_covariance>
+      </camera>
+      <camera id="591" sensor_id="1" component_id="0" master_id="590" label="out_0000294_A_D"/>
+      <camera id="592" sensor_id="2" component_id="0" master_id="590" label="out_0000294_A_U"/>
+      <camera id="593" sensor_id="3" component_id="0" master_id="590" label="out_0000294_B"/>
+      <camera id="594" sensor_id="4" component_id="0" master_id="590" label="out_0000294_E"/>
+      <camera id="595" sensor_id="5" component_id="0" master_id="590" label="out_0000294_F"/>
+      <camera id="596" sensor_id="6" component_id="0" master_id="590" label="out_0000294_F_D"/>
+      <camera id="597" sensor_id="7" component_id="0" master_id="590" label="out_0000294_F_U"/>
+      <camera id="598" sensor_id="8" component_id="0" master_id="590" label="out_0000294_G"/>
+      <camera id="599" sensor_id="9" component_id="0" master_id="590" label="out_0000294_J"/>
+      <camera id="600" sensor_id="0" component_id="0" label="out_0000298_A">
+        <transform>0.55314170520008954 0.029928313519632863 -0.83254942797302289 -2.5442864709467661 -0.079403622270027452 -0.99291085128427814 -0.088448324870117306 -2.7011846320509898 -0.82929447046193183 0.11503189754064555 -0.54684398488916608 11.252326809554495 0 0 0 1</transform>
+        <rotation_covariance>4.1340134657809122e-09 5.1505870763883064e-12 4.9715121172187788e-10 5.1505870763883064e-12 3.6544469524049199e-09 -2.1447708055974908e-10 4.9715121172187788e-10 -2.1447708055974918e-10 4.2169709837663866e-09</rotation_covariance>
+        <location_covariance>8.0561987948984738e-07 8.8490938448430659e-07 -3.4359250434575531e-06 8.8490938448430659e-07 1.7874543415807892e-06 -6.5025853158533277e-06 -3.4359250434575531e-06 -6.5025853158533277e-06 2.7110387212356295e-05</location_covariance>
+      </camera>
+      <camera id="601" sensor_id="1" component_id="0" master_id="600" label="out_0000298_A_D"/>
+      <camera id="602" sensor_id="2" component_id="0" master_id="600" label="out_0000298_A_U"/>
+      <camera id="603" sensor_id="3" component_id="0" master_id="600" label="out_0000298_B"/>
+      <camera id="604" sensor_id="4" component_id="0" master_id="600" label="out_0000298_E"/>
+      <camera id="605" sensor_id="5" component_id="0" master_id="600" label="out_0000298_F"/>
+      <camera id="606" sensor_id="6" component_id="0" master_id="600" label="out_0000298_F_D"/>
+      <camera id="607" sensor_id="7" component_id="0" master_id="600" label="out_0000298_F_U"/>
+      <camera id="608" sensor_id="8" component_id="0" master_id="600" label="out_0000298_G"/>
+      <camera id="609" sensor_id="9" component_id="0" master_id="600" label="out_0000298_J"/>
+      <camera id="610" sensor_id="0" component_id="0" label="out_0000300_A">
+        <transform>0.68503058746864465 0.017260622623124069 -0.72830980024919745 -2.8116485901768278 -0.067510194808153026 -0.99391348451001138 -0.087053770200565705 -2.7342503884612053 -0.72537953364382202 0.10880283183736401 -0.67969587019110356 10.989488113702119 0 0 0 1</transform>
+        <rotation_covariance>3.9816882862987966e-09 -2.5975677646597368e-12 4.1150071057458792e-10 -2.5975677646597885e-12 3.642348571075908e-09 -1.6014982980536471e-10 4.1150071057458874e-10 -1.6014982980536469e-10 4.3228105905687671e-09</rotation_covariance>
+        <location_covariance>9.884357131321511e-07 1.0530124633124128e-06 -3.9631731563701111e-06 1.0530124633124128e-06 1.823313916782725e-06 -6.4246106892357712e-06 -3.9631731563701111e-06 -6.4246106892357712e-06 2.5866092217610477e-05</location_covariance>
+      </camera>
+      <camera id="611" sensor_id="1" component_id="0" master_id="610" label="out_0000300_A_D"/>
+      <camera id="612" sensor_id="2" component_id="0" master_id="610" label="out_0000300_A_U"/>
+      <camera id="613" sensor_id="3" component_id="0" master_id="610" label="out_0000300_B"/>
+      <camera id="614" sensor_id="4" component_id="0" master_id="610" label="out_0000300_E"/>
+      <camera id="615" sensor_id="5" component_id="0" master_id="610" label="out_0000300_F"/>
+      <camera id="616" sensor_id="6" component_id="0" master_id="610" label="out_0000300_F_D"/>
+      <camera id="617" sensor_id="7" component_id="0" master_id="610" label="out_0000300_F_U"/>
+      <camera id="618" sensor_id="8" component_id="0" master_id="610" label="out_0000300_G"/>
+      <camera id="619" sensor_id="9" component_id="0" master_id="610" label="out_0000300_J"/>
+      <camera id="620" sensor_id="0" component_id="0" label="out_0000305_A">
+        <transform>0.81590212145926033 0.040051082058206816 -0.57680121274512342 -3.3357544242814257 -0.044684849382135836 -0.99024638057436531 -0.13196730653864586 -2.8496657911301604 -0.57646074665494296 0.13344668068309473 -0.80615444610861609 10.080007943394559 0 0 0 1</transform>
+        <rotation_covariance>3.7200802755956332e-09 4.2190161575168479e-11 2.5306828931172873e-10 4.2190161575168531e-11 3.5630220575798441e-09 -1.3138245713006343e-10 2.5306828931172893e-10 -1.3138245713006343e-10 4.238696183844021e-09</rotation_covariance>
+        <location_covariance>1.4031412274878483e-06 1.4177397442253232e-06 -4.7381376139563675e-06 1.4177397442253232e-06 1.9480467359058632e-06 -6.1346941526479699e-06 -4.7381376139563675e-06 -6.1346941526479699e-06 2.1761733909202478e-05</location_covariance>
+      </camera>
+      <camera id="621" sensor_id="1" component_id="0" master_id="620" label="out_0000305_A_D"/>
+      <camera id="622" sensor_id="2" component_id="0" master_id="620" label="out_0000305_A_U"/>
+      <camera id="623" sensor_id="3" component_id="0" master_id="620" label="out_0000305_B"/>
+      <camera id="624" sensor_id="4" component_id="0" master_id="620" label="out_0000305_E"/>
+      <camera id="625" sensor_id="5" component_id="0" master_id="620" label="out_0000305_F"/>
+      <camera id="626" sensor_id="6" component_id="0" master_id="620" label="out_0000305_F_D"/>
+      <camera id="627" sensor_id="7" component_id="0" master_id="620" label="out_0000305_F_U"/>
+      <camera id="628" sensor_id="8" component_id="0" master_id="620" label="out_0000305_G"/>
+      <camera id="629" sensor_id="9" component_id="0" master_id="620" label="out_0000305_J"/>
+      <camera id="630" sensor_id="0" component_id="0" label="out_0000312_A">
+        <transform>0.88008568248310737 0.11160520125616769 -0.46151215643882459 -3.9613124632939734 0.030281089537413611 -0.9831973230120149 -0.18001688709239294 -2.9855610448548067 -0.47384833766160972 0.14445519400346396 -0.86867741413067212 8.7799120506338166 0 0 0 1</transform>
+        <rotation_covariance>3.6058769904267669e-09 6.4352835138844183e-11 1.3370957010446846e-10 6.4352835138844183e-11 3.4130629777239549e-09 -1.0085736621662919e-10 1.3370957010446846e-10 -1.0085736621662919e-10 4.0220386565072184e-09</rotation_covariance>
+        <location_covariance>2.0177185128711687e-06 1.8681717126666569e-06 -5.2811918113246173e-06 1.8681717126666569e-06 2.1051389470160427e-06 -5.6148448013810566e-06 -5.2811918113246173e-06 -5.6148448013810566e-06 1.6563228591371015e-05</location_covariance>
+      </camera>
+      <camera id="631" sensor_id="1" component_id="0" master_id="630" label="out_0000312_A_D"/>
+      <camera id="632" sensor_id="2" component_id="0" master_id="630" label="out_0000312_A_U"/>
+      <camera id="633" sensor_id="3" component_id="0" master_id="630" label="out_0000312_B"/>
+      <camera id="634" sensor_id="4" component_id="0" master_id="630" label="out_0000312_E"/>
+      <camera id="635" sensor_id="5" component_id="0" master_id="630" label="out_0000312_F"/>
+      <camera id="636" sensor_id="6" component_id="0" master_id="630" label="out_0000312_F_D"/>
+      <camera id="637" sensor_id="7" component_id="0" master_id="630" label="out_0000312_F_U"/>
+      <camera id="638" sensor_id="8" component_id="0" master_id="630" label="out_0000312_G"/>
+      <camera id="639" sensor_id="9" component_id="0" master_id="630" label="out_0000312_J"/>
+      <camera id="640" sensor_id="0" component_id="0" label="out_0000320_A">
+        <transform>0.91196489269720593 0.097554203428665082 -0.39850120687542739 -4.3637347076862243 0.011255669002527032 -0.97690226959721427 -0.21338993783943314 -3.1944254022874272 -0.41011381883945225 0.19011873408270452 -0.89199861129247893 7.2293842260331616 0 0 0 1</transform>
+        <rotation_covariance>3.1119205861177367e-09 1.0909535923000985e-10 3.7578272292335414e-10 1.0909535923000978e-10 2.8693472388153838e-09 5.0078137239117546e-11 3.7578272292335455e-10 5.0078137239117391e-11 2.9291486924256576e-09</rotation_covariance>
+        <location_covariance>2.4589231010005926e-06 2.2305174365363203e-06 -4.9607990597219466e-06 2.2305174365363203e-06 2.3363408930544159e-06 -5.0208207904189794e-06 -4.9607990597219466e-06 -5.0208207904189794e-06 1.1485700141552445e-05</location_covariance>
+      </camera>
+      <camera id="641" sensor_id="1" component_id="0" master_id="640" label="out_0000320_A_D"/>
+      <camera id="642" sensor_id="2" component_id="0" master_id="640" label="out_0000320_A_U"/>
+      <camera id="643" sensor_id="3" component_id="0" master_id="640" label="out_0000320_B"/>
+      <camera id="644" sensor_id="4" component_id="0" master_id="640" label="out_0000320_E"/>
+      <camera id="645" sensor_id="5" component_id="0" master_id="640" label="out_0000320_F"/>
+      <camera id="646" sensor_id="6" component_id="0" master_id="640" label="out_0000320_F_D"/>
+      <camera id="647" sensor_id="7" component_id="0" master_id="640" label="out_0000320_F_U"/>
+      <camera id="648" sensor_id="8" component_id="0" master_id="640" label="out_0000320_G"/>
+      <camera id="649" sensor_id="9" component_id="0" master_id="640" label="out_0000320_J"/>
+      <camera id="650" sensor_id="0" component_id="0" label="out_0000323_A">
+        <transform>0.97811911567298337 0.11469832557734763 -0.17357214541755514 -4.3582679589765894 0.083136336208338171 -0.98027801185532071 -0.1792857191045451 -3.2220780295254881 -0.1907127294046056 0.16093263678549607 -0.96836426062732894 6.6747189022099596 0 0 0 1</transform>
+        <rotation_covariance>2.8305806234404127e-09 1.1023799543388612e-10 4.0942874378091589e-10 1.102379954338862e-10 2.8035093564140769e-09 1.1132311192914802e-10 4.0942874378091589e-10 1.1132311192914813e-10 3.068614898880783e-09</rotation_covariance>
+        <location_covariance>2.4488813075978443e-06 2.2442592522850565e-06 -4.5884319012172889e-06 2.2442592522850565e-06 2.3692541853120478e-06 -4.723515843539431e-06 -4.5884319012172889e-06 -4.723515843539431e-06 9.9843523438493378e-06</location_covariance>
+      </camera>
+      <camera id="651" sensor_id="1" component_id="0" master_id="650" label="out_0000323_A_D"/>
+      <camera id="652" sensor_id="2" component_id="0" master_id="650" label="out_0000323_A_U"/>
+      <camera id="653" sensor_id="3" component_id="0" master_id="650" label="out_0000323_B"/>
+      <camera id="654" sensor_id="4" component_id="0" master_id="650" label="out_0000323_E"/>
+      <camera id="655" sensor_id="5" component_id="0" master_id="650" label="out_0000323_F"/>
+      <camera id="656" sensor_id="6" component_id="0" master_id="650" label="out_0000323_F_D"/>
+      <camera id="657" sensor_id="7" component_id="0" master_id="650" label="out_0000323_F_U"/>
+      <camera id="658" sensor_id="8" component_id="0" master_id="650" label="out_0000323_G"/>
+      <camera id="659" sensor_id="9" component_id="0" master_id="650" label="out_0000323_J"/>
+      <camera id="660" sensor_id="0" component_id="0" label="out_0000330_A">
+        <transform>0.70700423330002105 -0.031957564387024406 0.70648689172149459 -3.6505425139406626 0.043362393814297191 -0.99513998509341461 -0.088408782770563576 -3.3032903939142302 0.70587868426418954 0.093140346503156335 -0.702182425694868 5.6990945827484616 0 0 0 1</transform>
+        <rotation_covariance>2.3127924447890353e-09 -2.3156882193041567e-11 -2.3047258922144798e-10 -2.3156882193041521e-11 2.5786227251550484e-09 2.2390844073708923e-10 -2.3047258922144839e-10 2.2390844073708931e-10 3.2185948467634826e-09</rotation_covariance>
+        <location_covariance>1.6305109686628948e-06 1.8593339603941313e-06 -3.1744674841839231e-06 1.8593339603941313e-06 2.4640590975218231e-06 -4.231876141413883e-06 -3.1744674841839231e-06 -4.231876141413883e-06 7.6628193398951661e-06</location_covariance>
+      </camera>
+      <camera id="661" sensor_id="1" component_id="0" master_id="660" label="out_0000330_A_D"/>
+      <camera id="662" sensor_id="2" component_id="0" master_id="660" label="out_0000330_A_U"/>
+      <camera id="663" sensor_id="3" component_id="0" master_id="660" label="out_0000330_B"/>
+      <camera id="664" sensor_id="4" component_id="0" master_id="660" label="out_0000330_E"/>
+      <camera id="665" sensor_id="5" component_id="0" master_id="660" label="out_0000330_F"/>
+      <camera id="666" sensor_id="6" component_id="0" master_id="660" label="out_0000330_F_D"/>
+      <camera id="667" sensor_id="7" component_id="0" master_id="660" label="out_0000330_F_U"/>
+      <camera id="668" sensor_id="8" component_id="0" master_id="660" label="out_0000330_G"/>
+      <camera id="669" sensor_id="9" component_id="0" master_id="660" label="out_0000330_J"/>
+      <camera id="670" sensor_id="0" component_id="0" label="out_0000333_A">
+        <transform>0.54489602635968315 -0.021874992492628358 0.83821823241974114 -3.1440482720190803 0.027407053812062307 -0.99866087208589938 -0.04387842255566915 -3.2729334722426997 0.83805559115059314 0.046882270295694806 -0.54356681178411836 5.4896089497745404 0 0 0 1</transform>
+        <rotation_covariance>2.4279241122682537e-09 -8.8726344194702183e-11 -3.8087955420503478e-10 -8.8726344194702221e-11 2.5682652903727497e-09 2.5000540352138136e-10 -3.8087955420503478e-10 2.5000540352138136e-10 3.0763081665657331e-09</rotation_covariance>
+        <location_covariance>1.1473317576295044e-06 1.5210986826988501e-06 -2.5071273309974155e-06 1.5210986826988501e-06 2.4236421148144985e-06 -4.0654188630909142e-06 -2.5071273309974155e-06 -4.0654188630909142e-06 7.19836771496479e-06</location_covariance>
+      </camera>
+      <camera id="671" sensor_id="1" component_id="0" master_id="670" label="out_0000333_A_D"/>
+      <camera id="672" sensor_id="2" component_id="0" master_id="670" label="out_0000333_A_U"/>
+      <camera id="673" sensor_id="3" component_id="0" master_id="670" label="out_0000333_B"/>
+      <camera id="674" sensor_id="4" component_id="0" master_id="670" label="out_0000333_E"/>
+      <camera id="675" sensor_id="5" component_id="0" master_id="670" label="out_0000333_F"/>
+      <camera id="676" sensor_id="6" component_id="0" master_id="670" label="out_0000333_F_D"/>
+      <camera id="677" sensor_id="7" component_id="0" master_id="670" label="out_0000333_F_U"/>
+      <camera id="678" sensor_id="8" component_id="0" master_id="670" label="out_0000333_G"/>
+      <camera id="679" sensor_id="9" component_id="0" master_id="670" label="out_0000333_J"/>
+      <camera id="680" sensor_id="0" component_id="0" label="out_0000338_A">
+        <transform>0.29618615301808082 -0.010004602490999853 0.95507783488538101 -2.2607967003395553 0.067916186387911789 -0.99719338799821777 -0.031507753952934703 -3.2789121898515141 0.95271252452503852 0.074197404682598805 -0.2946753989587434 5.1413335461693697 0 0 0 1</transform>
+        <rotation_covariance>2.7377950700711329e-09 -1.798359424755056e-10 -4.9764506985387544e-10 -1.7983594247550565e-10 2.5840837268104609e-09 2.0531216997341456e-10 -4.9764506985387533e-10 2.0531216997341458e-10 2.8974685544307018e-09</rotation_covariance>
+        <location_covariance>5.2889035361792121e-07 9.4221092021428204e-07 -1.411456973563544e-06 9.4221092021428204e-07 2.4327984696072346e-06 -3.8446415714444819e-06 -1.411456973563544e-06 -3.8446415714444819e-06 6.4401047180862372e-06</location_covariance>
+      </camera>
+      <camera id="681" sensor_id="1" component_id="0" master_id="680" label="out_0000338_A_D"/>
+      <camera id="682" sensor_id="2" component_id="0" master_id="680" label="out_0000338_A_U"/>
+      <camera id="683" sensor_id="3" component_id="0" master_id="680" label="out_0000338_B"/>
+      <camera id="684" sensor_id="4" component_id="0" master_id="680" label="out_0000338_E"/>
+      <camera id="685" sensor_id="5" component_id="0" master_id="680" label="out_0000338_F"/>
+      <camera id="686" sensor_id="6" component_id="0" master_id="680" label="out_0000338_F_D"/>
+      <camera id="687" sensor_id="7" component_id="0" master_id="680" label="out_0000338_F_U"/>
+      <camera id="688" sensor_id="8" component_id="0" master_id="680" label="out_0000338_G"/>
+      <camera id="689" sensor_id="9" component_id="0" master_id="680" label="out_0000338_J"/>
+      <camera id="690" sensor_id="0" component_id="0" label="out_0000342_A">
+        <transform>-0.182162789966964 -0.018837256765613597 0.98308792877798967 -1.5238753209502289 0.075936459742813892 -0.99709994636181387 -0.005034982323285031 -3.1937481850470526 0.98033176630831453 0.073735030499852167 0.1830649426952253 5.2370359663624777 0 0 0 1</transform>
+        <rotation_covariance>3.2613670958193553e-09 -2.5976393686760533e-10 -3.4404823998638304e-10 -2.5976393686760543e-10 2.6001986447119875e-09 8.9763962496545957e-11 -3.4404823998638299e-10 8.9763962496545957e-11 2.5482743440488202e-09</rotation_covariance>
+        <location_covariance>2.548909776242713e-07 4.3880690524684821e-07 -6.2749239017715689e-07 4.3880690524684821e-07 2.3238851514745802e-06 -3.815613232766171e-06 -6.2749239017715689e-07 -3.815613232766171e-06 6.6493507308313849e-06</location_covariance>
+      </camera>
+      <camera id="691" sensor_id="1" component_id="0" master_id="690" label="out_0000342_A_D"/>
+      <camera id="692" sensor_id="2" component_id="0" master_id="690" label="out_0000342_A_U"/>
+      <camera id="693" sensor_id="3" component_id="0" master_id="690" label="out_0000342_B"/>
+      <camera id="694" sensor_id="4" component_id="0" master_id="690" label="out_0000342_E"/>
+      <camera id="695" sensor_id="5" component_id="0" master_id="690" label="out_0000342_F"/>
+      <camera id="696" sensor_id="6" component_id="0" master_id="690" label="out_0000342_F_D"/>
+      <camera id="697" sensor_id="7" component_id="0" master_id="690" label="out_0000342_F_U"/>
+      <camera id="698" sensor_id="8" component_id="0" master_id="690" label="out_0000342_G"/>
+      <camera id="699" sensor_id="9" component_id="0" master_id="690" label="out_0000342_J"/>
+      <camera id="700" sensor_id="0" component_id="0" label="out_0000347_A">
+        <transform>-0.71091430445331172 -0.0067835920557598184 0.70324592754063286 -0.90493903208830084 0.04488869173798514 -0.99835218712756357 0.035747948355985604 -3.148472783415869 0.7018446103502658 0.056981517498493423 0.71004735728390145 5.6551877854624717 0 0 0 1</transform>
+        <rotation_covariance>3.4285347023530466e-09 -3.2228680090593166e-10 2.7452958590616767e-10 -3.2228680090593166e-10 2.6500669096464665e-09 -1.2823522748533269e-10 2.7452958590616788e-10 -1.2823522748533272e-10 2.625420178463013e-09</rotation_covariance>
+        <location_covariance>1.989071810434342e-07 3.0721716962514829e-08 6.085856001405832e-08 3.0721716962514829e-08 2.2667406440028887e-06 -4.0381977280350044e-06 6.085856001405832e-08 -4.0381977280350044e-06 7.6120255382385594e-06</location_covariance>
+      </camera>
+      <camera id="701" sensor_id="1" component_id="0" master_id="700" label="out_0000347_A_D"/>
+      <camera id="702" sensor_id="2" component_id="0" master_id="700" label="out_0000347_A_U"/>
+      <camera id="703" sensor_id="3" component_id="0" master_id="700" label="out_0000347_B"/>
+      <camera id="704" sensor_id="4" component_id="0" master_id="700" label="out_0000347_E"/>
+      <camera id="705" sensor_id="5" component_id="0" master_id="700" label="out_0000347_F"/>
+      <camera id="706" sensor_id="6" component_id="0" master_id="700" label="out_0000347_F_D"/>
+      <camera id="707" sensor_id="7" component_id="0" master_id="700" label="out_0000347_F_U"/>
+      <camera id="708" sensor_id="8" component_id="0" master_id="700" label="out_0000347_G"/>
+      <camera id="709" sensor_id="9" component_id="0" master_id="700" label="out_0000347_J"/>
+      <camera id="710" sensor_id="0" component_id="0" label="out_0000353_A">
+        <transform>-0.91483595219315506 -0.010797722482169222 -0.40368129726808266 -0.95126300287400856 0.026751354089903239 -0.99906708732725025 -0.033901623468514622 -3.1098786200051243 -0.4029386375482012 -0.041813445309402439 0.91427134383735187 6.067654076053822 0 0 0 1</transform>
+        <rotation_covariance>2.3637901775655952e-09 -1.1040765548997393e-10 2.4915425683916283e-10 -1.1040765548997398e-10 2.8735855113474721e-09 -5.2626229677840408e-10 2.4915425683916283e-10 -5.2626229677840418e-10 3.3146309940318857e-09</rotation_covariance>
+        <location_covariance>1.9083145234711524e-07 6.2285643479909196e-08 9.3720683161579175e-09 6.2285643479909196e-08 2.213633729213981e-06 -4.2579301349733855e-06 9.3720683161579175e-09 -4.2579301349733855e-06 8.6305233788164657e-06</location_covariance>
+      </camera>
+      <camera id="711" sensor_id="1" component_id="0" master_id="710" label="out_0000353_A_D"/>
+      <camera id="712" sensor_id="2" component_id="0" master_id="710" label="out_0000353_A_U"/>
+      <camera id="713" sensor_id="3" component_id="0" master_id="710" label="out_0000353_B"/>
+      <camera id="714" sensor_id="4" component_id="0" master_id="710" label="out_0000353_E"/>
+      <camera id="715" sensor_id="5" component_id="0" master_id="710" label="out_0000353_F"/>
+      <camera id="716" sensor_id="6" component_id="0" master_id="710" label="out_0000353_F_D"/>
+      <camera id="717" sensor_id="7" component_id="0" master_id="710" label="out_0000353_F_U"/>
+      <camera id="718" sensor_id="8" component_id="0" master_id="710" label="out_0000353_G"/>
+      <camera id="719" sensor_id="9" component_id="0" master_id="710" label="out_0000353_J"/>
+      <camera id="720" sensor_id="0" component_id="0" label="out_0000356_A">
+        <transform>-0.7050324677690496 0.021609453566587056 -0.70884571728129808 -1.3960813559962548 0.010156608041107993 -0.99912545318796653 -0.040560721209571549 -3.1397923136796884 -0.70910229354063126 -0.035796093480921221 0.70419640512212345 5.9513704329474377 0 0 0 1</transform>
+        <rotation_covariance>2.2914215591893976e-09 7.8883350770351674e-11 -8.4401001990827224e-11 7.8883350770351674e-11 2.6105538990742019e-09 -4.2117327272364317e-10 -8.4401001990827224e-11 -4.2117327272364312e-10 3.085246322746422e-09</rotation_covariance>
+        <location_covariance>2.1913045348499538e-07 3.5208382498568596e-07 -5.5423289030456055e-07 3.5208382498568596e-07 2.2487939739019935e-06 -4.2159167311113886e-06 -5.5423289030456055e-07 -4.2159167311113886e-06 8.3196065674670401e-06</location_covariance>
+      </camera>
+      <camera id="721" sensor_id="1" component_id="0" master_id="720" label="out_0000356_A_D"/>
+      <camera id="722" sensor_id="2" component_id="0" master_id="720" label="out_0000356_A_U"/>
+      <camera id="723" sensor_id="3" component_id="0" master_id="720" label="out_0000356_B"/>
+      <camera id="724" sensor_id="4" component_id="0" master_id="720" label="out_0000356_E"/>
+      <camera id="725" sensor_id="5" component_id="0" master_id="720" label="out_0000356_F"/>
+      <camera id="726" sensor_id="6" component_id="0" master_id="720" label="out_0000356_F_D"/>
+      <camera id="727" sensor_id="7" component_id="0" master_id="720" label="out_0000356_F_U"/>
+      <camera id="728" sensor_id="8" component_id="0" master_id="720" label="out_0000356_G"/>
+      <camera id="729" sensor_id="9" component_id="0" master_id="720" label="out_0000356_J"/>
+      <camera id="730" sensor_id="0" component_id="0" label="out_0000359_A">
+        <transform>-0.54531468404519878 0.016058947627443476 -0.83807756536360301 -1.9010140308679651 -0.010475358371608125 -0.99986894877061383 -0.012343101366103948 -3.2221636231938469 -0.83816595148673956 0.0020482884187937311 0.54541144311692058 5.900193051199234 0 0 0 1</transform>
+        <rotation_covariance>2.3709380444888557e-09 1.5114499684160434e-10 -2.2776808416761919e-10 1.5114499684160429e-10 2.5475806862554931e-09 -3.5682614604380923e-10 -2.2776808416761888e-10 -3.5682614604380928e-10 2.9671652377861889e-09</rotation_covariance>
+        <location_covariance>3.5818907210720428e-07 6.9713239920235021e-07 -1.1820143190058935e-06 6.9713239920235021e-07 2.3548291517427588e-06 -4.281889776267237e-06 -1.1820143190058935e-06 -4.281889776267237e-06 8.1787972082428558e-06</location_covariance>
+      </camera>
+      <camera id="731" sensor_id="1" component_id="0" master_id="730" label="out_0000359_A_D"/>
+      <camera id="732" sensor_id="2" component_id="0" master_id="730" label="out_0000359_A_U"/>
+      <camera id="733" sensor_id="3" component_id="0" master_id="730" label="out_0000359_B"/>
+      <camera id="734" sensor_id="4" component_id="0" master_id="730" label="out_0000359_E"/>
+      <camera id="735" sensor_id="5" component_id="0" master_id="730" label="out_0000359_F"/>
+      <camera id="736" sensor_id="6" component_id="0" master_id="730" label="out_0000359_F_D"/>
+      <camera id="737" sensor_id="7" component_id="0" master_id="730" label="out_0000359_F_U"/>
+      <camera id="738" sensor_id="8" component_id="0" master_id="730" label="out_0000359_G"/>
+      <camera id="739" sensor_id="9" component_id="0" master_id="730" label="out_0000359_J"/>
+      <camera id="740" sensor_id="0" component_id="0" label="out_0000365_A">
+        <transform>-0.64168223855503859 0.042815869699602688 -0.76577457911898705 -3.0400273452179389 -0.029687137785012016 -0.99907891005667182 -0.030983952783763757 -3.2611069415129763 -0.76639583674047218 0.0028518032609958742 0.64236227212145025 5.9668378515165656 0 0 0 1</transform>
+        <rotation_covariance>2.4325931146634559e-09 9.9026600556172974e-11 -1.5890511126150477e-10 9.9026600556173e-11 2.6007098267596991e-09 -3.5008225621402187e-10 -1.5890511126150457e-10 -3.5008225621402192e-10 3.10750037393942e-09</rotation_covariance>
+        <location_covariance>1.0552620959617558e-06 1.4520250385227324e-06 -2.5926667049398505e-06 1.4520250385227324e-06 2.4042292132626854e-06 -4.3587467619195169e-06 -2.5926667049398505e-06 -4.3587467619195169e-06 8.3028477946539695e-06</location_covariance>
+      </camera>
+      <camera id="741" sensor_id="1" component_id="0" master_id="740" label="out_0000365_A_D"/>
+      <camera id="742" sensor_id="2" component_id="0" master_id="740" label="out_0000365_A_U"/>
+      <camera id="743" sensor_id="3" component_id="0" master_id="740" label="out_0000365_B"/>
+      <camera id="744" sensor_id="4" component_id="0" master_id="740" label="out_0000365_E"/>
+      <camera id="745" sensor_id="5" component_id="0" master_id="740" label="out_0000365_F"/>
+      <camera id="746" sensor_id="6" component_id="0" master_id="740" label="out_0000365_F_D"/>
+      <camera id="747" sensor_id="7" component_id="0" master_id="740" label="out_0000365_F_U"/>
+      <camera id="748" sensor_id="8" component_id="0" master_id="740" label="out_0000365_G"/>
+      <camera id="749" sensor_id="9" component_id="0" master_id="740" label="out_0000365_J"/>
+      <camera id="750" sensor_id="0" component_id="0" label="out_0000368_A">
+        <transform>-0.51368277821910935 0.029945156572191895 -0.8574574572297825 -3.6231827792372608 -0.002799330971313534 -0.99944391833910085 -0.033226763927548759 -3.2621332983298426 -0.85797562151101381 -0.014667709188926653 0.51348095505085545 6.0730315611580599 0 0 0 1</transform>
+        <rotation_covariance>2.5247015255449444e-09 1.340387242679664e-10 -2.4799602519138534e-10 1.3403872426796642e-10 2.651149454747162e-09 -3.1784948373984945e-10 -2.4799602519138534e-10 -3.1784948373984945e-10 3.0566763394604649e-09</rotation_covariance>
+        <location_covariance>1.6000266189088146e-06 1.8230590854439646e-06 -3.3420967235497233e-06 1.8230590854439646e-06 2.409502536852079e-06 -4.4221437923790803e-06 -3.3420967235497233e-06 -4.4221437923790803e-06 8.5417811295759305e-06</location_covariance>
+      </camera>
+      <camera id="751" sensor_id="1" component_id="0" master_id="750" label="out_0000368_A_D"/>
+      <camera id="752" sensor_id="2" component_id="0" master_id="750" label="out_0000368_A_U"/>
+      <camera id="753" sensor_id="3" component_id="0" master_id="750" label="out_0000368_B"/>
+      <camera id="754" sensor_id="4" component_id="0" master_id="750" label="out_0000368_E"/>
+      <camera id="755" sensor_id="5" component_id="0" master_id="750" label="out_0000368_F"/>
+      <camera id="756" sensor_id="6" component_id="0" master_id="750" label="out_0000368_F_D"/>
+      <camera id="757" sensor_id="7" component_id="0" master_id="750" label="out_0000368_F_U"/>
+      <camera id="758" sensor_id="8" component_id="0" master_id="750" label="out_0000368_G"/>
+      <camera id="759" sensor_id="9" component_id="0" master_id="750" label="out_0000368_J"/>
+      <camera id="760" sensor_id="0" component_id="0" label="out_0000374_A">
+        <transform>-0.19506613664933048 0.032652738711471729 -0.98024639809965419 -4.787326934770185 -0.063863201059104119 -0.99774752750636053 -0.020527126087922731 -3.356811258587467 -0.97870868693559143 0.058597525626816138 0.19671206395954813 6.0022411441229346 0 0 0 1</transform>
+        <rotation_covariance>2.9008962461396418e-09 1.8049095452579341e-10 -4.3981386085435844e-10 1.8049095452579339e-10 2.7670842218610527e-09 -1.8651491390315901e-10 -4.3981386085435865e-10 -1.8651491390315904e-10 2.9091750117494415e-09</rotation_covariance>
+        <location_covariance>3.0373338678846766e-06 2.6012199829961815e-06 -4.6393192656440691e-06 2.6012199829961815e-06 2.5418710355944268e-06 -4.4773703912355789e-06 -4.6393192656440691e-06 -4.4773703912355789e-06 8.3482694242973122e-06</location_covariance>
+      </camera>
+      <camera id="761" sensor_id="1" component_id="0" master_id="760" label="out_0000374_A_D"/>
+      <camera id="762" sensor_id="2" component_id="0" master_id="760" label="out_0000374_A_U"/>
+      <camera id="763" sensor_id="3" component_id="0" master_id="760" label="out_0000374_B"/>
+      <camera id="764" sensor_id="4" component_id="0" master_id="760" label="out_0000374_E"/>
+      <camera id="765" sensor_id="5" component_id="0" master_id="760" label="out_0000374_F"/>
+      <camera id="766" sensor_id="6" component_id="0" master_id="760" label="out_0000374_F_D"/>
+      <camera id="767" sensor_id="7" component_id="0" master_id="760" label="out_0000374_F_U"/>
+      <camera id="768" sensor_id="8" component_id="0" master_id="760" label="out_0000374_G"/>
+      <camera id="769" sensor_id="9" component_id="0" master_id="760" label="out_0000374_J"/>
+      <camera id="770" sensor_id="0" component_id="0" label="out_0000379_A">
+        <transform>0.044119375181930598 0.13114804821005704 -0.99038056835958188 -5.7084303832455507 -0.058830527590358214 -0.98928442993040488 -0.13362367200729694 -3.4061478408976433 -0.99729255976217734 0.064160004270310184 -0.03593110205709843 5.7071064605867337 0 0 0 1</transform>
+        <rotation_covariance>3.2490553209795557e-09 2.2656601019623571e-10 -3.9572970078740165e-10 2.2656601019623569e-10 2.9125833277960836e-09 -1.4280482007274203e-10 -3.9572970078740165e-10 -1.4280482007274198e-10 2.8072829034306914e-09</rotation_covariance>
+        <location_covariance>4.5139041622107568e-06 3.2077341264219013e-06 -5.4009551279070681e-06 3.2077341264219013e-06 2.6238178013644701e-06 -4.3457172723766016e-06 -5.4009551279070681e-06 -4.3457172723766016e-06 7.6997830431660904e-06</location_covariance>
+      </camera>
+      <camera id="771" sensor_id="1" component_id="0" master_id="770" label="out_0000379_A_D"/>
+      <camera id="772" sensor_id="2" component_id="0" master_id="770" label="out_0000379_A_U"/>
+      <camera id="773" sensor_id="3" component_id="0" master_id="770" label="out_0000379_B"/>
+      <camera id="774" sensor_id="4" component_id="0" master_id="770" label="out_0000379_E"/>
+      <camera id="775" sensor_id="5" component_id="0" master_id="770" label="out_0000379_F"/>
+      <camera id="776" sensor_id="6" component_id="0" master_id="770" label="out_0000379_F_D"/>
+      <camera id="777" sensor_id="7" component_id="0" master_id="770" label="out_0000379_F_U"/>
+      <camera id="778" sensor_id="8" component_id="0" master_id="770" label="out_0000379_G"/>
+      <camera id="779" sensor_id="9" component_id="0" master_id="770" label="out_0000379_J"/>
+      <camera id="780" sensor_id="0" component_id="0" label="out_0000380_A">
+        <transform>0.067950983522745922 0.11706385784582388 -0.99079701100908857 -5.8710249915581691 -0.059085424017862487 -0.99087714597624554 -0.12112553096106421 -3.444432495055668 -0.99593753644840644 0.066772260469621814 -0.060414308941309836 5.6273483321900475 0 0 0 1</transform>
+        <rotation_covariance>3.3423491001077674e-09 2.0841350919765058e-10 -3.9879940821449111e-10 2.0841350919765068e-10 2.957849916267884e-09 -1.3586695776945681e-10 -3.9879940821449106e-10 -1.3586695776945678e-10 2.8153285328610501e-09</rotation_covariance>
+        <location_covariance>4.8021033688054611e-06 3.34117389697901e-06 -5.4958581109950537e-06 3.34117389697901e-06 2.6760454621286247e-06 -4.3366102852033227e-06 -5.4958581109950537e-06 -4.3366102852033227e-06 7.5356374107369478e-06</location_covariance>
+      </camera>
+      <camera id="781" sensor_id="1" component_id="0" master_id="780" label="out_0000380_A_D"/>
+      <camera id="782" sensor_id="2" component_id="0" master_id="780" label="out_0000380_A_U"/>
+      <camera id="783" sensor_id="3" component_id="0" master_id="780" label="out_0000380_B"/>
+      <camera id="784" sensor_id="4" component_id="0" master_id="780" label="out_0000380_E"/>
+      <camera id="785" sensor_id="5" component_id="0" master_id="780" label="out_0000380_F"/>
+      <camera id="786" sensor_id="6" component_id="0" master_id="780" label="out_0000380_F_D"/>
+      <camera id="787" sensor_id="7" component_id="0" master_id="780" label="out_0000380_F_U"/>
+      <camera id="788" sensor_id="8" component_id="0" master_id="780" label="out_0000380_G"/>
+      <camera id="789" sensor_id="9" component_id="0" master_id="780" label="out_0000380_J"/>
+      <camera id="790" sensor_id="0" component_id="0" label="out_0000387_A">
+        <transform>0.35424487380232311 0.1076549167476336 -0.92893540587321644 -6.9527748172849213 -0.086066579291588868 -0.98538233959639643 -0.14701764771814921 -3.5260869638641745 -0.93118371619880747 0.13203054082898194 -0.33980115210897366 4.8405124055897204 0 0 0 1</transform>
+        <rotation_covariance>3.7881943312854858e-09 1.7881615432195446e-10 -2.7106104535626431e-10 1.7881615432195446e-10 3.2114302188651542e-09 -2.2887074843156988e-11 -2.7106104535626431e-10 -2.2887074843156988e-11 2.9723107231087627e-09</rotation_covariance>
+        <location_covariance>6.862512941671223e-06 4.0600653024632601e-06 -5.7110968095330666e-06 4.0600653024632601e-06 2.8254727804683447e-06 -3.9517276189701016e-06 -5.7110968095330666e-06 -3.9517276189701016e-06 6.140435951785265e-06</location_covariance>
+      </camera>
+      <camera id="791" sensor_id="1" component_id="0" master_id="790" label="out_0000387_A_D"/>
+      <camera id="792" sensor_id="2" component_id="0" master_id="790" label="out_0000387_A_U"/>
+      <camera id="793" sensor_id="3" component_id="0" master_id="790" label="out_0000387_B"/>
+      <camera id="794" sensor_id="4" component_id="0" master_id="790" label="out_0000387_E"/>
+      <camera id="795" sensor_id="5" component_id="0" master_id="790" label="out_0000387_F"/>
+      <camera id="796" sensor_id="6" component_id="0" master_id="790" label="out_0000387_F_D"/>
+      <camera id="797" sensor_id="7" component_id="0" master_id="790" label="out_0000387_F_U"/>
+      <camera id="798" sensor_id="8" component_id="0" master_id="790" label="out_0000387_G"/>
+      <camera id="799" sensor_id="9" component_id="0" master_id="790" label="out_0000387_J"/>
+      <camera id="800" sensor_id="0" component_id="0" label="out_0000390_A">
+        <transform>0.44790714480080907 0.12983952727215264 -0.88460210648298299 -7.4658320840034271 -0.079800087797309016 -0.97964483126954383 -0.18419541404282969 -3.6113508247231358 -0.89051172683122415 0.15309376775235312 -0.42842871361693313 4.5479763181816066 0 0 0 1</transform>
+        <rotation_covariance>3.8981854334065294e-09 1.8242361963227848e-10 -1.8489667596087681e-10 1.8242361963227864e-10 3.2761626398145103e-09 -7.1815530835433609e-12 -1.8489667596087702e-10 -7.1815530835432833e-12 2.9677490468376347e-09</rotation_covariance>
+        <location_covariance>7.9258485791518702e-06 4.4398886495265702e-06 -5.7937791218229004e-06 4.4398886495265702e-06 2.9455633075117864e-06 -3.8493369021615842e-06 -5.7937791218229004e-06 -3.8493369021615842e-06 5.7069834401750849e-06</location_covariance>
+      </camera>
+      <camera id="801" sensor_id="1" component_id="0" master_id="800" label="out_0000390_A_D"/>
+      <camera id="802" sensor_id="2" component_id="0" master_id="800" label="out_0000390_A_U"/>
+      <camera id="803" sensor_id="3" component_id="0" master_id="800" label="out_0000390_B"/>
+      <camera id="804" sensor_id="4" component_id="0" master_id="800" label="out_0000390_E"/>
+      <camera id="805" sensor_id="5" component_id="0" master_id="800" label="out_0000390_F"/>
+      <camera id="806" sensor_id="6" component_id="0" master_id="800" label="out_0000390_F_D"/>
+      <camera id="807" sensor_id="7" component_id="0" master_id="800" label="out_0000390_F_U"/>
+      <camera id="808" sensor_id="8" component_id="0" master_id="800" label="out_0000390_G"/>
+      <camera id="809" sensor_id="9" component_id="0" master_id="800" label="out_0000390_J"/>
+      <camera id="810" sensor_id="0" component_id="0" label="out_0000393_A">
+        <transform>0.45346399280445349 0.12495831757188888 -0.88247143075537926 -7.9778754015830344 -0.095962130868585238 -0.97752204400046083 -0.18772832213686216 -3.6842247695764088 -0.88609349205882504 0.16981187344459781 -0.43127978270286738 4.2125369554400152 0 0 0 1</transform>
+        <rotation_covariance>4.0343712347751618e-09 1.6626127512270273e-10 -1.732237351563805e-10 1.6626127512270293e-10 3.3847636045863568e-09 -2.4351164459618718e-11 -1.7322373515638071e-10 -2.4351164459618796e-11 3.104723720350237e-09</rotation_covariance>
+        <location_covariance>9.0685178286960404e-06 4.815483000682313e-06 -5.7705701165270992e-06 4.815483000682313e-06 3.0574389856213152e-06 -3.7082833353447203e-06 -5.7705701165270992e-06 -3.7082833353447203e-06 5.2652691938668236e-06</location_covariance>
+      </camera>
+      <camera id="811" sensor_id="1" component_id="0" master_id="810" label="out_0000393_A_D"/>
+      <camera id="812" sensor_id="2" component_id="0" master_id="810" label="out_0000393_A_U"/>
+      <camera id="813" sensor_id="3" component_id="0" master_id="810" label="out_0000393_B"/>
+      <camera id="814" sensor_id="4" component_id="0" master_id="810" label="out_0000393_E"/>
+      <camera id="815" sensor_id="5" component_id="0" master_id="810" label="out_0000393_F"/>
+      <camera id="816" sensor_id="6" component_id="0" master_id="810" label="out_0000393_F_D"/>
+      <camera id="817" sensor_id="7" component_id="0" master_id="810" label="out_0000393_F_U"/>
+      <camera id="818" sensor_id="8" component_id="0" master_id="810" label="out_0000393_G"/>
+      <camera id="819" sensor_id="9" component_id="0" master_id="810" label="out_0000393_J"/>
+      <camera id="820" sensor_id="0" component_id="0" label="out_0000400_A">
+        <transform>0.57311569795641337 0.075850538458273525 -0.81595655066401807 -9.177447318241482 -0.081692644670638456 -0.98545886978948782 -0.14898700533919623 -3.7298354630279875 -0.81539236479295618 0.1520444401114851 -0.55858551688039282 3.4781977657067422 0 0 0 1</transform>
+        <rotation_covariance>4.5995343254741787e-09 1.3208954384268162e-10 -3.0188113896178484e-10 1.3208954384268173e-10 3.901092784288291e-09 9.8028476867392598e-11 -3.0188113896178546e-10 9.8028476867392494e-11 4.4153289756326695e-09</rotation_covariance>
+        <location_covariance>1.1492026921382196e-05 5.4385173300789279e-06 -5.5519403106435291e-06 5.4385173300789279e-06 3.2281091582638813e-06 -3.4014332062091986e-06 -5.5519403106435291e-06 -3.4014332062091986e-06 4.627260838365057e-06</location_covariance>
+      </camera>
+      <camera id="821" sensor_id="1" component_id="0" master_id="820" label="out_0000400_A_D"/>
+      <camera id="822" sensor_id="2" component_id="0" master_id="820" label="out_0000400_A_U"/>
+      <camera id="823" sensor_id="3" component_id="0" master_id="820" label="out_0000400_B"/>
+      <camera id="824" sensor_id="4" component_id="0" master_id="820" label="out_0000400_E"/>
+      <camera id="825" sensor_id="5" component_id="0" master_id="820" label="out_0000400_F"/>
+      <camera id="826" sensor_id="6" component_id="0" master_id="820" label="out_0000400_F_D"/>
+      <camera id="827" sensor_id="7" component_id="0" master_id="820" label="out_0000400_F_U"/>
+      <camera id="828" sensor_id="8" component_id="0" master_id="820" label="out_0000400_G"/>
+      <camera id="829" sensor_id="9" component_id="0" master_id="820" label="out_0000400_J"/>
+      <camera id="830" sensor_id="0" component_id="0" label="out_0000403_A">
+        <transform>0.56781105374072816 0.065251037704638803 -0.82056864997897239 -9.6654576744861131 -0.09302561145408493 -0.98538062130532444 -0.14272794670114974 -3.7641302354560362 -0.81788559277165318 0.15737640621897728 -0.55343999123858156 3.1038985339266079 0 0 0 1</transform>
+        <rotation_covariance>4.7300559177661079e-09 1.6394166495971313e-10 -3.7641222979485358e-10 1.6394166495971313e-10 4.0639539685755097e-09 1.5565303722389477e-10 -3.7641222979485358e-10 1.5565303722389477e-10 4.6528166502871233e-09</rotation_covariance>
+        <location_covariance>1.2378951499996666e-05 5.6427585920474984e-06 -5.355110938672984e-06 5.6427585920474984e-06 3.2928171269327338e-06 -3.2813968429521894e-06 -5.355110938672984e-06 -3.2813968429521894e-06 4.4372279755797449e-06</location_covariance>
+      </camera>
+      <camera id="831" sensor_id="1" component_id="0" master_id="830" label="out_0000403_A_D"/>
+      <camera id="832" sensor_id="2" component_id="0" master_id="830" label="out_0000403_A_U"/>
+      <camera id="833" sensor_id="3" component_id="0" master_id="830" label="out_0000403_B"/>
+      <camera id="834" sensor_id="4" component_id="0" master_id="830" label="out_0000403_E"/>
+      <camera id="835" sensor_id="5" component_id="0" master_id="830" label="out_0000403_F"/>
+      <camera id="836" sensor_id="6" component_id="0" master_id="830" label="out_0000403_F_D"/>
+      <camera id="837" sensor_id="7" component_id="0" master_id="830" label="out_0000403_F_U"/>
+      <camera id="838" sensor_id="8" component_id="0" master_id="830" label="out_0000403_G"/>
+      <camera id="839" sensor_id="9" component_id="0" master_id="830" label="out_0000403_J"/>
+      <camera id="840" sensor_id="0" component_id="0" label="out_0000408_A">
+        <transform>0.59686394857611336 0.087284612654040861 -0.79758060613580972 -10.350570435335628 -0.048465432129270875 -0.98832768838282037 -0.14442812144590611 -3.6880658897370315 -0.80087734939793032 0.12485902758593176 -0.58566688010475798 2.4169096707908939 0 0 0 1</transform>
+        <rotation_covariance>5.2137594975740387e-09 1.9055674735950363e-10 -4.377846801964623e-10 1.9055674735950368e-10 4.5355333595648443e-09 2.6667416352614594e-10 -4.377846801964623e-10 2.6667416352614588e-10 5.4730077439842475e-09</rotation_covariance>
+        <location_covariance>1.3695269217563046e-05 5.8025100891146455e-06 -4.844787944052899e-06 5.8025100891146455e-06 3.3301571932197504e-06 -3.0557076814696582e-06 -4.844787944052899e-06 -3.0557076814696582e-06 4.24914038190737e-06</location_covariance>
+      </camera>
+      <camera id="841" sensor_id="1" component_id="0" master_id="840" label="out_0000408_A_D"/>
+      <camera id="842" sensor_id="2" component_id="0" master_id="840" label="out_0000408_A_U"/>
+      <camera id="843" sensor_id="3" component_id="0" master_id="840" label="out_0000408_B"/>
+      <camera id="844" sensor_id="4" component_id="0" master_id="840" label="out_0000408_E"/>
+      <camera id="845" sensor_id="5" component_id="0" master_id="840" label="out_0000408_F"/>
+      <camera id="846" sensor_id="6" component_id="0" master_id="840" label="out_0000408_F_D"/>
+      <camera id="847" sensor_id="7" component_id="0" master_id="840" label="out_0000408_F_U"/>
+      <camera id="848" sensor_id="8" component_id="0" master_id="840" label="out_0000408_G"/>
+      <camera id="849" sensor_id="9" component_id="0" master_id="840" label="out_0000408_J"/>
+      <camera id="850" sensor_id="0" component_id="0" label="out_0000413_A">
+        <transform>0.64171270791717228 0.11470587705912885 -0.75831877351527199 -11.071617775848194 -0.020531795948374509 -0.9858286113958421 -0.16649442725953439 -3.6077973444888336 -0.76667023279422086 0.12241123609147142 -0.63026363009919384 1.8018764414516018 0 0 0 1</transform>
+        <rotation_covariance>5.5055404922025924e-09 1.9984466214350112e-10 -4.8847492480721355e-10 1.9984466214350125e-10 4.9266425377291051e-09 2.8037502741286856e-10 -4.8847492480721272e-10 2.8037502741286867e-10 6.1143732072624547e-09</rotation_covariance>
+        <location_covariance>1.4909787777080555e-05 5.9242567145054632e-06 -4.3740730507417828e-06 5.9242567145054632e-06 3.4028482549049469e-06 -2.9353878065314754e-06 -4.3740730507417828e-06 -2.9353878065314754e-06 4.2926241807060098e-06</location_covariance>
+      </camera>
+      <camera id="851" sensor_id="1" component_id="0" master_id="850" label="out_0000413_A_D"/>
+      <camera id="852" sensor_id="2" component_id="0" master_id="850" label="out_0000413_A_U"/>
+      <camera id="853" sensor_id="3" component_id="0" master_id="850" label="out_0000413_B"/>
+      <camera id="854" sensor_id="4" component_id="0" master_id="850" label="out_0000413_E"/>
+      <camera id="855" sensor_id="5" component_id="0" master_id="850" label="out_0000413_F"/>
+      <camera id="856" sensor_id="6" component_id="0" master_id="850" label="out_0000413_F_D"/>
+      <camera id="857" sensor_id="7" component_id="0" master_id="850" label="out_0000413_F_U"/>
+      <camera id="858" sensor_id="8" component_id="0" master_id="850" label="out_0000413_G"/>
+      <camera id="859" sensor_id="9" component_id="0" master_id="850" label="out_0000413_J"/>
+      <camera id="860" sensor_id="0" component_id="0" label="out_0000420_A">
+        <transform>0.66962693057004685 0.13750159720644167 -0.7298582633779076 -12.065581966597462 -0.039360718224177652 -0.97476127430386428 -0.21975256990165798 -3.4794799168654715 -0.74165390022315314 0.17587998431653232 -0.64731423852762715 0.96373370382990409 0 0 0 1</transform>
+        <rotation_covariance>5.708712142953978e-09 2.2339078130505304e-10 -3.2910414599261321e-10 2.2339078130505304e-10 5.4815586434577134e-09 2.5755579320699423e-10 -3.2910414599261279e-10 2.5755579320699438e-10 6.6445140597194647e-09</rotation_covariance>
+        <location_covariance>1.5878294813998944e-05 5.9180437347810935e-06 -3.8168070187969812e-06 5.9180437347810935e-06 3.5569451818671687e-06 -2.948129645705086e-06 -3.8168070187969812e-06 -2.948129645705086e-06 4.688848602445551e-06</location_covariance>
+      </camera>
+      <camera id="861" sensor_id="1" component_id="0" master_id="860" label="out_0000420_A_D"/>
+      <camera id="862" sensor_id="2" component_id="0" master_id="860" label="out_0000420_A_U"/>
+      <camera id="863" sensor_id="3" component_id="0" master_id="860" label="out_0000420_B"/>
+      <camera id="864" sensor_id="4" component_id="0" master_id="860" label="out_0000420_E"/>
+      <camera id="865" sensor_id="5" component_id="0" master_id="860" label="out_0000420_F"/>
+      <camera id="866" sensor_id="6" component_id="0" master_id="860" label="out_0000420_F_D"/>
+      <camera id="867" sensor_id="7" component_id="0" master_id="860" label="out_0000420_F_U"/>
+      <camera id="868" sensor_id="8" component_id="0" master_id="860" label="out_0000420_G"/>
+      <camera id="869" sensor_id="9" component_id="0" master_id="860" label="out_0000420_J"/>
+      <camera id="870" sensor_id="0" component_id="0" label="out_0000428_A">
+        <transform>0.67367644988788122 0.082052274963748173 -0.73445725882432011 -13.151942493869262 -0.061390165775933363 -0.98416922084382241 -0.16625941263479721 -3.342926063276483 -0.73647219120104179 0.15709350373881698 -0.65797442402467177 0.1384749297153334 0 0 0 1</transform>
+        <rotation_covariance>6.002977438228503e-09 2.7483936192218256e-10 -3.5577125398348665e-10 2.7483936192218261e-10 6.0280043066648796e-09 4.2828646129019375e-10 -3.5577125398348665e-10 4.2828646129019364e-10 6.9608569918065057e-09</rotation_covariance>
+        <location_covariance>1.5100868625219361e-05 5.7505935109807651e-06 -3.818531018144262e-06 5.7505935109807651e-06 3.8305248733235504e-06 -3.2252901937675547e-06 -3.818531018144262e-06 -3.2252901937675547e-06 5.3744201596359664e-06</location_covariance>
+      </camera>
+      <camera id="871" sensor_id="1" component_id="0" master_id="870" label="out_0000428_A_D"/>
+      <camera id="872" sensor_id="2" component_id="0" master_id="870" label="out_0000428_A_U"/>
+      <camera id="873" sensor_id="3" component_id="0" master_id="870" label="out_0000428_B"/>
+      <camera id="874" sensor_id="4" component_id="0" master_id="870" label="out_0000428_E"/>
+      <camera id="875" sensor_id="5" component_id="0" master_id="870" label="out_0000428_F"/>
+      <camera id="876" sensor_id="6" component_id="0" master_id="870" label="out_0000428_F_D"/>
+      <camera id="877" sensor_id="7" component_id="0" master_id="870" label="out_0000428_F_U"/>
+      <camera id="878" sensor_id="8" component_id="0" master_id="870" label="out_0000428_G"/>
+      <camera id="879" sensor_id="9" component_id="0" master_id="870" label="out_0000428_J"/>
+      <camera id="880" sensor_id="0" component_id="0" label="out_0000432_A">
+        <transform>0.63495861149403299 0.076252414239230959 -0.76877378403029506 -13.726609541116943 -0.062823182007949577 -0.98672473167770269 -0.1497583109478795 -3.3073563168650932 -0.7699875385303101 0.14338714453623247 -0.62173894625459958 -0.29447406624220934 0 0 0 1</transform>
+        <rotation_covariance>6.1424714901463146e-09 3.0029981233794294e-10 -2.6542292177930218e-10 3.0029981233794273e-10 6.2248448182550817e-09 3.9424848916855243e-10 -2.6542292177930136e-10 3.9424848916855243e-10 7.2946531266147211e-09</rotation_covariance>
+        <location_covariance>1.4522517847650192e-05 5.5873681663091442e-06 -3.8506927503720613e-06 5.5873681663091442e-06 3.9527563326754445e-06 -3.4082314824243007e-06 -3.8506927503720613e-06 -3.4082314824243007e-06 5.8186360351033516e-06</location_covariance>
+      </camera>
+      <camera id="881" sensor_id="1" component_id="0" master_id="880" label="out_0000432_A_D"/>
+      <camera id="882" sensor_id="2" component_id="0" master_id="880" label="out_0000432_A_U"/>
+      <camera id="883" sensor_id="3" component_id="0" master_id="880" label="out_0000432_B"/>
+      <camera id="884" sensor_id="4" component_id="0" master_id="880" label="out_0000432_E"/>
+      <camera id="885" sensor_id="5" component_id="0" master_id="880" label="out_0000432_F"/>
+      <camera id="886" sensor_id="6" component_id="0" master_id="880" label="out_0000432_F_D"/>
+      <camera id="887" sensor_id="7" component_id="0" master_id="880" label="out_0000432_F_U"/>
+      <camera id="888" sensor_id="8" component_id="0" master_id="880" label="out_0000432_G"/>
+      <camera id="889" sensor_id="9" component_id="0" master_id="880" label="out_0000432_J"/>
+      <camera id="890" sensor_id="0" component_id="0" label="out_0000439_A">
+        <transform>0.60109909945601392 0.09073111728073821 -0.79400739101733675 -14.873239847736269 -0.070316913080560206 -0.9836766252781084 -0.16563764251006641 -3.2841957586622015 -0.79607499921049518 0.15539678644830665 -0.58490720152306963 -1.0653135448515176 0 0 0 1</transform>
+        <rotation_covariance>6.4799408898414174e-09 3.0989186226766826e-10 -1.693708491268034e-10 3.0989186226766846e-10 6.5473522844289144e-09 4.3045141495795704e-10 -1.6937084912680464e-10 4.304514149579574e-10 7.7197019744245449e-09</rotation_covariance>
+        <location_covariance>1.3320592096917185e-05 5.183753544514201e-06 -3.7984746525637801e-06 5.183753544514201e-06 4.1760876586568237e-06 -3.7571998444550651e-06 -3.7984746525637801e-06 -3.7571998444550651e-06 6.7634237670561319e-06</location_covariance>
+      </camera>
+      <camera id="891" sensor_id="1" component_id="0" master_id="890" label="out_0000439_A_D"/>
+      <camera id="892" sensor_id="2" component_id="0" master_id="890" label="out_0000439_A_U"/>
+      <camera id="893" sensor_id="3" component_id="0" master_id="890" label="out_0000439_B"/>
+      <camera id="894" sensor_id="4" component_id="0" master_id="890" label="out_0000439_E"/>
+      <camera id="895" sensor_id="5" component_id="0" master_id="890" label="out_0000439_F"/>
+      <camera id="896" sensor_id="6" component_id="0" master_id="890" label="out_0000439_F_D"/>
+      <camera id="897" sensor_id="7" component_id="0" master_id="890" label="out_0000439_F_U"/>
+      <camera id="898" sensor_id="8" component_id="0" master_id="890" label="out_0000439_G"/>
+      <camera id="899" sensor_id="9" component_id="0" master_id="890" label="out_0000439_J"/>
+      <camera id="900" sensor_id="0" component_id="0" label="out_0000440_A">
+        <transform>0.58695568073679993 0.095107229408481375 -0.80401345994021889 -15.037681589373635 -0.064598150538566129 -0.98440869444289025 -0.16360501597518884 -3.3058014365699742 -0.807037860200992 0.14796667604392344 -0.57166052424731606 -1.1637595656035034 0 0 0 1</transform>
+        <rotation_covariance>6.5105696676410035e-09 3.313360837129066e-10 -1.4558747058090517e-10 3.313360837129066e-10 6.6337005145152865e-09 4.0952225238627751e-10 -1.4558747058090559e-10 4.0952225238627776e-10 7.8273571646944583e-09</rotation_covariance>
+        <location_covariance>1.3104517518052724e-05 5.0994406677795262e-06 -3.7929744398893465e-06 5.0994406677795262e-06 4.1848614647848602e-06 -3.7941941556478236e-06 -3.7929744398893465e-06 -3.7941941556478236e-06 6.89314761249424e-06</location_covariance>
+      </camera>
+      <camera id="901" sensor_id="1" component_id="0" master_id="900" label="out_0000440_A_D"/>
+      <camera id="902" sensor_id="2" component_id="0" master_id="900" label="out_0000440_A_U"/>
+      <camera id="903" sensor_id="3" component_id="0" master_id="900" label="out_0000440_B"/>
+      <camera id="904" sensor_id="4" component_id="0" master_id="900" label="out_0000440_E"/>
+      <camera id="905" sensor_id="5" component_id="0" master_id="900" label="out_0000440_F"/>
+      <camera id="906" sensor_id="6" component_id="0" master_id="900" label="out_0000440_F_D"/>
+      <camera id="907" sensor_id="7" component_id="0" master_id="900" label="out_0000440_F_U"/>
+      <camera id="908" sensor_id="8" component_id="0" master_id="900" label="out_0000440_G"/>
+      <camera id="909" sensor_id="9" component_id="0" master_id="900" label="out_0000440_J"/>
+      <camera id="910" sensor_id="0" component_id="0" label="out_0000444_A">
+        <transform>0.65824304960313351 0.049830796092413587 -0.75115443113248215 -15.666661634864168 -0.05452400748677981 -0.99203045265799628 -0.11359011227545918 -3.3066308400431796 -0.75082835605532938 0.11572585173575586 -0.65028017575756158 -1.6106426324124177 0 0 0 1</transform>
+        <rotation_covariance>6.7519381415633938e-09 2.6988194168579643e-10 -2.3617486665397708e-10 2.6988194168579658e-10 6.8647618435715964e-09 5.5108228002664147e-10 -2.361748666539775e-10 5.5108228002664157e-10 7.8549823983728026e-09</rotation_covariance>
+        <location_covariance>1.2249047370212993e-05 4.8219492705421915e-06 -3.821543475823693e-06 4.8219492705421915e-06 4.3031107540172771e-06 -4.0173019360329562e-06 -3.821543475823693e-06 -4.0173019360329562e-06 7.494981131285338e-06</location_covariance>
+      </camera>
+      <camera id="911" sensor_id="1" component_id="0" master_id="910" label="out_0000444_A_D"/>
+      <camera id="912" sensor_id="2" component_id="0" master_id="910" label="out_0000444_A_U"/>
+      <camera id="913" sensor_id="3" component_id="0" master_id="910" label="out_0000444_B"/>
+      <camera id="914" sensor_id="4" component_id="0" master_id="910" label="out_0000444_E"/>
+      <camera id="915" sensor_id="5" component_id="0" master_id="910" label="out_0000444_F"/>
+      <camera id="916" sensor_id="6" component_id="0" master_id="910" label="out_0000444_F_D"/>
+      <camera id="917" sensor_id="7" component_id="0" master_id="910" label="out_0000444_F_U"/>
+      <camera id="918" sensor_id="8" component_id="0" master_id="910" label="out_0000444_G"/>
+      <camera id="919" sensor_id="9" component_id="0" master_id="910" label="out_0000444_J"/>
+      <camera id="920" sensor_id="0" component_id="0" label="out_0000450_A">
+        <transform>0.71437626321147973 0.033389732360171419 -0.69896472037787261 -16.50006285575602 -0.044890004294556363 -0.99461683747974194 -0.093392901851427512 -3.3423172751475421 -0.69832044368931134 0.098094201534605741 -0.70903179445695619 -2.3830808137019046 0 0 0 1</transform>
+        <rotation_covariance>6.9089940199998117e-09 2.0116684104351406e-10 -3.3307905353272126e-10 2.0116684104351417e-10 7.1297747404626408e-09 6.3453762571623132e-10 -3.3307905353272209e-10 6.3453762571623153e-10 8.0295640542487046e-09</rotation_covariance>
+        <location_covariance>1.0797415073448633e-05 4.3959851423711644e-06 -4.0948932125135678e-06 4.3959851423711644e-06 4.4540768849071764e-06 -4.3940386749182863e-06 -4.0948932125135678e-06 -4.3940386749182863e-06 8.5666614990158546e-06</location_covariance>
+      </camera>
+      <camera id="921" sensor_id="1" component_id="0" master_id="920" label="out_0000450_A_D"/>
+      <camera id="922" sensor_id="2" component_id="0" master_id="920" label="out_0000450_A_U"/>
+      <camera id="923" sensor_id="3" component_id="0" master_id="920" label="out_0000450_B"/>
+      <camera id="924" sensor_id="4" component_id="0" master_id="920" label="out_0000450_E"/>
+      <camera id="925" sensor_id="5" component_id="0" master_id="920" label="out_0000450_F"/>
+      <camera id="926" sensor_id="6" component_id="0" master_id="920" label="out_0000450_F_D"/>
+      <camera id="927" sensor_id="7" component_id="0" master_id="920" label="out_0000450_F_U"/>
+      <camera id="928" sensor_id="8" component_id="0" master_id="920" label="out_0000450_G"/>
+      <camera id="929" sensor_id="9" component_id="0" master_id="920" label="out_0000450_J"/>
+      <camera id="930" sensor_id="0" component_id="0" label="out_0000455_A">
+        <transform>0.66738020668841691 0.02681140262725179 -0.74423437733665931 -17.0910196400682 -0.065554179695469866 -0.99335744132353698 -0.094570837426818377 -3.4650372310766482 -0.74182633361520667 0.11190237913607988 -0.66118949500026503 -3.0915466539940915 0 0 0 1</transform>
+        <rotation_covariance>7.0059777450067957e-09 2.406301608125872e-10 -2.9477551960827124e-10 2.406301608125872e-10 7.2226768465984017e-09 6.7111119158720067e-10 -2.9477551960827165e-10 6.7111119158720088e-10 8.2697632907322879e-09</rotation_covariance>
+        <location_covariance>9.6208336397365307e-06 3.9695256404278885e-06 -4.5565710176509964e-06 3.9695256404278885e-06 4.4820060387763045e-06 -4.7102576321978551e-06 -4.5565710176509964e-06 -4.7102576321978551e-06 9.5825963688174858e-06</location_covariance>
+      </camera>
+      <camera id="931" sensor_id="1" component_id="0" master_id="930" label="out_0000455_A_D"/>
+      <camera id="932" sensor_id="2" component_id="0" master_id="930" label="out_0000455_A_U"/>
+      <camera id="933" sensor_id="3" component_id="0" master_id="930" label="out_0000455_B"/>
+      <camera id="934" sensor_id="4" component_id="0" master_id="930" label="out_0000455_E"/>
+      <camera id="935" sensor_id="5" component_id="0" master_id="930" label="out_0000455_F"/>
+      <camera id="936" sensor_id="6" component_id="0" master_id="930" label="out_0000455_F_D"/>
+      <camera id="937" sensor_id="7" component_id="0" master_id="930" label="out_0000455_F_U"/>
+      <camera id="938" sensor_id="8" component_id="0" master_id="930" label="out_0000455_G"/>
+      <camera id="939" sensor_id="9" component_id="0" master_id="930" label="out_0000455_J"/>
+      <camera id="940" sensor_id="0" component_id="0" label="out_0000459_A">
+        <transform>0.65953050826250736 0.087900128843063335 -0.74652064674754404 -17.647021900424672 -0.032689455745849805 -0.98884551811004107 -0.14531325058893996 -3.6007400420000004 -0.7509666491622905 0.12024187566341765 -0.64930037978034805 -3.6329426526041995 0 0 0 1</transform>
+        <rotation_covariance>7.1061019610315266e-09 2.4260907906700033e-10 -3.5831982176461291e-10 2.4260907906700033e-10 7.3378379576123932e-09 6.1240685174057215e-10 -3.5831982176461249e-10 6.1240685174057184e-10 8.5138407023935396e-09</rotation_covariance>
+        <location_covariance>8.5129418509044603e-06 3.5387480539868343e-06 -4.8056147479571612e-06 3.5387480539868343e-06 4.4786471668861286e-06 -4.9235333890200385e-06 -4.8056147479571612e-06 -4.9235333890200385e-06 1.0491058527641719e-05</location_covariance>
+      </camera>
+      <camera id="941" sensor_id="1" component_id="0" master_id="940" label="out_0000459_A_D"/>
+      <camera id="942" sensor_id="2" component_id="0" master_id="940" label="out_0000459_A_U"/>
+      <camera id="943" sensor_id="3" component_id="0" master_id="940" label="out_0000459_B"/>
+      <camera id="944" sensor_id="4" component_id="0" master_id="940" label="out_0000459_E"/>
+      <camera id="945" sensor_id="5" component_id="0" master_id="940" label="out_0000459_F"/>
+      <camera id="946" sensor_id="6" component_id="0" master_id="940" label="out_0000459_F_D"/>
+      <camera id="947" sensor_id="7" component_id="0" master_id="940" label="out_0000459_F_U"/>
+      <camera id="948" sensor_id="8" component_id="0" master_id="940" label="out_0000459_G"/>
+      <camera id="949" sensor_id="9" component_id="0" master_id="940" label="out_0000459_J"/>
+      <camera id="950" sensor_id="0" component_id="0" label="out_0000460_A">
+        <transform>0.61061280499966553 0.083845294451748931 -0.78747823396506655 -17.753947360607985 -0.029722390202861437 -0.99125251527653546 -0.12858860944333561 -3.663801902007068 -0.79137132996531379 0.10192358684937153 -0.60277939625761046 -3.7657479979461881 0 0 0 1</transform>
+        <rotation_covariance>7.1305658976580665e-09 2.7372508554908184e-10 -2.9302209334291964e-10 2.7372508554908184e-10 7.4895408207927187e-09 5.824632448468396e-10 -2.9302209334292005e-10 5.824632448468396e-10 8.644061403505139e-09</rotation_covariance>
+        <location_covariance>8.2927646802242869e-06 3.4108519664686094e-06 -4.890508015977454e-06 3.4108519664686094e-06 4.4420694285700302e-06 -4.9518500407682259e-06 -4.890508015977454e-06 -4.9518500407682259e-06 1.0716200347182055e-05</location_covariance>
+      </camera>
+      <camera id="951" sensor_id="1" component_id="0" master_id="950" label="out_0000460_A_D"/>
+      <camera id="952" sensor_id="2" component_id="0" master_id="950" label="out_0000460_A_U"/>
+      <camera id="953" sensor_id="3" component_id="0" master_id="950" label="out_0000460_B"/>
+      <camera id="954" sensor_id="4" component_id="0" master_id="950" label="out_0000460_E"/>
+      <camera id="955" sensor_id="5" component_id="0" master_id="950" label="out_0000460_F"/>
+      <camera id="956" sensor_id="6" component_id="0" master_id="950" label="out_0000460_F_D"/>
+      <camera id="957" sensor_id="7" component_id="0" master_id="950" label="out_0000460_F_U"/>
+      <camera id="958" sensor_id="8" component_id="0" master_id="950" label="out_0000460_G"/>
+      <camera id="959" sensor_id="9" component_id="0" master_id="950" label="out_0000460_J"/>
+      <camera id="960" sensor_id="0" component_id="0" label="out_0000464_A">
+        <transform>0.64865572983901787 0.062602165939911553 -0.7585029419630771 -18.197382641630444 -0.045256109037589851 -0.99167527959578849 -0.12054884666968982 -3.8283138042793281 -0.75973523594854331 0.11252159196459333 -0.64042272180175253 -4.2341211950994797 0 0 0 1</transform>
+        <rotation_covariance>7.4200252260195197e-09 2.9193930383102177e-10 -4.1653222739520392e-10 2.9193930383102177e-10 7.7038769392422038e-09 5.9606107010837764e-10 -4.1653222739520392e-10 5.9606107010837774e-10 8.6858359002007681e-09</rotation_covariance>
+        <location_covariance>7.3513693977021042e-06 2.98621168335701e-06 -5.1380517833616662e-06 2.98621168335701e-06 4.3901614188773384e-06 -5.0890480283692488e-06 -5.1380517833616662e-06 -5.0890480283692488e-06 1.1575450915673276e-05</location_covariance>
+      </camera>
+      <camera id="961" sensor_id="1" component_id="0" master_id="960" label="out_0000464_A_D"/>
+      <camera id="962" sensor_id="2" component_id="0" master_id="960" label="out_0000464_A_U"/>
+      <camera id="963" sensor_id="3" component_id="0" master_id="960" label="out_0000464_B"/>
+      <camera id="964" sensor_id="4" component_id="0" master_id="960" label="out_0000464_E"/>
+      <camera id="965" sensor_id="5" component_id="0" master_id="960" label="out_0000464_F"/>
+      <camera id="966" sensor_id="6" component_id="0" master_id="960" label="out_0000464_F_D"/>
+      <camera id="967" sensor_id="7" component_id="0" master_id="960" label="out_0000464_F_U"/>
+      <camera id="968" sensor_id="8" component_id="0" master_id="960" label="out_0000464_G"/>
+      <camera id="969" sensor_id="9" component_id="0" master_id="960" label="out_0000464_J"/>
+      <camera id="970" sensor_id="0" component_id="0" label="out_0000469_A">
+        <transform>0.18596208179146889 0.0097822885336695219 -0.98250822437617635 -18.871887556328332 -0.11545311537687891 -0.99280579377479727 -0.03173695002624248 -3.9256542412771345 -0.97575031759439157 0.119335504684227 -0.18349483653826537 -4.6116129116181552 0 0 0 1</transform>
+        <rotation_covariance>7.6431255266951082e-09 5.6102289661201068e-10 2.4720435907401899e-10 5.6102289661201078e-10 8.1029362301829729e-09 4.548340548569481e-10 2.4720435907401899e-10 4.5483405485694815e-10 9.1130284594615733e-09</rotation_covariance>
+        <location_covariance>5.9172358330949911e-06 2.5264135458217617e-06 -5.063115887237583e-06 2.5264135458217617e-06 4.4477360409603406e-06 -5.239887251238555e-06 -5.063115887237583e-06 -5.239887251238555e-06 1.2421130406668378e-05</location_covariance>
+      </camera>
+      <camera id="971" sensor_id="1" component_id="0" master_id="970" label="out_0000469_A_D"/>
+      <camera id="972" sensor_id="2" component_id="0" master_id="970" label="out_0000469_A_U"/>
+      <camera id="973" sensor_id="3" component_id="0" master_id="970" label="out_0000469_B"/>
+      <camera id="974" sensor_id="4" component_id="0" master_id="970" label="out_0000469_E"/>
+      <camera id="975" sensor_id="5" component_id="0" master_id="970" label="out_0000469_F"/>
+      <camera id="976" sensor_id="6" component_id="0" master_id="970" label="out_0000469_F_D"/>
+      <camera id="977" sensor_id="7" component_id="0" master_id="970" label="out_0000469_F_U"/>
+      <camera id="978" sensor_id="8" component_id="0" master_id="970" label="out_0000469_G"/>
+      <camera id="979" sensor_id="9" component_id="0" master_id="970" label="out_0000469_J"/>
+      <camera id="980" sensor_id="0" component_id="0" label="out_0000473_A">
+        <transform>-0.095886984639584671 0.041460147653735763 -0.99452840197415093 -19.572620903213512 -0.074894030029948738 -0.99660053853158881 -0.034325658980145619 -3.9370747671644963 -0.9925706878820274 0.071192856067716193 0.098666138073405185 -4.5739514393176339 0 0 0 1</transform>
+        <rotation_covariance>8.0141356799023931e-09 6.1039564425559785e-10 6.7512225105731088e-10 6.1039564425559796e-10 8.196463216053132e-09 2.8140578302245249e-10 6.7512225105731088e-10 2.8140578302245254e-10 8.955120491517349e-09</rotation_covariance>
+        <location_covariance>4.50231925501689e-06 2.1345903171911755e-06 -4.4223730624899765e-06 2.1345903171911755e-06 4.5546717972975126e-06 -5.2484342488571526e-06 -4.4223730624899765e-06 -5.2484342488571526e-06 1.2551536398026044e-05</location_covariance>
+      </camera>
+      <camera id="981" sensor_id="1" component_id="0" master_id="980" label="out_0000473_A_D"/>
+      <camera id="982" sensor_id="2" component_id="0" master_id="980" label="out_0000473_A_U"/>
+      <camera id="983" sensor_id="3" component_id="0" master_id="980" label="out_0000473_B"/>
+      <camera id="984" sensor_id="4" component_id="0" master_id="980" label="out_0000473_E"/>
+      <camera id="985" sensor_id="5" component_id="0" master_id="980" label="out_0000473_F"/>
+      <camera id="986" sensor_id="6" component_id="0" master_id="980" label="out_0000473_F_D"/>
+      <camera id="987" sensor_id="7" component_id="0" master_id="980" label="out_0000473_F_U"/>
+      <camera id="988" sensor_id="8" component_id="0" master_id="980" label="out_0000473_G"/>
+      <camera id="989" sensor_id="9" component_id="0" master_id="980" label="out_0000473_J"/>
+      <camera id="990" sensor_id="0" component_id="0" label="out_0000476_A">
+        <transform>-0.34154176810719095 0.010656593622943345 -0.93980618089612977 -20.016282866504376 -0.092798303610027125 -0.99543209146052458 0.022437159749554174 -3.9435861791140452 -0.93527412852345881 0.094875646521545481 0.34097055035853685 -4.5348389099449484 0 0 0 1</transform>
+        <rotation_covariance>8.5651681443270869e-09 6.6180488275824942e-10 8.0590320133617014e-10 6.6180488275824942e-10 8.2812758869440956e-09 1.0731091010112535e-10 8.0590320133616973e-10 1.0731091010112543e-10 8.7017203489675993e-09</rotation_covariance>
+        <location_covariance>3.7136373377798168e-06 1.884797783688957e-06 -4.0088770938351936e-06 1.884797783688957e-06 4.6242030084907773e-06 -5.2466571465240299e-06 -4.0088770938351936e-06 -5.2466571465240299e-06 1.2613978682139578e-05</location_covariance>
+      </camera>
+      <camera id="991" sensor_id="1" component_id="0" master_id="990" label="out_0000476_A_D"/>
+      <camera id="992" sensor_id="2" component_id="0" master_id="990" label="out_0000476_A_U"/>
+      <camera id="993" sensor_id="3" component_id="0" master_id="990" label="out_0000476_B"/>
+      <camera id="994" sensor_id="4" component_id="0" master_id="990" label="out_0000476_E"/>
+      <camera id="995" sensor_id="5" component_id="0" master_id="990" label="out_0000476_F"/>
+      <camera id="996" sensor_id="6" component_id="0" master_id="990" label="out_0000476_F_D"/>
+      <camera id="997" sensor_id="7" component_id="0" master_id="990" label="out_0000476_F_U"/>
+      <camera id="998" sensor_id="8" component_id="0" master_id="990" label="out_0000476_G"/>
+      <camera id="999" sensor_id="9" component_id="0" master_id="990" label="out_0000476_J"/>
+      <camera id="1000" sensor_id="0" component_id="0" label="out_0000480_A">
+        <transform>-0.10612890551792509 0.027104939261445971 -0.99398288601021734 -20.624075641192618 -0.10650141580096678 -0.99418797269454307 -0.015739230664298443 -3.9681973778864799 -0.98863244122674687 0.10419019731792296 0.10839879582769989 -4.4035242016666576 0 0 0 1</transform>
+        <rotation_covariance>8.4807801227166388e-09 5.5294007048844287e-10 6.4998568574595257e-10 5.5294007048844287e-10 8.4599708968782766e-09 1.9604508058831664e-10 6.4998568574595288e-10 1.9604508058831674e-10 9.4746596178042532e-09</rotation_covariance>
+        <location_covariance>2.7363170166163972e-06 1.5154273511376165e-06 -3.3803761511240165e-06 1.5154273511376165e-06 4.7021024862201356e-06 -5.1879737490452533e-06 -3.3803761511240165e-06 -5.1879737490452533e-06 1.2559881600183302e-05</location_covariance>
+      </camera>
+      <camera id="1001" sensor_id="1" component_id="0" master_id="1000" label="out_0000480_A_D"/>
+      <camera id="1002" sensor_id="2" component_id="0" master_id="1000" label="out_0000480_A_U"/>
+      <camera id="1003" sensor_id="3" component_id="0" master_id="1000" label="out_0000480_B"/>
+      <camera id="1004" sensor_id="4" component_id="0" master_id="1000" label="out_0000480_E"/>
+      <camera id="1005" sensor_id="5" component_id="0" master_id="1000" label="out_0000480_F"/>
+      <camera id="1006" sensor_id="6" component_id="0" master_id="1000" label="out_0000480_F_D"/>
+      <camera id="1007" sensor_id="7" component_id="0" master_id="1000" label="out_0000480_F_U"/>
+      <camera id="1008" sensor_id="8" component_id="0" master_id="1000" label="out_0000480_G"/>
+      <camera id="1009" sensor_id="9" component_id="0" master_id="1000" label="out_0000480_J"/>
+      <camera id="1010" sensor_id="0" component_id="0" label="out_0000488_A">
+        <transform>0.52719272118374838 0.10622106387315827 -0.84308061318033467 -22.052097104995244 -0.0040613274669205335 -0.99183001701876483 -0.12750185473067843 -4.0763580962927266 -0.8497360415741354 0.070642076202578674 -0.52245416709957271 -4.520616991787767 0 0 0 1</transform>
+        <rotation_covariance>9.8557505904922245e-09 9.7236921892125915e-11 -1.7262346408662431e-09 9.723692189212607e-11 9.2367733561900473e-09 1.8065371818479952e-10 -1.7262346408662431e-09 1.8065371818479942e-10 1.2467773915525644e-08</rotation_covariance>
+        <location_covariance>6.8212244703228064e-07 5.6956692064388192e-07 -2.3907332116892901e-06 5.6956692064388192e-07 4.9198352218912375e-06 -5.2517077857148456e-06 -2.3907332116892901e-06 -5.2517077857148456e-06 1.3195575074174905e-05</location_covariance>
+      </camera>
+      <camera id="1011" sensor_id="1" component_id="0" master_id="1010" label="out_0000488_A_D"/>
+      <camera id="1012" sensor_id="2" component_id="0" master_id="1010" label="out_0000488_A_U"/>
+      <camera id="1013" sensor_id="3" component_id="0" master_id="1010" label="out_0000488_B"/>
+      <camera id="1014" sensor_id="4" component_id="0" master_id="1010" label="out_0000488_E"/>
+      <camera id="1015" sensor_id="5" component_id="0" master_id="1010" label="out_0000488_F"/>
+      <camera id="1016" sensor_id="6" component_id="0" master_id="1010" label="out_0000488_F_D"/>
+      <camera id="1017" sensor_id="7" component_id="0" master_id="1010" label="out_0000488_F_U"/>
+      <camera id="1018" sensor_id="8" component_id="0" master_id="1010" label="out_0000488_G"/>
+      <camera id="1019" sensor_id="9" component_id="0" master_id="1010" label="out_0000488_J"/>
+      <camera id="1020" sensor_id="0" component_id="0" label="out_0000491_A">
+        <transform>0.60620129984640458 0.12063027149402723 -0.78610961173605209 -22.53102671819158 -0.018035249693365264 -0.98609088979623727 -0.16522556348629167 -4.1311705257055884 -0.79510673109528374 0.11433763448725892 -0.59559398209420311 -4.8413972067657589 0 0 0 1</transform>
+        <rotation_covariance>1.0362257648494509e-08 1.0977560405465268e-10 -1.9586700877468746e-09 1.0977560405465268e-10 9.3570273391971456e-09 1.380842303384327e-10 -1.9586700877468746e-09 1.3808423033843281e-10 1.219854898959181e-08</rotation_covariance>
+        <location_covariance>4.2292605907070379e-07 2.7413205216784245e-07 -2.1128473888515687e-06 2.7413205216784261e-07 4.9929970099188359e-06 -5.4046886707023028e-06 -2.1128473888515687e-06 -5.404688670702302e-06 1.3936775705499515e-05</location_covariance>
+      </camera>
+      <camera id="1021" sensor_id="1" component_id="0" master_id="1020" label="out_0000491_A_D"/>
+      <camera id="1022" sensor_id="2" component_id="0" master_id="1020" label="out_0000491_A_U"/>
+      <camera id="1023" sensor_id="3" component_id="0" master_id="1020" label="out_0000491_B"/>
+      <camera id="1024" sensor_id="4" component_id="0" master_id="1020" label="out_0000491_E"/>
+      <camera id="1025" sensor_id="5" component_id="0" master_id="1020" label="out_0000491_F"/>
+      <camera id="1026" sensor_id="6" component_id="0" master_id="1020" label="out_0000491_F_D"/>
+      <camera id="1027" sensor_id="7" component_id="0" master_id="1020" label="out_0000491_F_U"/>
+      <camera id="1028" sensor_id="8" component_id="0" master_id="1020" label="out_0000491_G"/>
+      <camera id="1029" sensor_id="9" component_id="0" master_id="1020" label="out_0000491_J"/>
+    </cameras>
+    <transform>
+      <scale locked="false">0.19341704876581711</scale>
+    </transform>
+    <reference>LOCAL_CS["Local Coordinates (m)",LOCAL_DATUM["Local Datum",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]</reference>
+    <region>
+      <center>0.74194638387268996 1.9108809733194114 0.50745107873176021</center>
+      <size>27.602923488137286 28.276112067485492 20.830073779066591</size>
+      <R>-0.5798233693520628 -0.081294811045045337 0.81067626957397232 -0.76786733809737218 -0.2781058535705358 -0.57709348054978038 0.27236852137586842 -0.95710411549995666 0.098828642895512478</R>
+    </region>
+    <settings>
+      <property name="accuracy_tiepoints" value="1"/>
+      <property name="accuracy_cameras" value="10"/>
+      <property name="accuracy_cameras_ypr" value="10"/>
+      <property name="accuracy_markers" value="0.0050000000000000001"/>
+      <property name="accuracy_scalebars" value="0.001"/>
+      <property name="accuracy_projections" value="0.5"/>
+    </settings>
+    <meta>
+      <property name="AlignCameras/adaptive_fitting" value="false"/>
+      <property name="AlignCameras/align_laser_scans" value="false"/>
+      <property name="AlignCameras/duration" value="55.447"/>
+      <property name="AlignCameras/min_image" value="2"/>
+      <property name="AlignCameras/ram_used" value="1106206720"/>
+      <property name="AlignCameras/reset_alignment" value="false"/>
+      <property name="AlignCameras/subdivide_task" value="true"/>
+      <property name="Info/LastSavedDateTime" value="2026:02:17 16:08:23"/>
+      <property name="Info/LastSavedSoftwareVersion" value="2.3.0.21954"/>
+      <property name="OptimizeCameras/adaptive_fitting" value="false"/>
+      <property name="OptimizeCameras/duration" value="3.822"/>
+      <property name="OptimizeCameras/exclude_corners" value="false"/>
+      <property name="OptimizeCameras/sigma0" value="0.104314792216293"/>
+    </meta>
+  </chunk>
+</document>
