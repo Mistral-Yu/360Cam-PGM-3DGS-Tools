@@ -44,17 +44,17 @@ The scripts cover every stage from frame extraction to PLY refinement, and the d
 ---
 
 ## Workflow at a Glance
-GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `HumanMaskTool`, `PlyOptimizer`).
+GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `SegmentationMaskTool`, `PlyOptimizer`, `MS360xmlToPerspCams`).
 1. `Video2Frames` tab: Sample equirectangular frames from a 360° video.
 2. `FrameSelector` tab: Score and retain the sharpest frames for Structure-from-Motion (SfM).
 3. `360PerspCut` tab: Convert panoramas into perspective views.
-4. `HumanMaskTool` tab: (Optional) Remove or isolate bystanders with `HumanMaskTool` to avoid reconstruction ghosts.
+4. `SegmentationMaskTool` tab: (Optional) Remove or isolate bystanders with `SegmentationMaskTool` to avoid reconstruction ghosts.
 5. Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
-6. `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with `PlyOptimizer`.
+6. `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with `PlyOptimizer`. Delete sky point clouds generated with photogrammetry software, add Sky point clouds.
 7. `MS360xmlToPerspCams` tab: Convert Metashape camera XML (spherical) into perspective camera parameters → Colmap, Metashape xml, transform.json, RealityScan xmp.
 
-### Quick Workflow (GUI)
-#### Fast
+### Workflows (GUI)
+#### Rapid
 1. Launch `gs360_360GUI.py`.
 2. In the `360PerspCut` tab, click **Browse Video** and select a video file.
 3. Choose a preset.
@@ -81,9 +81,8 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `H
 8. Use **PerspCut out**, `transforms.json`, and the rotated PLY in PostShot (or similar 3DGS tools).
 
 
-### Recommended Workflow and Tips
-- In RealityScan, run **Reconstruction** and **Colorize**, then export the colorized mesh as a PLY and the camera **CSV**; that pairing feeds best into the `PlyOptimizer` tab.
-- Start with a conservative `--target-points` value around **100,000** to keep PostShot responsive; rerun the optimizer with higher counts if needed.
+### Recommended Workflow 
+- TODO
 
 ---
 
@@ -95,5 +94,3 @@ This project is released under the [MIT License](LICENSE). Copyright (c) 2025 Yu
 
 ## TODO / Ideas
 - Flesh out a full GUI walkthrough (tab descriptions, launch parameters, screenshot gallery).
-- Delete sky point clouds generated with photogrammetry software.
-- Progressively align parts of a dataset in RealityScan / Metashape, with automation
