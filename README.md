@@ -82,8 +82,9 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `S
 
 
 ### Recommended Workflow 
-- TODO
-
+**TODO**
+- Metashape, Multi-Cameras-System
+- RealityCapture(Metashape), Hybrid scan combining mirrorless camera and 360-degree camera.
 ---
 
 ## License
