@@ -5,6 +5,7 @@
 import argparse
 import csv
 import copy
+import importlib
 import itertools
 import math
 import pathlib
@@ -36,7 +37,12 @@ except ImportError as exc:  # pragma: no cover - environment guard
     print("[ERR] NumPy is required: pip install numpy", file=sys.stderr)
     raise SystemExit(1) from exc
 
-import gs360_360PerspCut as cutter
+SCRIPT_DIR = Path(__file__).resolve().parent
+CLI_TOOLS_DIR = SCRIPT_DIR / "cli_tools"
+if str(CLI_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(CLI_TOOLS_DIR))
+
+cutter = importlib.import_module("gs360_360PerspCut")
 
 COLOR_CYCLE = [
     "#ff6b6b",
@@ -614,7 +620,10 @@ class PreviewApp:
 
         self.root = tk.Tk()
         self.root.withdraw()
-        self.base_dir = Path(__file__).resolve().parent
+        self.base_dir = SCRIPT_DIR
+        self.cli_tools_dir = CLI_TOOLS_DIR
+        if not self.cli_tools_dir.exists():
+            self.cli_tools_dir = self.base_dir
         screen_w = max(1, self.root.winfo_screenwidth())
         screen_h = max(1, self.root.winfo_screenheight())
         self.view_max_width = max(1, min(self.max_width_limit, screen_w // 3))
@@ -857,7 +866,7 @@ class PreviewApp:
         self.notebook.add(video_tab, text="Video2Frames")
         self.notebook.add(selector_tab, text="FrameSelector")
         self.notebook.add(preview_tab, text="360PerspCut")
-        self.notebook.add(human_tab, text="HumanMaskTool")
+        self.notebook.add(human_tab, text="SegmentationMaskTool")
         self.notebook.add(ply_tab, text="PlyOptimizer")
         self.notebook.add(msxml_tab, text="MS360xmlToPersCams")
         self.notebook.add(config_tab, text="Config")
@@ -2187,7 +2196,7 @@ class PreviewApp:
         self.human_stop_button.configure(state="disabled")
         self.human_run_button = tk.Button(
             actions,
-            text="Run gs360_HumanMaskTool",
+            text="Run gs360_SegmentationMaskTool",
             command=self._run_human_mask_tool,
         )
         self.human_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
@@ -2216,7 +2225,11 @@ class PreviewApp:
             base_path = Path(text).expanduser()
         except Exception:
             return None
-        return str(base_path / "_mask")
+        source_dir = base_path.parent if base_path.suffix else base_path
+        parent_dir = source_dir.parent
+        if parent_dir == source_dir:
+            return str(source_dir / "_mask")
+        return str(parent_dir / "_mask")
 
     def _update_human_default_output(self, input_text: Optional[str] = None) -> None:
         if not self.human_vars:
@@ -3750,16 +3763,22 @@ class PreviewApp:
             return
         input_dir = self.human_vars["input"].get().strip()
         if not input_dir:
-            messagebox.showerror("gs360_HumanMaskTool", "Input folder is required.")
+            messagebox.showerror(
+                "gs360_SegmentationMaskTool",
+                "Input folder is required.",
+            )
             return
         input_path = Path(input_dir).expanduser()
         if not input_path.exists() or not input_path.is_dir():
-            messagebox.showerror("gs360_HumanMaskTool", f"Input folder not found:\n{input_dir}")
+            messagebox.showerror(
+                "gs360_SegmentationMaskTool",
+                f"Input folder not found:\n{input_dir}",
+            )
             return
 
         cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_HumanMaskTool.py"),
+            str(self.cli_tools_dir / "gs360_SegmentationMaskTool.py"),
             "-i",
             str(input_path),
         ]
@@ -3780,7 +3799,7 @@ class PreviewApp:
 
         if not selected_targets:
             messagebox.showerror(
-                "gs360_HumanMaskTool",
+                "gs360_SegmentationMaskTool",
                 "Select at least one target (Person, Bicycle, Car, Animal).",
             )
             return
@@ -3798,7 +3817,7 @@ class PreviewApp:
             self.human_run_button,
             process_key="human",
             stop_button=self.human_stop_button,
-            cwd=self.base_dir,
+            cwd=self.cli_tools_dir,
         )
 
     def _run_msxml_tool(self) -> None:
@@ -3818,7 +3837,7 @@ class PreviewApp:
 
         cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_MS360xmlToPersCams.py"),
+            str(self.cli_tools_dir / "gs360_MS360xmlToPersCams.py"),
             str(xml_path),
         ]
 
@@ -3945,7 +3964,7 @@ class PreviewApp:
             self.msxml_run_button,
             process_key="msxml",
             stop_button=self.msxml_stop_button,
-            cwd=self.base_dir,
+            cwd=self.cli_tools_dir,
         )
 
     def _run_video_tool(self) -> None:
@@ -3969,7 +3988,7 @@ class PreviewApp:
 
         base_cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_Video2Frames.py"),
+            str(self.cli_tools_dir / "gs360_Video2Frames.py"),
             "-i",
             video_path,
             "-f",
@@ -4115,7 +4134,7 @@ class PreviewApp:
             self._queued_cli_commands["video"] = [
                 (
                     cmd_secondary,
-                    self.base_dir,
+                    self.cli_tools_dir,
                     False,
                     "[next] Experimental dual fisheye (map 0:v:1)" if dual_perspective_enabled else "[next] Experimental fisheye (map 0:v:1)",
                 ),
@@ -4126,7 +4145,7 @@ class PreviewApp:
                 self.video_run_button,
                 process_key="video",
                 stop_button=self.video_stop_button,
-                cwd=self.base_dir,
+                cwd=self.cli_tools_dir,
                 clear_log=True,
             )
             return
@@ -4137,7 +4156,7 @@ class PreviewApp:
             self.video_run_button,
             process_key="video",
             stop_button=self.video_stop_button,
-            cwd=self.base_dir,
+            cwd=self.cli_tools_dir,
         )
 
     def _run_frame_selector(self) -> None:
@@ -4154,7 +4173,7 @@ class PreviewApp:
 
         cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_FrameSelector.py"),
+            str(self.cli_tools_dir / "gs360_FrameSelector.py"),
             "-i",
             in_dir,
         ]
@@ -4308,7 +4327,7 @@ class PreviewApp:
             self.selector_run_button,
             process_key="selector",
             stop_button=self.selector_stop_button,
-            cwd=self.base_dir,
+            cwd=self.cli_tools_dir,
         )
 
     def _update_ply_adaptive_state(self, *_args) -> None:
@@ -4570,7 +4589,7 @@ class PreviewApp:
 
         cmd: List[str] = [
             sys.executable,
-            str(self.base_dir / "gs360_PlyOptimizer.py"),
+            str(self.cli_tools_dir / "gs360_PlyOptimizer.py"),
             "-i",
             input_path,
         ]
@@ -4644,7 +4663,7 @@ class PreviewApp:
             self.ply_run_button,
             process_key="ply",
             stop_button=self.ply_stop_button,
-            cwd=self.base_dir,
+            cwd=self.cli_tools_dir,
         )
 
     def _resolve_ply_display_path(self) -> Optional[Path]:
@@ -7466,7 +7485,7 @@ class PreviewApp:
         self._sync_panel_heights()
 
     def build_cli_command_line(self) -> str:
-        parts = ["python", "gs360_360PerspCut.py"]
+        parts = ["python", "cli_tools/gs360_360PerspCut.py"]
         if self.in_dir:
             parts.extend(["-i", str(self.in_dir)])
         if self.out_dir:
