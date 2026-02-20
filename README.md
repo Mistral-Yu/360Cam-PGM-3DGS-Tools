@@ -83,9 +83,7 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `S
 
 ### Recommended Workflow 
 **TODO**
-- Metashape, Multi-Cameras-System
- Known bug:
- If you import perspective_cams_Multi-Camera-System.xml and no tie points appear after alignment, re-importing the XML file fixes the issue.
+- Metashape, Multi-Cameras-System.  Known bug: If you import perspective_cams_Multi-Camera-System.xml and no tie points appear after alignment, re-importing the XML file fixes the issue.
 - RealityCapture(Metashape), Hybrid scan combining mirrorless camera and 360-degree camera.
 ---
 
