@@ -1460,6 +1460,15 @@ def _apply_mcs_template_export(
     if chunk is None:
         return False
     chunk.set("label", "unknown")
+    transform_node = chunk.find("transform")
+    if transform_node is not None:
+        chunk.remove(transform_node)
+    components_node = chunk.find("components")
+    if components_node is not None:
+        for component_node in components_node.findall("component"):
+            component_transform = component_node.find("transform")
+            if component_transform is not None:
+                component_node.remove(component_transform)
     cameras_node = chunk.find("cameras")
     if cameras_node is None:
         return False
