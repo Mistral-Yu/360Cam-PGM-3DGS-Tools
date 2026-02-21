@@ -45,6 +45,7 @@ The scripts cover every stage from frame extraction to PLY refinement, and the d
 
 ## Workflow at a Glance
 GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `SegmentationMaskTool`, `PlyOptimizer`, `MS360xmlToPerspCams`).
+0. Create a 360 video using DJI Studio or similar software (This GitHub repository has been tested with the Osmo 360. Recommended settings: apply D-Log only, keep all other settings at their default value of 0, and turn RockSteady off.)
 1. `Video2Frames` tab: Sample equirectangular frames from a 360° video.
 2. `FrameSelector` tab: Score and retain the sharpest frames for Structure-from-Motion (SfM).
 3. `360PerspCut` tab: Convert panoramas into perspective views.
@@ -55,6 +56,7 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `S
 
 ### Workflows (GUI)
 #### Rapid
+0. Create a 360 video using DJI Studio or similar software.
 1. Launch `gs360_360GUI.py`.
 2. In the `360PerspCut` tab, click **Browse Video** and select a video file.
 3. Choose a preset.
@@ -71,6 +73,7 @@ GUI: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `S
 8. Bring the RealityScan or Metashape alignment results into a 3DGS tool such as PostShot.
 
 #### Faster but low quality
+0. Create a 360 video using DJI Studio or similar software.
 1. Launch `gs360_360GUI.py`.
 2. In the `Video2Frames` tab, extract 360 frames by setting the FPS and running the export.
 3. In **Metashape**, import the frames, then go to **Tools -> Camera Calibration** and set **Camera Type = Spherical**.
