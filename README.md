@@ -55,7 +55,7 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
 
 ### Workflows (GUI)
 #### Rapid
-1. Create a 360 video using DJI Studio or similar software (This GitHub repository has been tested with the Osmo 360. Recommended settings: apply D-Log only, keep all other settings at their default value of 0, and turn RockSteady off.)
+1. Create a 360 video using DJI Studio or similar software (This GitHub repository has been tested with the Osmo 360. Recommended settings: apply D-Log only, keep all other settings at their default value of 0 if correct color values are required under a linear workflow. And turn RockSteady off.)
 2. Launch `gs360_360GUI.py`.
 3. In the `360PerspCut` tab, click **Browse Video** and select a video file.
 4. Choose a preset.
