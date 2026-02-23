@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 select_sharp_frames.py (listdir-based sharp frame selector)
@@ -324,6 +324,8 @@ FLOW_CROP_RATIO = 0.6
 FLOW_METHOD = "lucas_kanade"  # options: 'farneback', 'lucas_kanade'
 FAST_SPACING_WINDOW = 64
 FAST_SPACING_MULTIPLIER = 4.0
+SEGMENT_BOUNDARY_REOPT_TOP_K = 3
+SEGMENT_BOUNDARY_REOPT_MAX_PASSES = 3
 GROUP_BRIGHTNESS_POWER = 1.5
 HYBRID_DARK_THRESHOLD = 0.35
 HYBRID_DARK_PENALTY_WEIGHT = 0.5
@@ -1393,6 +1395,186 @@ def augment_lowlight_segments(
     return augmented
 
 
+def _group_center_index(info):
+    start = int(info.get("start", 0))
+    end = int(info.get("end", start + 1))
+    if end <= start:
+        return float(start)
+    return (float(start) + float(end - 1)) * 0.5
+
+
+def _boundary_edge_penalty(left_idx, right_idx, left_info, right_info, min_diff):
+    """Return (hard_violation_count, soft_shortfall_ratio) for one boundary edge."""
+    if left_idx is None or right_idx is None:
+        return 0, 0.0
+    dist = abs(int(right_idx) - int(left_idx))
+    hard = 0
+    if min_diff > 1 and dist < min_diff:
+        hard = 1
+    left_center = _group_center_index(left_info)
+    right_center = _group_center_index(right_info)
+    target = max(1.0, abs(right_center - left_center))
+    shortfall = max(0.0, target - float(dist)) / target
+    return hard, shortfall
+
+
+def _boundary_pair_objective(
+    left_idx,
+    right_idx,
+    left_group,
+    right_group,
+    prev_idx,
+    prev_group,
+    next_idx,
+    next_group,
+    scores,
+    min_diff,
+    initial_selected,
+    current_left,
+    current_right,
+):
+    """Lexicographic objective for local boundary re-optimization."""
+    hard_total = 0
+    shortfall_total = 0.0
+
+    hard, shortfall = _boundary_edge_penalty(left_idx, right_idx, left_group, right_group, min_diff)
+    hard_total += hard
+    shortfall_total += shortfall
+
+    if prev_group is not None:
+        hard, shortfall = _boundary_edge_penalty(prev_idx, left_idx, prev_group, left_group, min_diff)
+        hard_total += hard
+        shortfall_total += shortfall
+
+    if next_group is not None:
+        hard, shortfall = _boundary_edge_penalty(right_idx, next_idx, right_group, next_group, min_diff)
+        hard_total += hard
+        shortfall_total += shortfall
+
+    score_sum = (
+        _score_or_negative_infinity(scores, left_idx)
+        + _score_or_negative_infinity(scores, right_idx)
+    )
+    initial_pref = int(left_idx in initial_selected) + int(right_idx in initial_selected)
+    stay_pref = -(
+        (0 if left_idx == current_left else 1)
+        + (0 if right_idx == current_right else 1)
+    )
+    return (-hard_total, -shortfall_total, score_sum, initial_pref, stay_pref)
+
+
+def refine_segment_selection_boundary_local(
+    group_infos,
+    files,
+    scores,
+    initial_selected,
+    min_diff,
+    top_k=SEGMENT_BOUNDARY_REOPT_TOP_K,
+    max_passes=SEGMENT_BOUNDARY_REOPT_MAX_PASSES,
+):
+    """
+    Refine one-per-segment initial picks using local boundary optimization.
+
+    Keeps the per-segment structure, but for each adjacent segment pair chooses
+    a combination from the segments' top-K sharp candidates that reduces
+    boundary crowding while preserving sharpness.
+    """
+    if not group_infos:
+        return set(initial_selected)
+
+    top_k = max(1, int(top_k))
+    max_passes = max(1, int(max_passes))
+    initial_set = set(initial_selected)
+
+    group_candidates = []
+    selected_by_group = []
+
+    for info in group_infos:
+        start = int(info.get("start", 0))
+        end = int(info.get("end", start))
+        group_existing = [i for i in range(start, end) if os.path.isfile(files[i])]
+        group_valid = [
+            i for i in group_existing
+            if scores[i] is not None and math.isfinite(scores[i])
+        ]
+        group_valid_sorted = sorted(
+            group_valid,
+            key=lambda idx: (-float(scores[idx]), idx),
+        )
+        candidates = group_valid_sorted[:top_k]
+
+        current = None
+        for idx in range(start, end):
+            if idx in initial_set:
+                current = idx
+                break
+
+        if current is None:
+            if group_valid_sorted:
+                current = group_valid_sorted[0]
+            elif group_existing:
+                current = group_existing[0]
+
+        if current is not None and current not in candidates:
+            candidates.append(current)
+        if not candidates and current is not None:
+            candidates = [current]
+
+        group_candidates.append(candidates)
+        selected_by_group.append(current)
+
+    if len(group_infos) < 2:
+        return {idx for idx in selected_by_group if idx is not None}
+
+    for _ in range(max_passes):
+        changed = False
+        for g in range(len(group_infos) - 1):
+            left_candidates = group_candidates[g]
+            right_candidates = group_candidates[g + 1]
+            if not left_candidates or not right_candidates:
+                continue
+
+            current_left = selected_by_group[g]
+            current_right = selected_by_group[g + 1]
+            prev_idx = selected_by_group[g - 1] if g > 0 else None
+            next_idx = selected_by_group[g + 2] if (g + 2) < len(group_infos) else None
+            prev_group = group_infos[g - 1] if g > 0 else None
+            next_group = group_infos[g + 2] if (g + 2) < len(group_infos) else None
+
+            best_pair = (current_left, current_right)
+            best_key = None
+
+            for left_idx in left_candidates:
+                for right_idx in right_candidates:
+                    key = _boundary_pair_objective(
+                        left_idx,
+                        right_idx,
+                        group_infos[g],
+                        group_infos[g + 1],
+                        prev_idx,
+                        prev_group,
+                        next_idx,
+                        next_group,
+                        scores,
+                        min_diff,
+                        initial_set,
+                        current_left,
+                        current_right,
+                    )
+                    if best_key is None or key > best_key:
+                        best_key = key
+                        best_pair = (left_idx, right_idx)
+
+            if best_pair != (current_left, current_right):
+                selected_by_group[g], selected_by_group[g + 1] = best_pair
+                changed = True
+
+        if not changed:
+            break
+
+    return {idx for idx in selected_by_group if idx is not None}
+
+
 # ---------- Main ----------
 
 def main():
@@ -1502,6 +1684,22 @@ def main():
         "--augment_motion",
         action="store_true",
         help="Enable motion-driven augmentation that adds frames in high-motion segments.",
+    )
+    ap.add_argument(
+        "--segment-boundary-reopt",
+        dest="segment_boundary_reopt",
+        action="store_true",
+        default=True,
+        help=(
+            "Refine one-per-segment initial picks using segment top-K candidates "
+            "and local boundary re-optimization (default: enabled)."
+        ),
+    )
+    ap.add_argument(
+        "--no-segment-boundary-reopt",
+        dest="segment_boundary_reopt",
+        action="store_false",
+        help="Disable segment top-K + boundary local re-optimization.",
     )
     ap.add_argument(
         "--blur-percent",
@@ -1921,6 +2119,23 @@ def main():
                 i for i in range(total) if os.path.isfile(files[i])
             ]
             initial_selected &= set(existing_indices)
+            if args.segment_boundary_reopt and len(group_infos) >= 2:
+                before_reopt = set(initial_selected)
+                initial_selected = refine_segment_selection_boundary_local(
+                    group_infos,
+                    files,
+                    scores,
+                    initial_selected,
+                    min_diff,
+                )
+                initial_selected &= set(existing_indices)
+                if initial_selected != before_reopt:
+                    changed_count = len(initial_selected.symmetric_difference(before_reopt))
+                    print(
+                        "[INFO] segment boundary reopt adjusted {} selection slot(s).".format(
+                            changed_count,
+                        )
+                    )
             final_selected = set(initial_selected)
 
     if (
