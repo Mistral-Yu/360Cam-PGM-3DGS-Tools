@@ -672,6 +672,7 @@ class PreviewApp:
         self.selector_log: Optional[tk.Text] = None
         self.selector_run_button: Optional[tk.Button] = None
         self.selector_show_score_button: Optional[tk.Button] = None
+        self.selector_open_suspects_button: Optional[tk.Button] = None
         self.selector_manual_apply_button: Optional[tk.Button] = None
         self.selector_manual_reset_button: Optional[tk.Button] = None
         self.selector_count_var: Optional[tk.StringVar] = None
@@ -2090,13 +2091,19 @@ class PreviewApp:
             command=self._show_selector_scores,
         )
         self.selector_show_score_button.pack(side=tk.LEFT, padx=(0, 8))
+        self.selector_open_suspects_button = tk.Button(
+            overview_controls,
+            text="Open Suspects",
+            command=self._open_selector_suspects_preview,
+        )
+        self.selector_open_suspects_button.pack(side=tk.LEFT, padx=(0, 12))
         self.selector_manual_apply_button = tk.Button(
             overview_controls,
             text="Manual Selection Apply",
             command=self._confirm_selector_manual_selection,
             state="disabled",
         )
-        self.selector_manual_apply_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.selector_manual_apply_button.pack(side=tk.LEFT, padx=(4, 4))
         self.selector_manual_reset_button = tk.Button(
             overview_controls,
             text="Reset",
@@ -7202,36 +7209,48 @@ class PreviewApp:
         self._toggle_selector_preview_window(idx)
         return "break"
 
-    def _toggle_selector_preview_window(self, idx: int) -> None:
-        """Open/close one image inside the consolidated preview panel."""
-        if self._remove_selector_preview_item(idx):
-            return
+    def _add_selector_preview_item_by_index(
+        self,
+        idx: int,
+        show_errors: bool = True,
+    ) -> bool:
+        """Load one frame image and add it to the preview set."""
         if idx < 0 or idx >= len(self.selector_score_entries):
-            return
-        old_active = self.selector_preview_panel_active_idx
+            return False
         entry = self.selector_score_entries[idx]
         image_path = self._selector_image_path_for_entry(entry)
         if image_path is None:
-            messagebox.showerror(
-                "FrameSelector",
-                "Could not resolve image path for {}.".format(
-                    self._selector_entry_label_text(entry)
-                ),
-            )
-            return
+            if show_errors:
+                messagebox.showerror(
+                    "FrameSelector",
+                    "Could not resolve image path for {}.".format(
+                        self._selector_entry_label_text(entry)
+                    ),
+                )
+            return False
         try:
             with Image.open(image_path) as img:
                 image = img.convert("RGB").copy()
         except Exception as exc:
-            messagebox.showerror(
-                "FrameSelector",
-                "Failed to open image:\n{}\n\n{}".format(image_path, exc),
-            )
-            return
+            if show_errors:
+                messagebox.showerror(
+                    "FrameSelector",
+                    "Failed to open image:\n{}\n\n{}".format(image_path, exc),
+                )
+            return False
         self.selector_preview_items[idx] = {
             "image": image,
             "path": image_path,
         }
+        return True
+
+    def _toggle_selector_preview_window(self, idx: int) -> None:
+        """Open/close one image inside the consolidated preview panel."""
+        if self._remove_selector_preview_item(idx):
+            return
+        old_active = self.selector_preview_panel_active_idx
+        if not self._add_selector_preview_item_by_index(idx, show_errors=True):
+            return
         self.selector_preview_panel_active_idx = idx
         preserve_zoom = old_active is not None
         self._sync_selector_preview_panel_controls(preserve_zoom=preserve_zoom)
@@ -7240,6 +7259,85 @@ class PreviewApp:
         if old_active is not None:
             changed.append(old_active)
         self._refresh_selector_score_bars(changed)
+
+    def _open_selector_suspects_preview(self) -> None:
+        """Confirm and open all current suspect frames in the preview panel."""
+        if not self.selector_score_entries:
+            messagebox.showinfo(
+                "FrameSelector",
+                "Load a Sharpness OverView CSV and run Check Selection first.",
+            )
+            return
+        suspect_indices = sorted(
+            idx for idx in self.selector_score_suspect_positions
+            if 0 <= idx < len(self.selector_score_entries)
+        )
+        if not suspect_indices:
+            messagebox.showinfo(
+                "FrameSelector",
+                "No suspects are currently marked. Run Check Selection first.",
+            )
+            return
+        proceed = messagebox.askokcancel(
+            "FrameSelector",
+            "Open {} suspect image(s) in FrameSelector Preview Panel?".format(
+                len(suspect_indices)
+            ),
+        )
+        if not proceed:
+            return
+
+        old_active = self.selector_preview_panel_active_idx
+        had_preview_items = bool(self.selector_preview_items)
+        opened = 0
+        failed = 0
+        changed = set()
+
+        for idx in suspect_indices:
+            already_open = idx in self.selector_preview_items
+            ok = self._add_selector_preview_item_by_index(idx, show_errors=False)
+            if ok:
+                if not already_open:
+                    opened += 1
+                changed.add(idx)
+            else:
+                failed += 1
+
+        if not self.selector_preview_items:
+            if failed > 0:
+                messagebox.showerror(
+                    "FrameSelector",
+                    "Failed to open all suspect images.",
+                )
+            return
+
+        active_idx = None
+        for idx in suspect_indices:
+            if idx in self.selector_preview_items:
+                active_idx = idx
+                break
+        if active_idx is None and self.selector_preview_panel_active_idx in self.selector_preview_items:
+            active_idx = self.selector_preview_panel_active_idx
+        if active_idx is None:
+            active_idx = sorted(self.selector_preview_items.keys())[0]
+
+        self.selector_preview_panel_active_idx = active_idx
+        preserve_zoom = had_preview_items or (old_active is not None)
+        self._sync_selector_preview_panel_controls(preserve_zoom=preserve_zoom)
+        self._center_selector_preview_view_on_image_center()
+        if old_active is not None:
+            changed.add(old_active)
+        if active_idx is not None:
+            changed.add(active_idx)
+        self._refresh_selector_score_bars(changed)
+
+        self._append_text_widget(
+            self.selector_log,
+            "[preview] Opened {} suspect image(s){}.".format(
+                opened,
+                "" if failed <= 0 else " ({} failed)".format(failed),
+            ),
+        )
 
     def _on_selector_score_canvas_mousewheel(self, event: tk.Event) -> str:
         """Zoom the overview X-axis (bar width) using the mouse wheel."""
