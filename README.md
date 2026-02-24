@@ -96,6 +96,9 @@ This project is released under the [MIT License](LICENSE). Copyright (c) 2025 Yu
 
 ---
 
+## Work in progress
+- CameraFormatConverter. RealityScan(CSV, Ply, XMP) ←→ Metashape(XML, Ply) ←→ Colmap
+
 ## TODO / Ideas
 - Flesh out a full GUI walkthrough (tab descriptions, launch parameters, screenshot gallery).
 - Redesign the GUI using PySide or a similar framework
