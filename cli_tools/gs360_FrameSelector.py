@@ -1143,8 +1143,8 @@ def _compute_flow_magnitudes(files, flow_mag_arr, flow_crop_ratio, workers, labe
 def load_selection_from_csv(csv_path, files, scores, brightness_mean_arr, group_score_arr, flow_mag_arr):
     """Load selection flags and metrics from an existing CSV."""
     selection_flags = [0] * len(files)
-    with open(csv_path, "r", newline="") as f:
-        reader = csv.DictReader(f)
+
+    def _parse_reader(reader):
         if reader.fieldnames is None:
             raise ValueError("CSV file has no header")
         fields_lower = {name.lower(): name for name in reader.fieldnames}
@@ -1195,6 +1195,26 @@ def load_selection_from_csv(csv_path, files, scores, brightness_mean_arr, group_
                     flow_mag_arr[idx] = float(row[flow_key])
                 except ValueError:
                     pass
+
+    last_decode_error = None
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            with open(csv_path, "r", newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                _parse_reader(reader)
+            return selection_flags
+        except UnicodeDecodeError as exc:
+            last_decode_error = exc
+            # Reset partially-read data before trying the next encoding.
+            selection_flags[:] = [0] * len(files)
+            scores[:] = [None] * len(files)
+            brightness_mean_arr[:] = [0.0] * len(files)
+            group_score_arr[:] = [0.0] * len(files)
+            flow_mag_arr[:] = [0.0] * len(files)
+            continue
+
+    if last_decode_error is not None:
+        raise last_decode_error
     return selection_flags
 
 def augment_motion_segments(
