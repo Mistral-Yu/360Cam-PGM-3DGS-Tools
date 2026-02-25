@@ -96,6 +96,14 @@ PLY_VIEW_MAX_POINTS = 500_000
 PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
 PLY_INTERACTION_SETTLE_DELAY_MS = 350
 PLY_VIEW_MAX_ZOOM = 24.0
+SELECTOR_OVERVIEW_LOG_SCALE = 99.0
+SELECTOR_OVERVIEW_X_ZOOM_MIN = 0.25
+SELECTOR_OVERVIEW_X_ZOOM_MAX = 150.0
+SELECTOR_OVERVIEW_BAR_WIDTH_MAX = 1024.0
+SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_MAX = 50
+SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_HALF = 500
+SELECTOR_SUSPECT_BRIGHTNESS_BINS = 5
+SELECTOR_PREVIEW_DEFAULT_OPEN_ZOOM_RATIO = 0.5
 PLY_PROPERTY_TYPES = {
     "char": ("b", 1, "i1"),
     "uchar": ("B", 1, "u1"),
@@ -672,9 +680,13 @@ class PreviewApp:
         self.selector_log: Optional[tk.Text] = None
         self.selector_run_button: Optional[tk.Button] = None
         self.selector_show_score_button: Optional[tk.Button] = None
+        self.selector_jump_next_suspect_button: Optional[tk.Button] = None
         self.selector_open_suspects_button: Optional[tk.Button] = None
         self.selector_manual_apply_button: Optional[tk.Button] = None
         self.selector_manual_reset_button: Optional[tk.Button] = None
+        self.selector_xzoom_max_button: Optional[tk.Button] = None
+        self.selector_xzoom_half_button: Optional[tk.Button] = None
+        self.selector_xzoom_fit_button: Optional[tk.Button] = None
         self.selector_count_var: Optional[tk.StringVar] = None
         self.selector_summary_label: Optional[tk.Label] = None
         self.selector_score_canvas: Optional[tk.Canvas] = None
@@ -690,6 +702,7 @@ class PreviewApp:
         self.selector_score_total_width = 0.0
         self.selector_score_value_min = 0.0
         self.selector_score_value_range = 0.0
+        self.selector_last_suspect_jump_idx: Optional[int] = None
         self.selector_preview_panel_window: Optional[tk.Toplevel] = None
         self.selector_preview_panel_image_label: Optional[tk.Label] = None
         self.selector_preview_panel_image_canvas: Optional[tk.Canvas] = None
@@ -705,6 +718,8 @@ class PreviewApp:
         self.selector_preview_panel_zoom_100_button: Optional[tk.Button] = None
         self.selector_preview_panel_close_current_button: Optional[tk.Button] = None
         self.selector_preview_panel_close_all_button: Optional[tk.Button] = None
+        self.selector_preview_panel_select_toggle_button: Optional[tk.Button] = None
+        self.selector_preview_panel_jump_current_button: Optional[tk.Button] = None
         self.selector_preview_items: Dict[int, Dict[str, Any]] = {}
         self.selector_preview_panel_active_idx: Optional[int] = None
         self.selector_preview_panel_zoom_ratio = 1.0
@@ -2091,6 +2106,12 @@ class PreviewApp:
             command=self._show_selector_scores,
         )
         self.selector_show_score_button.pack(side=tk.LEFT, padx=(0, 8))
+        self.selector_jump_next_suspect_button = tk.Button(
+            overview_controls,
+            text="Jump to Next Suspect",
+            command=self._jump_to_next_selector_suspect,
+        )
+        self.selector_jump_next_suspect_button.pack(side=tk.LEFT, padx=(0, 8))
         self.selector_open_suspects_button = tk.Button(
             overview_controls,
             text="Open Suspects",
@@ -2104,6 +2125,24 @@ class PreviewApp:
             state="disabled",
         )
         self.selector_manual_apply_button.pack(side=tk.LEFT, padx=(4, 4))
+        self.selector_xzoom_max_button = tk.Button(
+            overview_controls,
+            text="X Zoom 50",
+            command=self._selector_overview_zoom_max,
+        )
+        self.selector_xzoom_max_button.pack(side=tk.LEFT, padx=(4, 4))
+        self.selector_xzoom_half_button = tk.Button(
+            overview_controls,
+            text="X Zoom 500",
+            command=self._selector_overview_zoom_half,
+        )
+        self.selector_xzoom_half_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.selector_xzoom_fit_button = tk.Button(
+            overview_controls,
+            text="X Zoom Fit",
+            command=self._selector_overview_zoom_min,
+        )
+        self.selector_xzoom_fit_button.pack(side=tk.LEFT, padx=(0, 4))
         self.selector_manual_reset_button = tk.Button(
             overview_controls,
             text="Reset",
@@ -2122,7 +2161,7 @@ class PreviewApp:
         score_canvas_container.pack(fill="x", expand=True, padx=6, pady=(0, 4))
         self.selector_score_canvas = tk.Canvas(
             score_canvas_container,
-            height=92,
+            height=121,
             bg="#f4f4f4",
             highlightthickness=0,
             xscrollincrement=1,
@@ -3550,13 +3589,6 @@ class PreviewApp:
         self.log_text.bind("<Button-1>", lambda event: self.log_text.focus_set())
         self.set_log_text("")
 
-        help_frame = tk.LabelFrame(main, text="Help")
-        help_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.help_text = tk.Text(help_frame, wrap="word", height=8, cursor="arrow")
-        self.help_text.pack(fill="both", expand=True, padx=6, pady=4)
-        self.help_text.insert("1.0", HELP_TEXT)
-        self.help_text.bind("<Key>", self._block_text_edit)
-        self.help_text.bind("<Button-1>", lambda event: self.help_text.focus_set())
         self._update_jpeg_quality_state()
         self._update_preview_inspect_state()
         self._sync_panel_heights()
@@ -6537,6 +6569,11 @@ class PreviewApp:
         else:
             norm = 0.0
         norm = max(0.0, min(1.0, norm))
+        if norm > 0.0:
+            # Log display scaling makes lower-score bars easier to see while preserving order.
+            log_base = math.log1p(SELECTOR_OVERVIEW_LOG_SCALE)
+            if log_base > 1e-12:
+                norm = math.log1p(SELECTOR_OVERVIEW_LOG_SCALE * norm) / log_base
         rect_height = max(1.0, norm * bar_area_height)
         y0 = bar_area_height - rect_height
         rect_w = x1 - x0
@@ -6700,6 +6737,8 @@ class PreviewApp:
         self.selector_preview_panel_zoom_100_button = None
         self.selector_preview_panel_close_current_button = None
         self.selector_preview_panel_close_all_button = None
+        self.selector_preview_panel_select_toggle_button = None
+        self.selector_preview_panel_jump_current_button = None
         self.selector_preview_items.clear()
         self.selector_preview_panel_active_idx = None
         self.selector_preview_panel_zoom_ratio = 1.0
@@ -6734,6 +6773,8 @@ class PreviewApp:
         self.selector_preview_panel_zoom_100_button = None
         self.selector_preview_panel_close_current_button = None
         self.selector_preview_panel_close_all_button = None
+        self.selector_preview_panel_select_toggle_button = None
+        self.selector_preview_panel_jump_current_button = None
 
         top = tk.Toplevel(self.root)
         top.title("FrameSelector Preview Panel")
@@ -6816,6 +6857,20 @@ class PreviewApp:
             command=lambda: self._selector_preview_zoom_set_absolute(1.0),
         )
         zoom_100_button.pack(side=tk.LEFT, padx=(4, 0))
+        select_toggle_button = tk.Button(
+            slider_frame,
+            text="Select On/Off",
+            width=12,
+            command=self._selector_preview_toggle_active_selection,
+        )
+        select_toggle_button.pack(side=tk.LEFT, padx=(8, 0))
+        jump_current_button = tk.Button(
+            slider_frame,
+            text="Jump to Current Image",
+            width=16,
+            command=self._selector_preview_jump_to_active_overview,
+        )
+        jump_current_button.pack(side=tk.LEFT, padx=(4, 0))
         close_current_button = tk.Button(
             slider_frame,
             text="Close Current",
@@ -6864,6 +6919,8 @@ class PreviewApp:
         self.selector_preview_panel_zoom_100_button = zoom_100_button
         self.selector_preview_panel_close_current_button = close_current_button
         self.selector_preview_panel_close_all_button = close_all_button
+        self.selector_preview_panel_select_toggle_button = select_toggle_button
+        self.selector_preview_panel_jump_current_button = jump_current_button
         self.selector_preview_panel_index_label = index_label
         return top
 
@@ -6990,6 +7047,41 @@ class PreviewApp:
         self.selector_preview_panel_active_idx = None
         self._sync_selector_preview_panel_controls(preserve_zoom=True)
         self._refresh_selector_score_bars(changed)
+
+    def _selector_preview_toggle_active_selection(self) -> None:
+        """Toggle selected ON/OFF for the currently shown preview image."""
+        idx = self.selector_preview_panel_active_idx
+        if idx is None:
+            self._append_text_widget(
+                self.selector_log,
+                "[preview] No active preview image to toggle selection.",
+            )
+            return
+        self._toggle_selector_selected_by_index(int(idx))
+
+    def _selector_preview_jump_to_active_overview(self) -> None:
+        """Jump the overview to the currently shown preview image."""
+        idx = self.selector_preview_panel_active_idx
+        if idx is None:
+            self._append_text_widget(
+                self.selector_log,
+                "[preview] No active preview image to jump.",
+            )
+            return
+        if idx < 0 or idx >= len(self.selector_score_entries):
+            return
+        self._selector_overview_set_zoom(
+            self._selector_overview_zoom_for_visible_bars(
+                SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_MAX
+            ),
+            focus_idx=int(idx),
+        )
+        self._append_text_widget(
+            self.selector_log,
+            "[overview] Jumped to current preview image: {}".format(
+                self._selector_entry_label_text(self.selector_score_entries[int(idx)])
+            ),
+        )
 
     def _render_selector_preview_panel_image(self) -> None:
         """Render the currently active preview image with current zoom ratio."""
@@ -7188,8 +7280,20 @@ class PreviewApp:
         idx = self._selector_bar_index_from_event(event)
         if idx is None:
             return
+        self._toggle_selector_selected_by_index(idx)
+
+    def _on_selector_score_canvas_right_click(self, event: tk.Event) -> str:
+        """Toggle preview window for the clicked overview bar."""
+        idx = self._selector_bar_index_from_event(event)
+        if idx is None:
+            return "break"
+        self._toggle_selector_preview_window(idx)
+        return "break"
+
+    def _toggle_selector_selected_by_index(self, idx: int) -> bool:
+        """Toggle selected state for one overview entry and refresh UI."""
         if idx < 0 or idx >= len(self.selector_score_entries):
-            return
+            return False
         entry = self.selector_score_entries[idx]
         entry["selected_current"] = not bool(entry.get("selected_current", False))
         state_text = "ON" if bool(entry.get("selected_current", False)) else "OFF"
@@ -7200,14 +7304,7 @@ class PreviewApp:
         self._sync_selector_last_scores_from_entries()
         self._set_selector_manual_buttons_state()
         self._refresh_selector_score_bars([idx], update_summary=True)
-
-    def _on_selector_score_canvas_right_click(self, event: tk.Event) -> str:
-        """Toggle preview window for the clicked overview bar."""
-        idx = self._selector_bar_index_from_event(event)
-        if idx is None:
-            return "break"
-        self._toggle_selector_preview_window(idx)
-        return "break"
+        return True
 
     def _add_selector_preview_item_by_index(
         self,
@@ -7248,13 +7345,25 @@ class PreviewApp:
         """Open/close one image inside the consolidated preview panel."""
         if self._remove_selector_preview_item(idx):
             return
+        had_preview_items = bool(self.selector_preview_items)
         old_active = self.selector_preview_panel_active_idx
         if not self._add_selector_preview_item_by_index(idx, show_errors=True):
             return
         self.selector_preview_panel_active_idx = idx
         preserve_zoom = old_active is not None
         self._sync_selector_preview_panel_controls(preserve_zoom=preserve_zoom)
+        if not had_preview_items and self.selector_preview_panel_active_idx is not None:
+            self.selector_preview_panel_zoom_ratio = max(
+                0.05,
+                min(16.0, float(SELECTOR_PREVIEW_DEFAULT_OPEN_ZOOM_RATIO)),
+            )
+            self._render_selector_preview_panel_image()
         self._center_selector_preview_view_on_image_center()
+        if not had_preview_items:
+            try:
+                self.root.after_idle(self._center_selector_preview_view_on_image_center)
+            except Exception:
+                pass
         changed = [idx]
         if old_active is not None:
             changed.append(old_active)
@@ -7324,7 +7433,18 @@ class PreviewApp:
         self.selector_preview_panel_active_idx = active_idx
         preserve_zoom = had_preview_items or (old_active is not None)
         self._sync_selector_preview_panel_controls(preserve_zoom=preserve_zoom)
+        if not had_preview_items and self.selector_preview_panel_active_idx is not None:
+            self.selector_preview_panel_zoom_ratio = max(
+                0.05,
+                min(16.0, float(SELECTOR_PREVIEW_DEFAULT_OPEN_ZOOM_RATIO)),
+            )
+            self._render_selector_preview_panel_image()
         self._center_selector_preview_view_on_image_center()
+        if not had_preview_items:
+            try:
+                self.root.after_idle(self._center_selector_preview_view_on_image_center)
+            except Exception:
+                pass
         if old_active is not None:
             changed.add(old_active)
         if active_idx is not None:
@@ -7338,6 +7458,160 @@ class PreviewApp:
                 "" if failed <= 0 else " ({} failed)".format(failed),
             ),
         )
+
+    def _selector_overview_current_center_index(self) -> Optional[int]:
+        """Return the bar index near the current overview viewport center."""
+        canvas = self.selector_score_canvas
+        total = len(self.selector_score_entries)
+        if canvas is None or total <= 0 or self.selector_score_bar_width <= 0.0:
+            return None
+        try:
+            canvas.update_idletasks()
+        except Exception:
+            pass
+        view_w = max(1.0, float(canvas.winfo_width() or 1.0))
+        x_center = float(canvas.canvasx(0)) + (view_w * 0.5)
+        idx = int(x_center // float(self.selector_score_bar_width))
+        if idx < 0:
+            return 0
+        if idx >= total:
+            return total - 1
+        return idx
+
+    def _selector_overview_scroll_to_index(self, idx: int) -> None:
+        """Scroll the overview horizontally so the target bar is centered."""
+        canvas = self.selector_score_canvas
+        total = len(self.selector_score_entries)
+        if canvas is None or total <= 0:
+            return
+        if idx < 0 or idx >= total:
+            return
+        if self.selector_score_bar_width <= 0.0:
+            return
+        try:
+            canvas.update_idletasks()
+        except Exception:
+            pass
+        total_w = max(1.0, float(self.selector_score_total_width or 1.0))
+        view_w = max(1.0, float(canvas.winfo_width() or 1.0))
+        target_x = (float(idx) * float(self.selector_score_bar_width)) + (
+            float(self.selector_score_bar_width) * 0.5
+        )
+        left = target_x - (view_w * 0.5)
+        max_left = max(0.0, total_w - view_w)
+        left = max(0.0, min(max_left, left))
+        try:
+            canvas.xview_moveto(left / total_w)
+        except Exception:
+            pass
+
+    def _selector_overview_set_zoom(
+        self,
+        zoom_value: float,
+        focus_idx: Optional[int] = None,
+    ) -> None:
+        """Set overview X zoom and optionally center a target bar."""
+        if not self.selector_score_entries:
+            return
+        new_zoom = max(
+            SELECTOR_OVERVIEW_X_ZOOM_MIN,
+            min(SELECTOR_OVERVIEW_X_ZOOM_MAX, float(zoom_value)),
+        )
+        if abs(float(self.selector_score_zoom) - new_zoom) > 1e-9:
+            self.selector_score_zoom = new_zoom
+            self._refresh_selector_score_view(reset_view=False)
+        if focus_idx is not None:
+            self._selector_overview_scroll_to_index(int(focus_idx))
+
+    def _selector_overview_zoom_for_visible_bars(self, visible_bars: int) -> float:
+        """Return zoom value that aims to show approximately N bars in the viewport."""
+        total = len(self.selector_score_entries)
+        try:
+            target = int(visible_bars)
+        except Exception:
+            target = 1
+        target = max(1, target)
+        if total <= 0:
+            return SELECTOR_OVERVIEW_X_ZOOM_MIN
+        zoom = float(total) / float(target)
+        return max(
+            SELECTOR_OVERVIEW_X_ZOOM_MIN,
+            min(SELECTOR_OVERVIEW_X_ZOOM_MAX, zoom),
+        )
+
+    def _selector_overview_zoom_max(self) -> None:
+        """Set overview X zoom to the preset that shows about 50 bars."""
+        self._selector_overview_set_zoom(
+            self._selector_overview_zoom_for_visible_bars(
+                SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_MAX
+            )
+        )
+
+    def _selector_overview_zoom_half(self) -> None:
+        """Set overview X zoom to the preset that shows about 500 bars."""
+        self._selector_overview_set_zoom(
+            self._selector_overview_zoom_for_visible_bars(
+                SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_HALF
+            )
+        )
+
+    def _selector_overview_zoom_min(self) -> None:
+        """Set overview X zoom to the minimum (fit whole view behavior)."""
+        self._selector_overview_set_zoom(SELECTOR_OVERVIEW_X_ZOOM_MIN)
+
+    def _jump_to_next_selector_suspect(self) -> None:
+        """Jump the overview viewport to the next suspect bar and max zoom."""
+        if not self.selector_score_entries:
+            self._append_text_widget(
+                self.selector_log,
+                "[overview] No score overview data. Run Check Selection first.",
+            )
+            return
+        suspect_indices = sorted(
+            idx
+            for idx in self.selector_score_suspect_positions
+            if 0 <= idx < len(self.selector_score_entries)
+        )
+        if not suspect_indices:
+            self._append_text_widget(
+                self.selector_log,
+                "[overview] No suspects are currently marked.",
+            )
+            return
+
+        current_idx: Optional[int] = None
+        active_idx = self.selector_preview_panel_active_idx
+        if active_idx in self.selector_score_suspect_positions:
+            current_idx = int(active_idx)
+        elif (
+            self.selector_last_suspect_jump_idx is not None
+            and self.selector_last_suspect_jump_idx in self.selector_score_suspect_positions
+        ):
+            current_idx = int(self.selector_last_suspect_jump_idx)
+        else:
+            current_idx = self._selector_overview_current_center_index()
+
+        target_idx = suspect_indices[0]
+        if current_idx is not None:
+            for idx in suspect_indices:
+                if idx > current_idx:
+                    target_idx = idx
+                    break
+
+        self.selector_last_suspect_jump_idx = int(target_idx)
+        self._selector_overview_set_zoom(
+            self._selector_overview_zoom_for_visible_bars(
+                SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_MAX
+            ),
+            focus_idx=int(target_idx),
+        )
+
+        if 0 <= target_idx < len(self.selector_score_entries):
+            label = self._selector_entry_label_text(self.selector_score_entries[target_idx])
+            self._append_text_widget(
+                self.selector_log,
+                "[overview] Jumped to next suspect: {}".format(label),
+            )
 
     def _on_selector_score_canvas_mousewheel(self, event: tk.Event) -> str:
         """Zoom the overview X-axis (bar width) using the mouse wheel."""
@@ -7362,7 +7636,10 @@ class PreviewApp:
 
         old_zoom = float(self.selector_score_zoom)
         zoom_step = 1.15 if delta > 0 else (1.0 / 1.15)
-        new_zoom = max(0.25, min(100.0, old_zoom * zoom_step))
+        new_zoom = max(
+            SELECTOR_OVERVIEW_X_ZOOM_MIN,
+            min(SELECTOR_OVERVIEW_X_ZOOM_MAX, old_zoom * zoom_step),
+        )
         if abs(new_zoom - old_zoom) < 1e-9:
             return "break"
 
@@ -7473,6 +7750,7 @@ class PreviewApp:
                     field_map = {name.lower(): name for name in headers if name}
                     selected_key = field_map.get("selected(1=keep)") or field_map.get("selected")
                     score_key = field_map.get("score")
+                    brightness_key = field_map.get("brightness_mean")
                     filename_key = field_map.get("filename")
                     index_key = field_map.get("index")
                     if not selected_key or not score_key:
@@ -7494,6 +7772,15 @@ class PreviewApp:
                             score_val = None
                         if score_val is not None and not math.isfinite(score_val):
                             score_val = None
+                        brightness_val: Optional[float] = None
+                        if brightness_key:
+                            brightness_raw = row.get(brightness_key)
+                            try:
+                                brightness_val = float(brightness_raw)
+                            except (TypeError, ValueError):
+                                brightness_val = None
+                            if brightness_val is not None and not math.isfinite(brightness_val):
+                                brightness_val = None
                         if index_key:
                             idx_raw = row.get(index_key, "")
                         else:
@@ -7511,6 +7798,7 @@ class PreviewApp:
                                 "selected_original": selected_flag,
                                 "selected_current": selected_flag,
                                 "score": score_val,
+                                "brightness_mean": brightness_val,
                                 "filename": fname,
                                 "index_text": idx_text,
                                 "row": dict(row),
@@ -7534,32 +7822,107 @@ class PreviewApp:
                 return
 
             parsed_entries.sort(key=lambda item: int(item.get("frame_idx", 0)))
-            selected_entries: List[Tuple[float, str, str, int]] = []
+            selected_entries: List[Dict[str, Any]] = []
             for pos, entry in enumerate(parsed_entries):
                 if not bool(entry.get("selected_current", False)):
                     continue
                 score_val = entry.get("score")
                 if score_val is None:
                     continue
+                brightness_val = entry.get("brightness_mean")
+                if brightness_val is not None:
+                    try:
+                        brightness_val = float(brightness_val)
+                    except (TypeError, ValueError):
+                        brightness_val = None
                 selected_entries.append(
-                    (
-                        float(score_val),
-                        str(entry.get("filename", "")),
-                        str(entry.get("index_text", "")),
-                        pos,
-                    )
+                    {
+                        "score": float(score_val),
+                        "filename": str(entry.get("filename", "")),
+                        "index_text": str(entry.get("index_text", "")),
+                        "pos": pos,
+                        "brightness_mean": brightness_val,
+                    }
                 )
 
-            selected_entries.sort(key=lambda item: item[0])
+            selected_entries.sort(key=lambda item: float(item["score"]))
             selected_flag_total = sum(1 for entry in parsed_entries if bool(entry.get("selected_current", False)))
             limit_percent = self._selector_suspect_percent()
             if selected_entries:
                 max_lines = max(1, min(200, math.ceil((limit_percent / 100.0) * len(selected_entries))))
-                suspects = selected_entries[:max_lines]
+                suspects = []
+                if max_lines > 0:
+                    valid_brightness_entries = [
+                        item for item in selected_entries
+                        if item.get("brightness_mean") is not None
+                    ]
+                    if valid_brightness_entries:
+                        b_vals = [float(item["brightness_mean"]) for item in valid_brightness_entries]
+                        b_min = min(b_vals)
+                        b_max = max(b_vals)
+                    else:
+                        b_min = 0.0
+                        b_max = 0.0
+
+                    use_banded = (
+                        len(valid_brightness_entries) >= 2
+                        and (b_max - b_min) > 1e-9
+                        and max_lines >= 2
+                    )
+                    if use_banded:
+                        bin_count = max(
+                            2,
+                            min(
+                                SELECTOR_SUSPECT_BRIGHTNESS_BINS,
+                                max_lines,
+                                len(valid_brightness_entries),
+                            ),
+                        )
+                        buckets: List[List[Dict[str, Any]]] = [[] for _ in range(bin_count)]
+                        for item in valid_brightness_entries:
+                            b_val = float(item["brightness_mean"])
+                            norm_b = (b_val - b_min) / (b_max - b_min)
+                            bin_idx = int(norm_b * bin_count)
+                            if bin_idx >= bin_count:
+                                bin_idx = bin_count - 1
+                            elif bin_idx < 0:
+                                bin_idx = 0
+                            buckets[bin_idx].append(item)
+                        for bucket in buckets:
+                            bucket.sort(key=lambda item: float(item["score"]))
+
+                        chosen_pos: Set[int] = set()
+                        while len(suspects) < max_lines:
+                            progressed = False
+                            for bucket in buckets:
+                                while bucket:
+                                    candidate = bucket.pop(0)
+                                    pos_val = int(candidate["pos"])
+                                    if pos_val in chosen_pos:
+                                        continue
+                                    suspects.append(candidate)
+                                    chosen_pos.add(pos_val)
+                                    progressed = True
+                                    break
+                                if len(suspects) >= max_lines:
+                                    break
+                            if not progressed:
+                                break
+                        if len(suspects) < max_lines:
+                            for item in selected_entries:
+                                pos_val = int(item["pos"])
+                                if pos_val in chosen_pos:
+                                    continue
+                                suspects.append(item)
+                                chosen_pos.add(pos_val)
+                                if len(suspects) >= max_lines:
+                                    break
+                    else:
+                        suspects = list(selected_entries[:max_lines])
             else:
                 max_lines = 0
                 suspects = []
-            suspect_positions = {entry[3] for entry in suspects}
+            suspect_positions = {int(item["pos"]) for item in suspects}
 
             self.selector_score_entries = parsed_entries
             self.selector_score_suspect_positions = suspect_positions
@@ -7572,18 +7935,26 @@ class PreviewApp:
                 self.selector_log,
                 (
                     f"[score] {csv_path.name}: selected={selected_flag_total} "
-                    f"showing lowest {len(suspects)} scores ({limit_percent:.1f}% of selected, limit={max_lines})"
+                    f"showing {len(suspects)} suspects ({limit_percent:.1f}% of selected, limit={max_lines}, brightness-banded)"
                 ),
             )
             if not suspects:
                 self._append_text_widget(self.selector_log, "[score] No low-score selections detected.")
                 return
 
-            for score, fname, idx_text, _pos in suspects:
+            for item in suspects:
+                score = float(item["score"])
+                fname = str(item.get("filename", ""))
+                idx_text = str(item.get("index_text", ""))
+                brightness_val = item.get("brightness_mean")
                 label = fname or (f"index {idx_text}" if idx_text else "(unknown)")
+                if brightness_val is None:
+                    extra = ""
+                else:
+                    extra = f", brightness={float(brightness_val):.4f}"
                 self._append_text_widget(
                     self.selector_log,
-                    f"  - {label} (score={score:.4f})",
+                    f"  - {label} (score={score:.4f}{extra})",
                 )
         finally:
             if duration_message:
@@ -7623,8 +7994,11 @@ class PreviewApp:
         bar_area_height = max(20, height - label_height)
         approx_width = view_width / float(total) if total > 0 else view_width
         prev_xview = canvas.xview()
-        zoom = max(0.25, min(100.0, float(self.selector_score_zoom)))
-        bar_width = max(2.0, min(640.0, approx_width * zoom))
+        zoom = max(
+            SELECTOR_OVERVIEW_X_ZOOM_MIN,
+            min(SELECTOR_OVERVIEW_X_ZOOM_MAX, float(self.selector_score_zoom)),
+        )
+        bar_width = max(2.0, min(SELECTOR_OVERVIEW_BAR_WIDTH_MAX, approx_width * zoom))
         total_width = max(bar_width * total, view_width)
         self.selector_score_bar_width = bar_width
         self.selector_score_bar_area_height = bar_area_height
