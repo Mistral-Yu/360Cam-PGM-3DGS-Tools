@@ -95,7 +95,7 @@ PLY_VIEW_CANVAS_HEIGHT = 840
 PLY_VIEW_MAX_POINTS = 500_000
 PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
 PLY_INTERACTION_SETTLE_DELAY_MS = 350
-PLY_VIEW_MAX_ZOOM = 24.0
+PLY_VIEW_MAX_ZOOM = 640.0
 SELECTOR_OVERVIEW_LOG_SCALE = 99.0
 SELECTOR_OVERVIEW_X_ZOOM_MIN = 0.25
 SELECTOR_OVERVIEW_X_ZOOM_MAX = 150.0
@@ -816,7 +816,7 @@ class PreviewApp:
         self._ply_remove_color_rgb_var = tk.StringVar(
             value=self._ply_sky_color_rgb_var.get()
         )
-        self._ply_remove_color_tol_var = tk.StringVar(value="50")
+        self._ply_remove_color_tol_var = tk.StringVar(value="125")
         self._ply_remove_color_label: Optional[tk.Label] = None
         self._ply_sky_save_path_var = tk.StringVar()
         self._ply_sky_points: Optional[np.ndarray] = None
@@ -3042,23 +3042,6 @@ class PreviewApp:
         self._update_ply_target_value_widgets()
 
         row += 1
-        tk.Label(params, text="Append PLY files").grid(
-            row=row, column=0, sticky="e", padx=4, pady=4
-        )
-        append_entry = tk.Entry(
-            params,
-            textvariable=self.ply_vars["append_ply"],
-            width=52,
-        )
-        append_entry.grid(row=row, column=1, sticky="we", padx=4, pady=4)
-        self.ply_append_entry = append_entry
-        tk.Button(
-            params,
-            text="Browse...",
-            command=self._browse_ply_append_files,
-        ).grid(row=row, column=2, padx=4, pady=4)
-
-        row += 1
         params_actions = tk.Frame(params)
         params_actions.grid(row=row, column=0, columnspan=3, sticky="we", pady=(4, 4))
         self.ply_stop_button = tk.Button(
@@ -3081,30 +3064,8 @@ class PreviewApp:
         viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
         self._ply_viewer_root = viewer_frame
 
-        save_top_controls = tk.Frame(viewer_frame)
-        save_top_controls.pack(fill="x", padx=12, pady=(8, 0))
-        tk.Label(save_top_controls, text="Save viewed PLY").pack(
-            side=tk.LEFT, padx=(0, 4)
-        )
-        sky_save_entry = tk.Entry(
-            save_top_controls,
-            textvariable=self._ply_sky_save_path_var,
-            width=56,
-        )
-        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
-        tk.Button(
-            save_top_controls,
-            text="Browse...",
-            command=self._on_browse_sky_save_path,
-        ).pack(side=tk.LEFT, padx=(4, 4))
-        tk.Button(
-            save_top_controls,
-            text="Save",
-            command=self._on_save_sky_points,
-        ).pack(side=tk.LEFT)
-
         viewer_actions = tk.Frame(viewer_frame)
-        viewer_actions.pack(fill="x", padx=12, pady=(6, 0))
+        viewer_actions.pack(fill="x", padx=12, pady=(8, 0))
         self.ply_input_view_button = tk.Button(
             viewer_actions,
             text="Show Input PLY",
@@ -3172,9 +3133,16 @@ class PreviewApp:
         )
         self._ply_high_max_points_entry = high_max_points_entry
 
+        color_label_width = 18
+        pick_color_button_width = 17
         remove_color_controls = tk.Frame(viewer_frame)
         remove_color_controls.pack(fill="x", padx=12, pady=(4, 0))
-        tk.Label(remove_color_controls, text="Remove color").pack(
+        tk.Label(
+            remove_color_controls,
+            text="Remove color",
+            width=color_label_width,
+            anchor="w",
+        ).pack(
             side=tk.LEFT, padx=(0, 4)
         )
         remove_color_display = tk.Label(
@@ -3191,6 +3159,7 @@ class PreviewApp:
         tk.Button(
             remove_color_controls,
             text="Pick Remove Color",
+            width=pick_color_button_width,
             command=self._on_pick_remove_color,
         ).pack(side=tk.LEFT, padx=(4, 4))
         tk.Label(remove_color_controls, text="Tol (RGB)").pack(
@@ -3214,7 +3183,12 @@ class PreviewApp:
 
         sky_controls = tk.Frame(viewer_frame)
         sky_controls.pack(fill="x", padx=12, pady=(4, 0))
-        tk.Label(sky_controls, text="Sky color").pack(side=tk.LEFT, padx=(12, 4))
+        tk.Label(
+            sky_controls,
+            text="Sky point cloud color",
+            width=color_label_width,
+            anchor="w",
+        ).pack(side=tk.LEFT, padx=(0, 4))
         sky_color_display = tk.Label(
             sky_controls,
             textvariable=self._ply_sky_color_rgb_var,
@@ -3226,6 +3200,7 @@ class PreviewApp:
         tk.Button(
             sky_controls,
             text="Pick Sky Color",
+            width=pick_color_button_width,
             command=self._on_pick_sky_color,
         ).pack(side=tk.LEFT, padx=(4, 4))
         tk.Button(
@@ -3271,6 +3246,57 @@ class PreviewApp:
             button_row,
             text="Clear Sky",
             command=self._on_clear_sky_points,
+        ).pack(side=tk.LEFT)
+
+        append_controls = tk.Frame(viewer_frame)
+        append_controls.pack(fill="x", padx=12, pady=(4, 0))
+        action_button_width = 18
+        browse_button_width = 10
+        tk.Label(append_controls, text="Append PLY files").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        append_entry = tk.Entry(
+            append_controls,
+            textvariable=self.ply_vars["append_ply"],
+            width=52,
+        )
+        append_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        self.ply_append_entry = append_entry
+        tk.Button(
+            append_controls,
+            text="Browse...",
+            width=browse_button_width,
+            command=self._browse_ply_append_files,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Button(
+            append_controls,
+            text="Append to Viewer",
+            width=action_button_width,
+            command=self._append_ply_files_to_viewer,
+        ).pack(side=tk.LEFT, padx=(0, 0))
+
+        save_top_controls = tk.Frame(viewer_frame)
+        save_top_controls.pack(fill="x", padx=12, pady=(4, 0))
+        tk.Label(save_top_controls, text="Save viewed PLY").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        sky_save_entry = tk.Entry(
+            save_top_controls,
+            textvariable=self._ply_sky_save_path_var,
+            width=56,
+        )
+        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        tk.Button(
+            save_top_controls,
+            text="Browse...",
+            width=browse_button_width,
+            command=self._on_browse_sky_save_path,
+        ).pack(side=tk.LEFT, padx=(4, 4))
+        tk.Button(
+            save_top_controls,
+            text="Save Displayed PLY",
+            width=action_button_width,
+            command=self._on_save_sky_points,
         ).pack(side=tk.LEFT)
 
         canvas = tk.Canvas(
@@ -4679,6 +4705,128 @@ class PreviewApp:
                 merged.append(text)
         append_var.set("; ".join(merged))
 
+    def _append_ply_files_to_viewer(self) -> None:
+        """Append additional PLY files into the current viewer buffers."""
+        if self._ply_view_points is None or self._ply_view_colors is None:
+            messagebox.showerror(
+                "PLY Viewer",
+                "Load a PLY before appending files to the viewer.",
+            )
+            return
+        if not self.ply_vars:
+            return
+        append_var = self.ply_vars.get("append_ply")
+        raw_text = append_var.get().strip() if append_var is not None else ""
+        items = self._parse_ply_append_items(raw_text)
+        if not items:
+            messagebox.showerror(
+                "PLY Viewer",
+                "Specify at least one append PLY file.",
+            )
+            return
+
+        max_points = self._get_ply_view_high_max_points(show_error=True)
+        if max_points is None:
+            return
+
+        append_points: List[np.ndarray] = []
+        append_colors: List[np.ndarray] = []
+        added_loaded = 0
+        added_original = 0
+        failed: List[str] = []
+        for raw_path in items:
+            try:
+                path_obj = Path(raw_path).expanduser()
+            except Exception:
+                failed.append(f"{raw_path} (invalid path)")
+                continue
+            if not path_obj.is_absolute():
+                path_obj = (self.base_dir / path_obj).resolve()
+            if not path_obj.exists():
+                failed.append(f"{path_obj} (not found)")
+                continue
+            try:
+                pts, cols, orig_count, _sample = self._load_binary_ply_points(
+                    path_obj,
+                    max_points=max_points,
+                )
+            except Exception as exc:
+                failed.append(f"{path_obj} ({exc})")
+                continue
+            if pts is None or cols is None or pts.size == 0 or cols.size == 0:
+                failed.append(f"{path_obj} (no points)")
+                continue
+            append_points.append(pts.astype(np.float32, copy=False))
+            append_colors.append(cols.astype(np.uint8, copy=False))
+            added_loaded += int(pts.shape[0])
+            added_original += int(max(orig_count, pts.shape[0]))
+
+        if not append_points:
+            messagebox.showerror(
+                "PLY Viewer",
+                "Failed to append PLY files to viewer.",
+            )
+            if failed:
+                self._append_text_widget(
+                    self.ply_log,
+                    "[viewer-append] failed: {}".format("; ".join(failed[:5])),
+                )
+            return
+
+        base_points = self._ply_view_points.astype(np.float32, copy=False)
+        base_colors = self._ply_view_colors.astype(np.uint8, copy=False)
+        base_loaded = int(base_points.shape[0])
+        base_original = int(max(self._ply_view_total_points, base_loaded))
+
+        merged_points = [base_points] + append_points
+        merged_colors = [base_colors] + append_colors
+        self._ply_view_points = np.concatenate(merged_points, axis=0).astype(
+            np.float32, copy=False
+        )
+        self._ply_view_colors = np.concatenate(merged_colors, axis=0).astype(
+            np.uint8, copy=False
+        )
+        self._ply_view_points_centered = self._ply_view_points.astype(
+            np.float32, copy=False
+        )
+        self._ply_view_total_points = int(base_original + added_original)
+        self._ply_view_sample_step = 1
+        self._ply_loaded_points = self._ply_view_points.astype(np.float32, copy=True)
+        self._ply_loaded_colors = self._ply_view_colors.astype(np.uint8, copy=True)
+        self._ply_loaded_total_points = int(self._ply_view_total_points)
+        self._ply_loaded_sample_step = 1
+
+        spans = np.maximum(
+            self._ply_view_points.max(axis=0) - self._ply_view_points.min(axis=0),
+            1e-6,
+        )
+        max_extent = float(np.max(spans))
+        self._ply_view_max_extent = max_extent
+        self._ply_view_depth_offset = max_extent * 2.5
+        self._refresh_ply_view_rgb_mean()
+        self._update_ply_view_info_from_current()
+        self._redraw_ply_canvas()
+
+        self._append_text_widget(
+            self.ply_log,
+            (
+                "[viewer-append] appended {} file(s): +{:,.0f} loaded pts "
+                "(+{:,.0f} source pts).".format(
+                    len(append_points),
+                    float(added_loaded),
+                    float(added_original),
+                )
+            ),
+        )
+        if failed:
+            self._append_text_widget(
+                self.ply_log,
+                "[viewer-append] failed {} file(s): {}".format(
+                    len(failed),
+                    "; ".join(failed[:5]),
+                ),
+            )
+
     def _run_ply_optimizer(self) -> None:
         if not self.ply_vars:
             return
@@ -4749,13 +4897,6 @@ class PreviewApp:
         keep_strategy = self.ply_vars["keep_strategy"].get().strip()
         if keep_strategy:
             cmd.extend(["-k", keep_strategy])
-
-        append_items: List[str] = []
-        append_var = self.ply_vars.get("append_ply")
-        if append_var is not None:
-            append_items = self._parse_ply_append_items(append_var.get().strip())
-        for item in append_items:
-            cmd.extend(["-a", item])
 
         self._run_cli_command(
             cmd,
@@ -5444,31 +5585,25 @@ class PreviewApp:
                 pass
 
     def _sample_auto_sky_color(self) -> Optional[Tuple[int, int, int]]:
-        if self._ply_view_points_centered is None or self._ply_view_colors is None:
+        if self._ply_view_points is None or self._ply_view_colors is None:
             return None
-        direction = self._axis_direction(self._ply_sky_axis_var.get() or "+Z")
-        if direction is None:
-            return None
-        points = self._ply_view_points_centered
+        points = self._ply_view_points
         colors = self._ply_view_colors
         if points.size == 0 or colors.size == 0:
             return None
-        norms = np.linalg.norm(points, axis=1)
-        dots = points @ direction
-        cos_vals = np.zeros_like(dots)
-        valid = norms > 1e-9
-        cos_vals[valid] = dots[valid] / norms[valid]
-        mask = (cos_vals >= math.cos(math.radians(45.0))) & valid
-        candidate_indices = np.where(mask)[0]
-        if candidate_indices.size < 10:
-            candidate_indices = np.where(dots > 0)[0]
-        if candidate_indices.size == 0:
+        count = min(int(points.shape[0]), int(colors.shape[0]))
+        if count <= 0:
             return None
-        sample = min(200, candidate_indices.size)
-        farthest = candidate_indices[np.argsort(norms[candidate_indices])]
-        chosen = farthest[-sample:]
-        avg_color = colors[chosen].mean(axis=0)
-        rgb = tuple(int(round(val)) for val in avg_color)
+        points_arr = points[:count].astype(np.float32, copy=False)
+        colors_arr = colors[:count].astype(np.uint8, copy=False)
+        center = points_arr.mean(axis=0, dtype=np.float64)
+        diff = points_arr - center
+        dist2 = np.einsum("ij,ij->i", diff, diff, optimize=True)
+        if dist2.size <= 0:
+            return None
+        farthest_idx = int(np.argmax(dist2))
+        rgb_arr = colors_arr[farthest_idx]
+        rgb = (int(rgb_arr[0]), int(rgb_arr[1]), int(rgb_arr[2]))
         return rgb
 
     def _get_remove_color_tolerance(
@@ -5506,6 +5641,21 @@ class PreviewApp:
             float(rgb_mean[2]),
         )
 
+    def _update_ply_view_info_from_current(self) -> None:
+        """Refresh the viewer info text from current base/sky point buffers."""
+        if self._ply_view_points is None:
+            return
+        point_count = int(self._ply_view_points.shape[0])
+        original_count = int(
+            max(self._ply_view_total_points, point_count)
+        )
+        info = self._build_ply_info_text(
+            point_count,
+            original_count,
+            self._ply_view_sample_step,
+        )
+        self._ply_view_info_var.set(info)
+
     def _build_ply_info_text(
         self, point_count: int, original_count: int, sample_step: int
     ) -> str:
@@ -5515,12 +5665,23 @@ class PreviewApp:
             if self._ply_current_file_path is not None
             else "PLY"
         )
-        if sample_step > 1 and original_count > 0:
-            return (
-                f"{label}: {name}  "
-                f"({point_count:,} / {original_count:,} pts, step {sample_step})"
+        base_count = max(0, int(point_count))
+        src_count = max(0, int(original_count))
+        sky_count = 0
+        if self._ply_sky_points is not None:
+            sky_count = int(self._ply_sky_points.shape[0])
+        total_count = base_count + sky_count
+        if src_count > 0 and (sample_step > 1 or src_count != base_count):
+            suffix = (
+                f"{base_count:,} / {src_count:,} pts"
+                if sample_step <= 1
+                else f"{base_count:,} / {src_count:,} pts, step {sample_step}"
             )
-        return f"{label}: {name}  ({point_count:,} pts)"
+        else:
+            suffix = f"{base_count:,} pts"
+        if sky_count > 0:
+            suffix = f"{suffix} + sky {sky_count:,} = {total_count:,}"
+        return f"{label}: {name}  ({suffix})"
 
     @staticmethod
     def _rotation_matrix_from_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -5600,6 +5761,7 @@ class PreviewApp:
             return
         self._ply_sky_points = points
         self._ply_sky_colors = colors
+        self._update_ply_view_info_from_current()
         self._redraw_ply_canvas()
 
     def _on_clear_sky_points(self) -> None:
@@ -5607,6 +5769,7 @@ class PreviewApp:
             return
         self._ply_sky_points = None
         self._ply_sky_colors = None
+        self._update_ply_view_info_from_current()
         self._redraw_ply_canvas()
 
     def _on_pick_sky_color(self) -> None:
@@ -5629,7 +5792,7 @@ class PreviewApp:
         if rgb is None:
             messagebox.showerror(
                 "Sky PointCloud",
-                "Failed to auto pick sky color from current points/axis.",
+                "Failed to auto pick sky color from current points.",
             )
             return
         hex_value = "#{:02x}{:02x}{:02x}".format(*rgb)
@@ -5717,11 +5880,16 @@ class PreviewApp:
                 self._ply_sky_points = None
                 self._ply_sky_colors = None
         self._refresh_ply_view_rgb_mean()
-        remaining = int(self._ply_view_points.shape[0])
+        remaining_base = int(self._ply_view_points.shape[0])
+        remaining_sky = 0
+        if self._ply_sky_points is not None:
+            remaining_sky = int(self._ply_sky_points.shape[0])
+        remaining_total = remaining_base + remaining_sky
         total_removed = removed_base + removed_sky
         self._ply_view_info_var.set(
             f"Removed {total_removed:,} pts by color "
-            f"({target_text}, tol={tol:.1f}) -> {remaining:,} pts"
+            f"({target_text}, tol={tol:.1f}) -> {remaining_total:,} pts "
+            f"(base {remaining_base:,}, sky {remaining_sky:,})"
         )
         self._redraw_ply_canvas()
 
