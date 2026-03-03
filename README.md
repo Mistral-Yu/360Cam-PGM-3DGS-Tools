@@ -97,6 +97,7 @@ This project is released under the [MIT License](LICENSE). Copyright (c) 2025 Yu
 ---
 
 ## Work in progress
+- Dual fisheye extraction → Undistortion, apply D-log M to sRGB → Convert to 5 perspective images → update Metashape Multi-Camera system
 - CameraFormatConverter. RealityScan(CSV, Ply, XMP) ←→ Metashape(XML, Ply) ←→ Colmap
 
 ## TODO / Ideas
