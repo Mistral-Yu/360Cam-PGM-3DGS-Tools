@@ -88,6 +88,11 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
 - Metashape Pro, Multi-Cameras-System.  (**Known bug**: If you import perspective_cams_Multi-Camera-System.xml with MS360xmlToPerspCams and no tie points appear after alignment(sometimes), re-importing the XML file fixes the issue.).
 - RealityCapture or Metashape Standard with spherical Metashape Alignment.xml.
 - Hybrid scan combining mirrorless camera and 360-degree camera.
+
+**NOTES**
+- After converting to the RealityScan format (XMP) using **MS360xmlToPersCams**, be careful with the **Position Accuracy** setting in the alignment settings when running alignment in RealityScan.
+The default value is too large — it is intended for aerial capture.
+
 ---
 
 ## License
