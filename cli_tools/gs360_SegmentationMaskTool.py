@@ -17,6 +17,7 @@ gs360_SegmentationMaskTool.py
 
 import argparse
 import sys
+import re
 import warnings
 from pathlib import Path
 
@@ -41,7 +42,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+IMG_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 MIN_SIZE = 640
 MAX_SIZE = 1024
@@ -53,6 +54,11 @@ WARMUP_ITERS = 1
 SCORE_THRESH = 0.7
 MASK_THRESH = 0.5
 CLOSE_KERNEL = 5
+DEFAULT_MASK_EXPAND_MODE = "pixels"
+DEFAULT_MASK_EXPAND_PIXELS = 15
+DEFAULT_MASK_EXPAND_PERCENT = 1.0
+DEFAULT_EDGE_FUSE_PIXELS = 25
+MASK_EXPAND_MODE_CHOICES = ["pixels", "percent"]
 SHADOW_T = 0.7
 SHADOW_SIGMA = 15
 SHADOW_NEAR = 25
@@ -180,15 +186,46 @@ def target_mask_from_prediction(pred, targets,
     return combined
 
 
-def refine_mask(mask, close=CLOSE_KERNEL, dilate_ratio=0.01, image_shape=None):
+def resolve_mask_expand_pixels(expand_mode=DEFAULT_MASK_EXPAND_MODE,
+                               expand_pixels=DEFAULT_MASK_EXPAND_PIXELS,
+                               expand_percent=DEFAULT_MASK_EXPAND_PERCENT,
+                               image_shape=None):
+    """
+    Resolve the requested mask expansion amount to pixels.
+
+    Args:
+        expand_mode: Expansion mode, either "pixels" or "percent".
+        expand_pixels: Expansion amount in pixels.
+        expand_percent: Expansion amount as a percentage of the longer image edge.
+        image_shape: Optional (height, width) tuple used for percentage mode.
+    """
+    mode = str(expand_mode or DEFAULT_MASK_EXPAND_MODE).strip().lower()
+    if mode == "pixels":
+        return max(0, int(round(float(expand_pixels))))
+    if mode == "percent":
+        if image_shape is None or len(image_shape) < 2:
+            return 0
+        base_len = max(int(image_shape[0]), int(image_shape[1]))
+        px = int(round(base_len * (float(expand_percent) / 100.0)))
+        return max(0, px)
+    raise ValueError("Unsupported mask expand mode: {}".format(expand_mode))
+
+
+def refine_mask(mask, close=CLOSE_KERNEL,
+                expand_mode=DEFAULT_MASK_EXPAND_MODE,
+                expand_pixels=DEFAULT_MASK_EXPAND_PIXELS,
+                expand_percent=DEFAULT_MASK_EXPAND_PERCENT,
+                image_shape=None):
     """
     Morphological post-processing (hole filling / edge reinforcement).
 
     Args:
         mask: Binary mask array.
         close: Kernel size in pixels for the closing operation.
-        dilate_ratio: Fraction of the image size (0-1) used to derive the dilation kernel size.
-        image_shape: Optional (height, width) tuple for dilation kernel sizing.
+        expand_mode: Expansion mode, "pixels" or "percent".
+        expand_pixels: Expansion amount in pixels.
+        expand_percent: Expansion amount as a percentage of the longer image edge.
+        image_shape: Optional (height, width) tuple for percentage sizing.
     """
     if mask is None:
         return None
@@ -196,18 +233,97 @@ def refine_mask(mask, close=CLOSE_KERNEL, dilate_ratio=0.01, image_shape=None):
     if k > 1:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    if dilate_ratio and dilate_ratio > 0:
-        if image_shape is None or len(image_shape) < 2:
-            image_shape = mask.shape
-        base_len = max(int(image_shape[0]), int(image_shape[1]))
-        kd = int(round(base_len * float(dilate_ratio)))
-        if kd <= 1:
-            return mask
-        if kd % 2 == 0:
-            kd += 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kd, kd))
+    return expand_mask(mask,
+                       expand_mode=expand_mode,
+                       expand_pixels=expand_pixels,
+                       expand_percent=expand_percent,
+                       image_shape=image_shape)
+
+
+def expand_mask(mask,
+                expand_mode=DEFAULT_MASK_EXPAND_MODE,
+                expand_pixels=DEFAULT_MASK_EXPAND_PIXELS,
+                expand_percent=DEFAULT_MASK_EXPAND_PERCENT,
+                image_shape=None):
+    """Expand a binary mask using the configured pixels or percentage mode."""
+    if mask is None:
+        return None
+    if image_shape is None or len(image_shape) < 2:
+        image_shape = mask.shape
+    expand_px = resolve_mask_expand_pixels(
+        expand_mode=expand_mode,
+        expand_pixels=expand_pixels,
+        expand_percent=expand_percent,
+        image_shape=image_shape,
+    )
+    if expand_px > 0:
+        kernel_size = max(1, (expand_px * 2) + 1)
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (kernel_size, kernel_size),
+        )
         mask = cv2.dilate(mask, kernel, iterations=1)
     return mask
+
+
+def fuse_mask_to_edges(mask,
+                       edge_fuse_pixels=DEFAULT_EDGE_FUSE_PIXELS):
+    """Fuse only mask pixels already near an edge, then extend them to that edge."""
+    if mask is None:
+        return None
+    fuse_px = max(0, int(edge_fuse_pixels))
+    if fuse_px <= 0:
+        return mask
+    binary = np.where(mask > 0, 255, 0).astype(np.uint8)
+    if not np.any(binary):
+        return mask
+    height, width = binary.shape[:2]
+    result = binary.copy()
+    spread_px = max(1, int(round(float(fuse_px) * 0.35)))
+
+    top_seed = binary[:fuse_px, :].copy()
+    bottom_seed = binary[height - fuse_px:, :].copy()
+    left_seed = binary[:, :fuse_px].copy()
+    right_seed = binary[:, width - fuse_px:].copy()
+
+    horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        ((spread_px * 2) + 1, 1),
+    )
+    vertical_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (1, (spread_px * 2) + 1),
+    )
+
+    top_seed = cv2.dilate(top_seed, horizontal_kernel, iterations=1)
+    bottom_seed = cv2.dilate(bottom_seed, horizontal_kernel, iterations=1)
+    left_seed = cv2.dilate(left_seed, vertical_kernel, iterations=1)
+    right_seed = cv2.dilate(right_seed, vertical_kernel, iterations=1)
+
+    for x_pos in np.where(np.any(top_seed > 0, axis=0))[0]:
+        y_values = np.where(top_seed[:, int(x_pos)] > 0)[0]
+        if y_values.size > 0:
+            fill_end = int(y_values.min())
+            result[:fill_end + 1, int(x_pos)] = 255
+
+    for x_pos in np.where(np.any(bottom_seed > 0, axis=0))[0]:
+        y_values = np.where(bottom_seed[:, int(x_pos)] > 0)[0]
+        if y_values.size > 0:
+            fill_start = int((height - fuse_px) + y_values.max())
+            result[fill_start:, int(x_pos)] = 255
+
+    for y_pos in np.where(np.any(left_seed > 0, axis=1))[0]:
+        x_values = np.where(left_seed[int(y_pos), :] > 0)[0]
+        if x_values.size > 0:
+            fill_end = int(x_values.min())
+            result[int(y_pos), :fill_end + 1] = 255
+
+    for y_pos in np.where(np.any(right_seed > 0, axis=1))[0]:
+        x_values = np.where(right_seed[int(y_pos), :] > 0)[0]
+        if x_values.size > 0:
+            fill_start = int((width - fuse_px) + x_values.max())
+            result[int(y_pos), fill_start:] = 255
+    return result
 
 
 def estimate_shadow_mask(img_rgb, person_mask,
@@ -247,6 +363,67 @@ def estimate_shadow_mask(img_rgb, person_mask,
 def save_mask_png(mask, out_path: Path):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(mask).save(str(out_path))
+
+
+def extract_multicam_view_id(stem: str):
+    """Extract trailing view ID token (e.g. A, A_U, A_D20) from a file stem."""
+    pattern = r"_((?:[A-Z]|\d{2,})(?:_(?:U|D|U\d+|D\d+))?)$"
+    match = re.search(pattern, stem.upper())
+    if not match:
+        return None
+    return match.group(1)
+
+
+def manual_mask_key_for_path(in_path: Path):
+    """Build the shared manual-mask key for a given image path."""
+    view_id = extract_multicam_view_id(in_path.stem)
+    if view_id:
+        return "view__{}".format(view_id)
+    return "file__{}".format(in_path.stem)
+
+
+def load_manual_mask_layer(mask_path: Path, image_size=None):
+    """Load a manual add/erase layer PNG saved as 8-bit binary."""
+    if not mask_path.exists():
+        return None
+    mask_img = Image.open(str(mask_path)).convert("L")
+    if image_size is not None and mask_img.size != image_size:
+        mask_img = mask_img.resize(image_size, Image.NEAREST)
+    mask = np.array(mask_img, dtype=np.uint8)
+    return np.where(mask > 127, 255, 0).astype(np.uint8)
+
+
+def load_manual_mask_layers(in_path: Path,
+                            manual_mask_dir: Path = None,
+                            image_size=None):
+    """Load a shared manual add layer for the matching view/file key."""
+    if manual_mask_dir is None:
+        return None
+    manual_key = manual_mask_key_for_path(in_path)
+    add_mask = load_manual_mask_layer(
+        manual_mask_dir / "{}__add.png".format(manual_key),
+        image_size=image_size,
+    )
+    return add_mask
+
+
+def apply_manual_mask_layers(mask,
+                             add_mask=None,
+                             image_shape=None):
+    """Apply a shared manual add layer after auto mask estimation."""
+    if mask is None:
+        if add_mask is None:
+            return None
+        if image_shape is None:
+            raise ValueError("image_shape is required when base mask is None")
+        mask = np.zeros(image_shape, dtype=np.uint8)
+    else:
+        mask = np.where(mask > 0, 255, 0).astype(np.uint8)
+    if add_mask is not None:
+        mask[add_mask > 0] = 255
+    if not np.any(mask):
+        return None
+    return mask
 
 
 def save_cutout_rgba(img_rgb, mask, out_path: Path):
@@ -301,6 +478,11 @@ def process_image(model, device, in_path: Path, out_dir: Path,
                   score_thres: float = SCORE_THRESH, mask_thres: float = MASK_THRESH,
                   close: int = CLOSE_KERNEL, mode: str = "mask",
                   include_shadow: bool = False,
+                  mask_expand_mode: str = DEFAULT_MASK_EXPAND_MODE,
+                  mask_expand_pixels: int = DEFAULT_MASK_EXPAND_PIXELS,
+                  mask_expand_percent: float = DEFAULT_MASK_EXPAND_PERCENT,
+                  edge_fuse_pixels: int = DEFAULT_EDGE_FUSE_PIXELS,
+                  manual_mask_dir: Path = None,
                   targets=None):
     if targets is None:
         targets = ["person"]
@@ -320,7 +502,9 @@ def process_image(model, device, in_path: Path, out_dir: Path,
     mask = target_mask_from_prediction(pred, targets, score_thres, mask_thres)
     mask = refine_mask(mask,
                        close=close,
-                       dilate_ratio=0.0,
+                       expand_mode="pixels",
+                       expand_pixels=0,
+                       expand_percent=0.0,
                        image_shape=(img.size[1], img.size[0]))
 
     # Merge shadow mask (optional).
@@ -334,6 +518,25 @@ def process_image(model, device, in_path: Path, out_dir: Path,
         if shadow is not None:
             base = np.zeros_like(shadow) if mask is None else mask
             mask = np.maximum(base, shadow)
+    mask = expand_mask(mask,
+                       expand_mode=mask_expand_mode,
+                       expand_pixels=mask_expand_pixels,
+                       expand_percent=mask_expand_percent,
+                       image_shape=(img.size[1], img.size[0]))
+    mask = fuse_mask_to_edges(
+        mask,
+        edge_fuse_pixels=edge_fuse_pixels,
+    )
+    add_mask = load_manual_mask_layers(
+        in_path,
+        manual_mask_dir=manual_mask_dir,
+        image_size=img.size,
+    )
+    mask = apply_manual_mask_layers(
+        mask,
+        add_mask=add_mask,
+        image_shape=(img.size[1], img.size[0]),
+    )
 
     stem = in_path.stem
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -417,7 +620,51 @@ def main():
     )
     ap.add_argument("--include_shadow", action="store_true",
                     help="Include adjacent shadows in the mask")
+    ap.add_argument(
+        "--mask-expand-mode",
+        type=str,
+        choices=MASK_EXPAND_MODE_CHOICES,
+        default=DEFAULT_MASK_EXPAND_MODE,
+        help="Mask expansion mode: pixels or percent of the longer image edge",
+    )
+    ap.add_argument(
+        "--mask-expand-pixels",
+        type=int,
+        default=DEFAULT_MASK_EXPAND_PIXELS,
+        help="Mask expansion amount in pixels when --mask-expand-mode=pixels",
+    )
+    ap.add_argument(
+        "--mask-expand-percent",
+        type=float,
+        default=DEFAULT_MASK_EXPAND_PERCENT,
+        help="Mask expansion amount in percent when --mask-expand-mode=percent",
+    )
+    ap.add_argument(
+        "--edge-fuse-pixels",
+        type=int,
+        default=DEFAULT_EDGE_FUSE_PIXELS,
+        help=(
+            "If a mask component is within this many pixels of an image edge, "
+            "extend it to the frame edge after mask expand and before manual paint"
+        ),
+    )
+    ap.add_argument(
+        "--manual-mask-dir",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory containing shared manual add PNG layers "
+            "named <view_or_file_key>__add.png"
+        ),
+    )
     args = ap.parse_args()
+
+    if args.mask_expand_pixels < 0:
+        ap.error("--mask-expand-pixels must be 0 or greater")
+    if args.mask_expand_percent < 0:
+        ap.error("--mask-expand-percent must be 0 or greater")
+    if args.edge_fuse_pixels < 0:
+        ap.error("--edge-fuse-pixels must be 0 or greater")
 
     input_dir = Path(args.input_dir)
     if not input_dir.exists() or not input_dir.is_dir():
@@ -431,6 +678,15 @@ def main():
         )
     else:
         out_dir = Path(args.out)
+    manual_mask_dir = None
+    if args.manual_mask_dir:
+        manual_mask_dir = Path(args.manual_mask_dir)
+        if not manual_mask_dir.exists() or not manual_mask_dir.is_dir():
+            print(
+                "Manual mask directory not found: {}".format(manual_mask_dir),
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
     print(f"Device: {device}")
@@ -441,6 +697,13 @@ def main():
             deduped_targets.append(target_name)
     targets = deduped_targets
     print(f"Targets: {', '.join(targets)}")
+    if args.mask_expand_mode == "pixels":
+        print(f"Mask expand: {args.mask_expand_pixels} px")
+    else:
+        print(f"Mask expand: {args.mask_expand_percent}%")
+    print(f"Edge fuse: {args.edge_fuse_pixels} px")
+    if manual_mask_dir is not None:
+        print("Manual mask dir: {}".format(manual_mask_dir))
 
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
@@ -473,6 +736,11 @@ def main():
                       close=CLOSE_KERNEL,
                       mode=args.mode,
                       include_shadow=args.include_shadow,
+                      mask_expand_mode=args.mask_expand_mode,
+                      mask_expand_pixels=args.mask_expand_pixels,
+                      mask_expand_percent=args.mask_expand_percent,
+                      edge_fuse_pixels=args.edge_fuse_pixels,
+                      manual_mask_dir=manual_mask_dir,
                       targets=targets)
     if total > 0:
         update_progress("Processing", total, total, last_pct)
