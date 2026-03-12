@@ -46,12 +46,13 @@ The scripts cover every stage from frame extraction to PLY refinement, and the d
 ## Workflow at a Glance
 GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360PerspCut`, `SegmentationMaskTool`, `PlyOptimizer`, `MS360xmlToPerspCams`).
 - `Video2Frames` tab: Sample equirectangular frames from a 360° video.
--  `FrameSelector` tab: Score and retain the sharpest frames for Structure-from-Motion (SfM).
--  `360PerspCut` tab: Convert panoramas into perspective views.
--  `SegmentationMaskTool` tab: (Optional) Remove or isolate bystanders with `SegmentationMaskTool` to avoid reconstruction ghosts.
--  Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
--  `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with `PlyOptimizer`. Delete sky point clouds generated with photogrammetry software, add Sky point clouds.
--  `MS360xmlToPerspCams` tab: Convert Metashape camera XML (spherical) into perspective camera parameters → Colmap, Metashape xml, transform.json, RealityScan xmp.
+- `FrameSelector` tab: Score and retain the sharpest frames for Structure-from-Motion (SfM).
+- `360PerspCut` tab: Convert panoramas into perspective views.
+- `SegmentationMaskTool` tab: (Optional) Use SegmentationMaskTool to preview and refine masks for unwanted subjects or rig elements before reconstruction to reduce ghosts and cleanup artifacts.
+- Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
+- `PlyOptimizer` tab: (Optional) Downsample/merge the PLY for your 3DGS tool (PostShot, gsplat, etc.) with PlyOptimizer. Delete sky point clouds generated with photogrammetry software, add Sky point clouds.
+- `MS360xmlToPerspCams` tab: Experimental tool for convert Metashape spherical camera XML into perspective camera parameters. Colmap, Metashape xml, transform.json, RealityScan xmp.
+- `DualFisheyePipeline` tab: Experimental tool for correcting dual-fisheye distortion from Metashape XML calibration and exporting perspective views.
 
 ### Workflows (GUI)
 #### Rapid
