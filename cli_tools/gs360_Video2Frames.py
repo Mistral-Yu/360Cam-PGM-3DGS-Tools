@@ -1,16 +1,17 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """Overview:
-    CLI script that drives ffmpeg/ffprobe to extract frames from a video while tracking bit depth and progress.
+    CLI script that drives ffmpeg to extract frames from a video
+    while tracking bit depth and progress.
 
 Dependencies:
-    - Python standard library: argparse, json, pathlib, re, shlex, shutil, signal, subprocess, sys, time, typing
-    - External tools: ffmpeg, ffprobe
+    - Python standard library: argparse, pathlib, re, shlex,
+      shutil, signal, subprocess, sys, time, typing
+    - External tool: ffmpeg
 """
 
 import argparse
-import json
 import pathlib
 import re
 import shlex
@@ -27,6 +28,56 @@ from gs360_360PerspCut import fov_from_focal_mm, v_fov_from_hfov
 PROGRESS_INTERVAL = 5
 FISHEYE_SENSOR_WIDTH_MM = 36.0
 FISHEYE_INPUT_FOV_DEG = 190.0
+
+
+def infer_bit_depth_from_pix_fmt(pix_fmt: str) -> int:
+    """Infer a practical bit depth bucket from an ffmpeg pixel format name."""
+
+    pix_fmt = (pix_fmt or '').strip().lower()
+    if any(
+        token in pix_fmt
+        for token in (
+            'p10', 'p12', 'p14', 'p16',
+            'yuv420p10', 'yuv422p10', 'yuv444p10',
+            'yuv420p12', 'yuv422p12', 'yuv444p12',
+            'p010', 'p012', 'p016',
+            'gbrp10', 'gbrp12', 'gbrp14', 'gbrp16',
+            'rgb48', 'rgba64',
+        )
+    ):
+        return 10
+    return 8
+
+
+def parse_map_stream_selector(
+    map_stream: Optional[str],
+) -> Tuple[Optional[int], Optional[int], bool]:
+    """Parse an ffmpeg ``-map`` selector for input/video stream matching.
+
+    Args:
+        map_stream: Optional selector such as ``0:v:1`` or ``0:1``.
+
+    Returns:
+        Tuple of ``(input_index, stream_index, uses_video_ordinal)``.
+    """
+
+    if not map_stream:
+        return 0, 0, True
+
+    text = map_stream.strip().lower()
+    match_video = re.match(r'^(?:(\d+):)?v:(\d+)$', text)
+    if match_video:
+        input_index = int(match_video.group(1) or '0')
+        video_index = int(match_video.group(2))
+        return input_index, video_index, True
+
+    match_stream = re.match(r'^(?:(\d+):)?(\d+)$', text)
+    if match_stream:
+        input_index = int(match_stream.group(1) or '0')
+        stream_index = int(match_stream.group(2))
+        return input_index, stream_index, False
+
+    return 0, 0, True
 
 
 def update_progress(
@@ -63,96 +114,97 @@ def update_progress(
     return last_pct, previous_len
 
 
-def detect_input_bit_depth(in_path: pathlib.Path) -> int:
-    """Detect the source video's bit depth using ffprobe.
+def probe_media_info_with_ffmpeg(
+    ffmpeg_exec: str,
+    in_path: pathlib.Path,
+    map_stream: Optional[str] = None,
+) -> Tuple[Optional[float], int]:
+    """Probe duration and effective bit depth by parsing ``ffmpeg -i`` output.
 
     Args:
+        ffmpeg_exec: Path to the ffmpeg executable.
         in_path: Path to the input media file.
+        map_stream: Optional stream selector passed via ``-map``.
 
     Returns:
-        Either 8 or 10 depending on the detected precision.
+        Tuple of ``(duration_seconds, bit_depth_bucket)``.
     """
-    if not shutil.which('ffprobe'):
-        return 8
-
     cmd = [
-        'ffprobe',
-        '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=bits_per_raw_sample,pix_fmt',
-        '-of', 'json',
+        ffmpeg_exec,
+        '-hide_banner',
+        '-i',
         str(in_path),
     ]
 
     try:
         result = subprocess.run(
             cmd,
-            check=True,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
         )
-        info = json.loads(result.stdout)
-        streams = info.get('streams') or [{}]
-        stream = streams[0]
-        bits_per_raw_sample = stream.get('bits_per_raw_sample')
-        if (
-            isinstance(bits_per_raw_sample, str)
-            and bits_per_raw_sample.isdigit()
-        ):
-            value = int(bits_per_raw_sample)
-            return value if value >= 9 else 8
-
-        pix_fmt = stream.get('pix_fmt') or ''
-        if any(
-            token in pix_fmt
-            for token in (
-                'p10', 'p12', 'p14', 'p16',
-                'yuv420p10', 'yuv422p10', 'yuv444p10',
-                'yuv420p12', 'yuv422p12', 'yuv444p12',
-                'p010', 'p012', 'p016',
-                'gbrp10', 'gbrp12', 'gbrp14', 'gbrp16',
-                'rgb48', 'rgba64',
-            )
-        ):
-            return 10
-
     except Exception:
-        pass
+        return None, 8
 
-    return 8
+    duration = None
+    (
+        input_index,
+        selector_value,
+        uses_video_ordinal,
+    ) = parse_map_stream_selector(map_stream)
+    selected_pix_fmt = None
+    fallback_pix_fmt = None
+    video_ordinal = {}
+    duration_pattern = re.compile(r'Duration:\s*([0-9:.]+)')
+    stream_pattern = re.compile(r'Stream #(\d+):(\d+)')
 
+    for raw_line in result.stderr.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
 
-def probe_media_duration(in_path: pathlib.Path) -> Optional[float]:
-    """Measure the media duration with ffprobe.
+        if duration is None:
+            match_duration = duration_pattern.search(line)
+            if match_duration:
+                duration = parse_ffmpeg_timecode(match_duration.group(1))
 
-    Args:
-        in_path: Path to the input media file.
+        if ': Video:' not in line:
+            continue
 
-    Returns:
-        Duration in seconds, or None when the value cannot be determined.
-    """
-    if not shutil.which('ffprobe'):
-        return None
+        match_stream = stream_pattern.search(line)
+        if not match_stream:
+            continue
 
-    cmd = [
-        'ffprobe',
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        str(in_path),
-    ]
+        stream_input_index = int(match_stream.group(1))
+        stream_index = int(match_stream.group(2))
+        if input_index is not None and stream_input_index != input_index:
+            continue
 
-    try:
-        result = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        value = result.stdout.strip()
-        return float(value) if value else None
-    except Exception:
-        return None
+        ordinal = video_ordinal.get(stream_input_index, 0)
+        video_ordinal[stream_input_index] = ordinal + 1
+
+        video_info = line.split('Video:', 1)[1]
+        parts = [part.strip() for part in video_info.split(',')]
+        pix_fmt = ''
+        if len(parts) >= 2:
+            pix_fmt = parts[1].split('(', 1)[0].strip()
+        if not pix_fmt:
+            continue
+
+        if fallback_pix_fmt is None:
+            fallback_pix_fmt = pix_fmt
+
+        if uses_video_ordinal:
+            if selector_value == ordinal:
+                selected_pix_fmt = pix_fmt
+                break
+        elif selector_value == stream_index:
+            selected_pix_fmt = pix_fmt
+            break
+
+    effective_pix_fmt = selected_pix_fmt or fallback_pix_fmt or ''
+    return duration, infer_bit_depth_from_pix_fmt(effective_pix_fmt)
 
 
 def parse_ffmpeg_timecode(value: str) -> Optional[float]:
@@ -330,13 +382,25 @@ def main() -> None:
         sys.exit(1)
     if args.fisheye_perspective:
         if args.fisheye_focal_mm <= 0.0:
-            print('Focal length must be greater than zero when using --fisheye-perspective.', file=sys.stderr)
+            print(
+                'Focal length must be greater than zero when using '
+                '--fisheye-perspective.',
+                file=sys.stderr,
+            )
             sys.exit(1)
         if args.fisheye_size <= 0:
-            print('Output size must be greater than zero when using --fisheye-perspective.', file=sys.stderr)
+            print(
+                'Output size must be greater than zero when using '
+                '--fisheye-perspective.',
+                file=sys.stderr,
+            )
             sys.exit(1)
         if args.fisheye_input_fov <= 0.0:
-            print('Input fisheye FOV must be greater than zero when using --fisheye-perspective.', file=sys.stderr)
+            print(
+                'Input fisheye FOV must be greater than zero when using '
+                '--fisheye-perspective.',
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     in_path = pathlib.Path(args.video).expanduser().resolve()
@@ -380,7 +444,8 @@ def main() -> None:
         existing = next(out_dir.glob(glob_pattern), None)
         if existing is not None:
             print(
-                f"Output exists and overwrite is disabled. First match: {existing.name}",
+                'Output exists and overwrite is disabled. '
+                f'First match: {existing.name}',
                 file=sys.stderr,
             )
             print(
@@ -389,7 +454,11 @@ def main() -> None:
             )
             sys.exit(1)
 
-    inferred_bits = detect_input_bit_depth(in_path)
+    media_duration, inferred_bits = probe_media_info_with_ffmpeg(
+        ffmpeg_exec=ffmpeg_exec,
+        in_path=in_path,
+        map_stream=args.map_stream,
+    )
     out_bit_depth = 8 if inferred_bits <= 8 else 16
 
     colorspace_filter = 'colorspace=iall=bt709:all=smpte170m'
@@ -402,7 +471,10 @@ def main() -> None:
             'equidistant': 'fisheye',
             'equisolid': 'equisolid',
         }
-        input_projection = projection_map.get(args.fisheye_projection, 'fisheye')
+        input_projection = projection_map.get(
+            args.fisheye_projection,
+            'fisheye',
+        )
         input_fov_deg = max(1.0, min(360.0, args.fisheye_input_fov))
         hfov_deg = fov_from_focal_mm(focal_mm, FISHEYE_SENSOR_WIDTH_MM)
         hfov_deg = max(1.0, min(179.0, hfov_deg))
@@ -474,7 +546,6 @@ def main() -> None:
 
     cmd += ['-vsync', 'vfr', '-start_number', '0', str(pattern)]
 
-    media_duration = probe_media_duration(in_path)
     start_offset = max(float(args.start or 0.0), 0.0)
     progress_span = None
     if media_duration is not None:
