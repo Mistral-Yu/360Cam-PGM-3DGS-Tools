@@ -37,6 +37,12 @@ except ImportError as exc:  # pragma: no cover - environment guard
     print("[ERR] NumPy is required: pip install numpy", file=sys.stderr)
     raise SystemExit(1) from exc
 
+try:
+    import cv2
+except ImportError as exc:  # pragma: no cover - environment guard
+    print("[ERR] OpenCV (cv2) is required: pip install opencv-python", file=sys.stderr)
+    raise SystemExit(1) from exc
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 CLI_TOOLS_DIR = SCRIPT_DIR / "cli_tools"
 if str(CLI_TOOLS_DIR) not in sys.path:
@@ -61,6 +67,19 @@ PRESET_CHOICES = ["default", "fisheyelike", "full360coverage", "2views", "evenMi
 
 HUMAN_MODE_CHOICES = ["mask", "alpha", "inpaint"]
 HUMAN_TARGET_CHOICES = ["person", "bicycle", "car", "animal"]
+HUMAN_MASK_EXPAND_MODE_CHOICES = ["pixels", "percent"]
+HUMAN_PREVIEW_IMAGE_EXTS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".tif",
+    ".tiff",
+}
+HUMAN_PREVIEW_SIZE_CHOICES = ["320", "800", "Original", "Frame Fit"]
+HUMAN_PREVIEW_DEFAULT_SIZE = "Frame Fit"
+HUMAN_PREVIEW_DELAY_MS = 350
+HUMAN_PREVIEW_MARGIN = 12
+HUMAN_PREVIEW_MAX_IMAGES = 24
 
 MSXML_PRESET_CHOICES = [
     "default",
@@ -668,12 +687,6 @@ class PreviewApp:
         self.video_log: Optional[tk.Text] = None
         self.video_run_button: Optional[tk.Button] = None
         self.video_inspect_button: Optional[tk.Button] = None
-        self.fisheye_persp_check: Optional[tk.Checkbutton] = None
-        self.fisheye_fov_entry: Optional[tk.Entry] = None
-        self.fisheye_focal_entry: Optional[tk.Entry] = None
-        self.fisheye_size_entry: Optional[tk.Entry] = None
-        self.fisheye_projection_combo: Optional[ttk.Combobox] = None
-
         self.preview_inspect_button: Optional[tk.Button] = None
 
         self.selector_vars: Dict[str, tk.Variable] = {}
@@ -730,7 +743,79 @@ class PreviewApp:
 
         self.human_vars: Dict[str, tk.Variable] = {}
         self.human_log: Optional[tk.Text] = None
+        self.human_preview_button: Optional[tk.Button] = None
         self.human_run_button: Optional[tk.Button] = None
+        self.human_expand_mode_combo: Optional[ttk.Combobox] = None
+        self.human_expand_pixels_entry: Optional[tk.Entry] = None
+        self.human_expand_percent_entry: Optional[tk.Entry] = None
+        self.human_edge_fuse_check: Optional[tk.Checkbutton] = None
+        self.human_edge_fuse_entry: Optional[tk.Entry] = None
+        self.human_preview_expand_mode_combo: Optional[ttk.Combobox] = None
+        self.human_preview_expand_scale: Optional[tk.Scale] = None
+        self.human_preview_expand_pixels_entry: Optional[tk.Entry] = None
+        self.human_preview_expand_percent_entry: Optional[tk.Entry] = None
+        self.human_preview_edge_fuse_check: Optional[tk.Checkbutton] = None
+        self.human_preview_edge_fuse_entry: Optional[tk.Entry] = None
+        self.human_preview_size_combo: Optional[ttk.Combobox] = None
+        self.human_preview_update_button: Optional[tk.Button] = None
+        self.human_preview_reset_button: Optional[tk.Button] = None
+        self.human_preview_canvas: Optional[tk.Canvas] = None
+        self.human_preview_status_var = tk.StringVar(
+            value="Preview will show the first image group in the selected folder."
+        )
+        self.human_preview_slider_var = tk.DoubleVar(value=15.0)
+        self.human_preview_size_var = tk.StringVar(
+            value=HUMAN_PREVIEW_DEFAULT_SIZE
+        )
+        self._human_preview_photo: Optional[ImageTk.PhotoImage] = None
+        self._human_preview_busy = False
+        self._human_segmentation_module: Optional[Any] = None
+        self._human_segmentation_model: Optional[Any] = None
+        self._human_segmentation_device: Optional[Any] = None
+        self._human_segmentation_device_type: Optional[str] = None
+        self._human_preview_after_id: Optional[str] = None
+        self._human_preview_pending = False
+        self._human_preview_rendered_items: List[
+            Tuple[str, Image.Image, int]
+        ] = []
+        self._human_preview_cache_items: List[
+            Tuple[str, Image.Image, Optional[np.ndarray]]
+        ] = []
+        self._human_preview_cache_signature: Optional[Tuple[Any, ...]] = None
+        self._human_preview_original_rendered_items: List[
+            Tuple[str, Image.Image, int]
+        ] = []
+        self._human_preview_original_cache_items: List[
+            Tuple[str, Image.Image, Optional[np.ndarray]]
+        ] = []
+        self._human_preview_original_signature: Optional[
+            Tuple[Any, ...]
+        ] = None
+        self._human_preview_original_settings: Dict[str, Any] = {}
+        self._human_preview_original_status_text = ""
+        self._human_preview_group_name = ""
+        self._human_preview_group_total_count = 0
+        self._human_preview_hit_regions: List[
+            Tuple[int, int, int, int, str]
+        ] = []
+        self._human_preview_marked_names: Set[str] = set()
+        self._human_preview_manual_masks: Dict[str, np.ndarray] = {}
+        self._human_manual_mask_temp_dir: Optional[Path] = None
+        self._human_mask_editor_window: Optional[tk.Toplevel] = None
+        self._human_mask_editor_canvas: Optional[tk.Canvas] = None
+        self._human_mask_editor_photo: Optional[ImageTk.PhotoImage] = None
+        self._human_mask_editor_name = ""
+        self._human_mask_editor_image: Optional[Image.Image] = None
+        self._human_mask_editor_base_mask: Optional[np.ndarray] = None
+        self._human_mask_editor_mask: Optional[np.ndarray] = None
+        self._human_mask_editor_initial_mask: Optional[np.ndarray] = None
+        self._human_mask_editor_last_point: Optional[Tuple[int, int]] = None
+        self._human_mask_editor_manual_color = "#00c8ff"
+        self._human_mask_editor_color_swatch: Optional[tk.Label] = None
+        self._human_mask_editor_zoom = 1.0
+        self._human_mask_editor_tool_var = tk.StringVar(value="add")
+        self._human_mask_editor_brush_var = tk.IntVar(value=60)
+        self._human_expand_syncing = False
 
         self.msxml_vars: Dict[str, tk.Variable] = {}
         self.msxml_log: Optional[tk.Text] = None
@@ -744,6 +829,21 @@ class PreviewApp:
         self.msxml_points_rotate_check: Optional[tk.Checkbutton] = None
         self.msxml_multicam_vars: Dict[str, tk.Variable] = {}
         self.msxml_multicam_run_button: Optional[tk.Button] = None
+
+        self.dualfisheye_vars: Dict[str, tk.Variable] = {}
+        self.dualfisheye_log: Optional[tk.Text] = None
+        self.dualfisheye_inspect_button: Optional[tk.Button] = None
+        self.dualfisheye_set_fps_var = tk.BooleanVar(value=True)
+        self.dualfisheye_extract_run_button: Optional[tk.Button] = None
+        self.dualfisheye_extract_stop_button: Optional[tk.Button] = None
+        self.dualfisheye_calibration_run_button: Optional[tk.Button] = None
+        self.dualfisheye_calibration_stop_button: Optional[tk.Button] = None
+        self.dualfisheye_fisheye_output_entry: Optional[tk.Entry] = None
+        self.dualfisheye_fisheye_output_button: Optional[tk.Button] = None
+        self.dualfisheye_perspective_output_entry: Optional[tk.Entry] = None
+        self.dualfisheye_perspective_output_button: Optional[tk.Button] = None
+        self.dualfisheye_color_output_entry: Optional[tk.Entry] = None
+        self.dualfisheye_color_output_button: Optional[tk.Button] = None
 
         self.ply_vars: Dict[str, tk.Variable] = {}
         self.ply_log: Optional[tk.Text] = None
@@ -865,6 +965,20 @@ class PreviewApp:
         self._msxml_points_ply_auto = True
         self._msxml_last_auto_points_ply = ""
         self._msxml_points_ply_updating = False
+        self._dualfisheye_output_auto: Dict[str, bool] = {
+            "pairs_output": True,
+            "fisheye_output": True,
+            "perspective_output": True,
+            "color_output": True,
+        }
+        self._dualfisheye_last_auto_output: Dict[str, str] = {}
+        self._dualfisheye_output_updating: Set[str] = set()
+        self._dualfisheye_prefix_auto = True
+        self._dualfisheye_last_auto_prefix = "out"
+        self._dualfisheye_prefix_updating = False
+        self._dualfisheye_pair_input_auto = True
+        self._dualfisheye_last_auto_pair_input = ""
+        self._dualfisheye_pair_input_updating = False
         self._ply_output_auto = True
         self._ply_last_auto_output = ""
         self._ply_output_updating = False
@@ -908,6 +1022,7 @@ class PreviewApp:
         human_tab = tk.Frame(self.notebook)
         ply_tab = tk.Frame(self.notebook)
         msxml_tab = tk.Frame(self.notebook)
+        dualfisheye_tab = tk.Frame(self.notebook)
         config_tab = tk.Frame(self.notebook)
 
         self.notebook.add(video_tab, text="Video2Frames")
@@ -916,6 +1031,10 @@ class PreviewApp:
         self.notebook.add(human_tab, text="SegmentationMaskTool")
         self.notebook.add(ply_tab, text="PlyOptimizer")
         self.notebook.add(msxml_tab, text="MS360xmlToPersCams")
+        self.notebook.add(
+            dualfisheye_tab,
+            text="DualFisheyePipeline (Experimental)",
+        )
         self.notebook.add(config_tab, text="Config")
 
         self._build_video_tab(video_tab)
@@ -924,6 +1043,7 @@ class PreviewApp:
         self._build_human_mask_tab(human_tab)
         self._build_ply_tab(ply_tab)
         self._build_msxml_tab(msxml_tab)
+        self._build_dualfisheye_tab(dualfisheye_tab)
         self._build_config_tab(config_tab)
 
         self.notebook.select(preview_tab)
@@ -945,24 +1065,12 @@ class PreviewApp:
             "end": tk.StringVar(),
             "keep_rec709": tk.BooleanVar(value=True),
             "overwrite": tk.BooleanVar(value=False),
-            "fisheye_experimental": tk.BooleanVar(value=False),
-            "fisheye_perspective": tk.BooleanVar(value=False),
-            "fisheye_input_fov": tk.StringVar(value="190"),
-            "fisheye_persp_focal": tk.StringVar(value="8"),
-            "fisheye_persp_size": tk.StringVar(value="3840"),
-            "fisheye_projection": tk.StringVar(value="equisolid"),
         }
 
         self.video_vars["video"].trace_add("write", self._on_video_input_changed)
         self.video_vars["output"].trace_add("write", self._on_video_output_changed)
         self.video_vars["fps"].trace_add("write", self._on_video_fps_changed)
         self.video_vars["prefix"].trace_add("write", self._on_video_prefix_changed)
-        self.video_vars["fisheye_experimental"].trace_add(
-            "write", self._on_fisheye_experimental_changed
-        )
-        self.video_vars["fisheye_perspective"].trace_add(
-            "write", self._on_fisheye_perspective_changed
-        )
         self.video_set_fps_var = tk.BooleanVar(value=True)
 
         row = 0
@@ -1034,52 +1142,6 @@ class PreviewApp:
             variable=self.video_vars["overwrite"],
         ).pack(side=tk.LEFT, padx=(0, 12))
 
-        row += 1
-        experimental_frame = tk.Frame(params)
-        experimental_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
-        fisheye_main_cb = tk.Checkbutton(
-            experimental_frame,
-            text="Experimental: Fisheye extraction (raw video input)",
-            variable=self.video_vars["fisheye_experimental"],
-        )
-        fisheye_main_cb.pack(side=tk.LEFT, padx=(0, 12))
-        self.fisheye_persp_check = tk.Checkbutton(
-            experimental_frame,
-            text="Experimental: Dual fisheye to perspective",
-            variable=self.video_vars["fisheye_perspective"],
-        )
-        self.fisheye_persp_check.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(experimental_frame, text="Input FOV (deg)").pack(side=tk.LEFT, padx=(0, 4))
-        self.fisheye_fov_entry = tk.Entry(
-            experimental_frame,
-            textvariable=self.video_vars["fisheye_input_fov"],
-            width=6,
-        )
-        self.fisheye_fov_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(experimental_frame, text="Output focal (mm, approx)").pack(side=tk.LEFT, padx=(0, 4))
-        self.fisheye_focal_entry = tk.Entry(
-            experimental_frame,
-            textvariable=self.video_vars["fisheye_persp_focal"],
-            width=6,
-        )
-        self.fisheye_focal_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(experimental_frame, text="Size (px)").pack(side=tk.LEFT, padx=(0, 4))
-        self.fisheye_size_entry = tk.Entry(
-            experimental_frame,
-            textvariable=self.video_vars["fisheye_persp_size"],
-            width=6,
-        )
-        self.fisheye_size_entry.pack(side=tk.LEFT, padx=(0, 4))
-        tk.Label(experimental_frame, text="Projection").pack(side=tk.LEFT, padx=(8, 4))
-        self.fisheye_projection_combo = ttk.Combobox(
-            experimental_frame,
-            textvariable=self.video_vars["fisheye_projection"],
-            values=("equidistant", "equisolid"),
-            width=12,
-            state="readonly",
-        )
-        self.fisheye_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
-
         for col in range(3):
             params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
 
@@ -1121,7 +1183,6 @@ class PreviewApp:
         self._set_text_widget(self.video_log, "")
 
         self._update_video_default_output(force=False)
-        self._update_fisheye_controls()
 
     def _on_video_input_changed(self, *_args) -> None:
         value = self.video_vars.get("video")
@@ -1143,45 +1204,6 @@ class PreviewApp:
         if self._video_prefix_updating:
             return
         self._video_prefix_auto = False
-
-    def _on_fisheye_experimental_changed(self, *_args) -> None:
-        self._update_fisheye_controls()
-
-    def _on_fisheye_perspective_changed(self, *_args) -> None:
-        self._update_fisheye_controls()
-
-    def _update_fisheye_controls(self) -> None:
-        experimental_var = self.video_vars.get("fisheye_experimental")
-        perspective_var = self.video_vars.get("fisheye_perspective")
-        experimental_on = bool(experimental_var.get()) if experimental_var is not None else False
-        if not experimental_on and perspective_var is not None and perspective_var.get():
-            perspective_var.set(False)
-        perspective_on = experimental_on and bool(perspective_var.get()) if perspective_var is not None else False
-        check = self.fisheye_persp_check
-        if check is not None:
-            state = "normal" if experimental_on else "disabled"
-            try:
-                check.configure(state=state)
-            except tk.TclError:
-                pass
-        entry_state = "normal" if perspective_on else "disabled"
-        for entry in (
-            self.fisheye_fov_entry,
-            self.fisheye_focal_entry,
-            self.fisheye_size_entry,
-        ):
-            if entry is not None:
-                try:
-                    entry.configure(state=entry_state)
-                except tk.TclError:
-                    pass
-        combo = self.fisheye_projection_combo
-        if combo is not None:
-            try:
-                combo.configure(state="readonly" if perspective_on else "disabled")
-            except tk.TclError:
-                pass
-
 
     def _format_fps_for_output(self, fps_value: str) -> Optional[str]:
         if not fps_value:
@@ -1377,6 +1399,296 @@ class PreviewApp:
         checkbox = getattr(self, "video_set_fps_check", None)
         if checkbox is not None:
             checkbox.configure(state="normal" if enabled else "disabled")
+
+    def _on_dualfisheye_video_changed(self, *_args) -> None:
+        self._update_dualfisheye_default_paths(force=False)
+
+    def _on_dualfisheye_pair_input_changed(self, *_args) -> None:
+        if self._dualfisheye_pair_input_updating:
+            return
+        self._dualfisheye_pair_input_auto = False
+        self._update_dualfisheye_outputs_from_pair_input(force=False)
+
+    def _on_dualfisheye_prefix_changed(self, *_args) -> None:
+        if self._dualfisheye_prefix_updating:
+            return
+        self._dualfisheye_prefix_auto = False
+
+    def _on_dualfisheye_output_changed(self, key: str, *_args) -> None:
+        if key in self._dualfisheye_output_updating:
+            return
+        self._dualfisheye_output_auto[key] = False
+        if key == "pairs_output":
+            self._sync_dualfisheye_pair_input_from_extract()
+
+    def _on_dualfisheye_output_toggle_changed(self, *_args) -> None:
+        self._update_dualfisheye_output_controls_state()
+
+    def _set_dualfisheye_path_auto(self, key: str, value: str) -> None:
+        var = self.dualfisheye_vars.get(key)
+        if var is None:
+            return
+        self._dualfisheye_output_auto[key] = True
+        self._dualfisheye_last_auto_output[key] = value
+        self._dualfisheye_output_updating.add(key)
+        try:
+            var.set(value)
+        finally:
+            self._dualfisheye_output_updating.discard(key)
+
+    def _update_dualfisheye_default_paths(self, force: bool = False) -> None:
+        if not self.dualfisheye_vars:
+            return
+        video_var = self.dualfisheye_vars.get("video")
+        if video_var is None:
+            return
+        video_text = video_var.get().strip()
+        self._update_dualfisheye_inspect_state()
+        if not video_text:
+            return
+        path = Path(video_text).expanduser()
+        try:
+            if not path.is_absolute():
+                path = path.resolve()
+        except FileNotFoundError:
+            return
+        if not path.suffix:
+            return
+
+        parent = path.parent if path.parent != Path("") else Path.cwd()
+        base_name = re.sub(r"\s+", "_", path.stem) if path.stem else "dualfisheye"
+        if not base_name:
+            base_name = "dualfisheye"
+
+        prefix_var = self.dualfisheye_vars.get("prefix")
+        if prefix_var is not None:
+            current_prefix = prefix_var.get().strip()
+            should_update_prefix = (
+                force
+                or self._dualfisheye_prefix_auto
+                or not current_prefix
+                or current_prefix == self._dualfisheye_last_auto_prefix
+            )
+            if should_update_prefix:
+                self._dualfisheye_prefix_auto = True
+                self._dualfisheye_last_auto_prefix = base_name
+                self._dualfisheye_prefix_updating = True
+                try:
+                    prefix_var.set(base_name)
+                finally:
+                    self._dualfisheye_prefix_updating = False
+
+        pairs_output = str(parent / f"{base_name}_dualfisheye_pairs")
+        fisheye_output = f"{pairs_output}_undistorted"
+        perspective_output = f"{fisheye_output}_perspective"
+        color_output = f"{fisheye_output}_colorcorrected"
+        defaults = {
+            "pairs_output": pairs_output,
+            "fisheye_output": fisheye_output,
+            "perspective_output": perspective_output,
+            "color_output": color_output,
+        }
+        for key, default_value in defaults.items():
+            current_var = self.dualfisheye_vars.get(key)
+            if current_var is None:
+                continue
+            current_value = current_var.get().strip()
+            auto_enabled = self._dualfisheye_output_auto.get(key, True)
+            last_auto = self._dualfisheye_last_auto_output.get(key, "")
+            should_update = (
+                force
+                or auto_enabled
+                or not current_value
+                or current_value == last_auto
+            )
+            if should_update:
+                self._set_dualfisheye_path_auto(key, default_value)
+        self._sync_dualfisheye_pair_input_from_extract(force=force)
+
+    def _sync_dualfisheye_pair_input_from_extract(
+        self, force: bool = False
+    ) -> None:
+        if not self.dualfisheye_vars:
+            return
+        source_var = self.dualfisheye_vars.get("pairs_output")
+        pair_var = self.dualfisheye_vars.get("pair_input")
+        if source_var is None or pair_var is None:
+            return
+        source_value = source_var.get().strip()
+        current_value = pair_var.get().strip()
+        should_update = (
+            force
+            or self._dualfisheye_pair_input_auto
+            or not current_value
+            or current_value == self._dualfisheye_last_auto_pair_input
+        )
+        if not should_update:
+            return
+        self._dualfisheye_pair_input_auto = True
+        self._dualfisheye_last_auto_pair_input = source_value
+        self._dualfisheye_pair_input_updating = True
+        try:
+            pair_var.set(source_value)
+        finally:
+            self._dualfisheye_pair_input_updating = False
+        self._update_dualfisheye_outputs_from_pair_input(force=force)
+
+    def _update_dualfisheye_outputs_from_pair_input(
+        self, force: bool = False
+    ) -> None:
+        if not self.dualfisheye_vars:
+            return
+        pair_var = self.dualfisheye_vars.get("pair_input")
+        if pair_var is None:
+            return
+        pair_text = pair_var.get().strip()
+        if not pair_text:
+            return
+        pair_path = Path(pair_text).expanduser()
+        try:
+            if not pair_path.is_absolute():
+                pair_path = pair_path.resolve()
+        except FileNotFoundError:
+            return
+        base_dir = pair_path.parent if pair_path.parent != Path("") else Path.cwd()
+        base_name = pair_path.name
+        defaults = {
+            "fisheye_output": str(base_dir / f"{base_name}_undistorted"),
+            "perspective_output": str(
+                base_dir / f"{base_name}_undistorted_perspective"
+            ),
+            "color_output": str(base_dir / f"{base_name}_colorcorrected"),
+        }
+        for key, default_value in defaults.items():
+            current_var = self.dualfisheye_vars.get(key)
+            if current_var is None:
+                continue
+            current_value = current_var.get().strip()
+            auto_enabled = self._dualfisheye_output_auto.get(key, True)
+            last_auto = self._dualfisheye_last_auto_output.get(key, "")
+            should_update = (
+                force
+                or auto_enabled
+                or not current_value
+                or current_value == last_auto
+            )
+            if should_update:
+                self._set_dualfisheye_path_auto(key, default_value)
+        self._update_dualfisheye_output_controls_state()
+
+    def _update_dualfisheye_output_controls_state(self) -> None:
+        if not self.dualfisheye_vars:
+            return
+
+        control_specs = [
+            (
+                self.dualfisheye_color_output_entry,
+                self.dualfisheye_color_output_button,
+                bool(self.dualfisheye_vars["save_color_corrected_output"].get()),
+            ),
+            (
+                self.dualfisheye_fisheye_output_entry,
+                self.dualfisheye_fisheye_output_button,
+                bool(self.dualfisheye_vars["save_fisheye_output"].get()),
+            ),
+            (
+                self.dualfisheye_perspective_output_entry,
+                self.dualfisheye_perspective_output_button,
+                not bool(self.dualfisheye_vars["no_perspective"].get()),
+            ),
+        ]
+        for entry, button, enabled in control_specs:
+            if entry is not None:
+                entry.configure(state="normal" if enabled else "readonly")
+            if button is not None:
+                button.configure(state="normal" if enabled else "disabled")
+
+    def _update_dualfisheye_inspect_state(self) -> None:
+        button = self.dualfisheye_inspect_button
+        if button is None:
+            return
+        video_var = self.dualfisheye_vars.get("video")
+        if video_var is None:
+            button.configure(state="disabled")
+            return
+        path_text = video_var.get().strip()
+        if not path_text:
+            button.configure(state="disabled")
+            return
+        try:
+            path = Path(path_text).expanduser()
+        except Exception:
+            button.configure(state="disabled")
+            return
+        enabled = path.exists() and path.is_file()
+        button.configure(state="normal" if enabled else "disabled")
+
+    def _inspect_dualfisheye_video_metadata(self) -> None:
+        if not self.dualfisheye_vars:
+            return
+        video_value = self.dualfisheye_vars.get("video")
+        if video_value is None:
+            return
+        video_path_text = video_value.get().strip()
+        if not video_path_text:
+            messagebox.showerror(
+                "Video metadata", "Select an input raw video first."
+            )
+            return
+        try:
+            video_path = Path(video_path_text).expanduser().resolve(strict=True)
+        except FileNotFoundError:
+            messagebox.showerror(
+                "Video metadata",
+                f"Video file not found:\n{video_path_text}",
+            )
+            return
+        except Exception as exc:
+            messagebox.showerror(
+                "Video metadata",
+                f"Failed to resolve video path:\n{exc}",
+            )
+            return
+
+        result = self._collect_video_metadata_lines(video_path, "Video metadata")
+        if not result:
+            return
+        lines, metadata = result
+        self._set_text_widget(self.dualfisheye_log, "")
+        for line in lines:
+            self._append_text_widget(self.dualfisheye_log, line)
+
+        fps_value = metadata.get("frame_rate") if metadata else None
+        fps_text_raw = metadata.get("frame_rate_text") if metadata else None
+        detected = None
+        if fps_value is not None:
+            try:
+                detected = float(fps_value)
+            except (TypeError, ValueError):
+                detected = None
+        if detected is None and fps_text_raw:
+            detected = self._parse_fps_from_stream(str(fps_text_raw))
+        if detected is None or detected <= 0.0:
+            return
+
+        formatted = self._format_fps_for_output(f"{detected}")
+        if not formatted:
+            return
+        should_apply = bool(self.dualfisheye_set_fps_var.get())
+        if should_apply:
+            self.dualfisheye_vars["fps"].set(formatted)
+            self._append_text_widget(
+                self.dualfisheye_log,
+                f"[fps] Updated FPS to detected value ({formatted})",
+            )
+            return
+        self._append_text_widget(
+            self.dualfisheye_log,
+            (
+                "[fps] Detected FPS {} (Set FPS unchecked; "
+                "entry left unchanged)"
+            ).format(formatted),
+        )
 
     def _update_preview_inspect_state(self) -> None:
         button = self.preview_inspect_button
@@ -2206,6 +2518,11 @@ class PreviewApp:
             "input": tk.StringVar(),
             "output": tk.StringVar(),
             "mode": tk.StringVar(value="mask"),
+            "expand_mode": tk.StringVar(value="pixels"),
+            "expand_pixels": tk.StringVar(value="15"),
+            "expand_percent": tk.StringVar(value="1"),
+            "edge_fuse_enabled": tk.BooleanVar(value=True),
+            "edge_fuse_pixels": tk.StringVar(value="25"),
             "cpu": tk.BooleanVar(value=False),
             "include_shadow": tk.BooleanVar(value=False),
             "target_person": tk.BooleanVar(value=True),
@@ -2215,6 +2532,21 @@ class PreviewApp:
         }
         self.human_vars["input"].trace_add("write", self._on_human_input_changed)
         self.human_vars["output"].trace_add("write", self._on_human_output_changed)
+        self.human_vars["expand_mode"].trace_add(
+            "write", self._update_human_expand_state
+        )
+        self.human_vars["expand_pixels"].trace_add(
+            "write", self._on_human_expand_value_changed
+        )
+        self.human_vars["expand_percent"].trace_add(
+            "write", self._on_human_expand_value_changed
+        )
+        self.human_vars["edge_fuse_pixels"].trace_add(
+            "write", self._on_human_expand_value_changed
+        )
+        self.human_vars["edge_fuse_enabled"].trace_add(
+            "write", self._on_human_expand_value_changed
+        )
 
         row = 0
         tk.Label(params, text="Input folder").grid(row=row, column=0, sticky="e", padx=4, pady=4)
@@ -2251,6 +2583,44 @@ class PreviewApp:
         )
         mode_combo.pack(side=tk.LEFT, padx=(0, 12))
         mode_combo.set(self.human_vars["mode"].get())
+        self.human_expand_mode_combo = ttk.Combobox(
+            mode_frame,
+            textvariable=self.human_vars["expand_mode"],
+            values=HUMAN_MASK_EXPAND_MODE_CHOICES,
+            state="readonly",
+            width=10,
+        )
+        tk.Label(mode_frame, text="Mask Expand").pack(side=tk.LEFT, padx=(12, 4))
+        self.human_expand_mode_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self.human_expand_mode_combo.set(self.human_vars["expand_mode"].get())
+        tk.Label(mode_frame, text="Pixels").pack(side=tk.LEFT, padx=(0, 4))
+        self.human_expand_pixels_entry = tk.Entry(
+            mode_frame,
+            textvariable=self.human_vars["expand_pixels"],
+            width=8,
+        )
+        self.human_expand_pixels_entry.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(mode_frame, text="Percent").pack(side=tk.LEFT, padx=(0, 4))
+        self.human_expand_percent_entry = tk.Entry(
+            mode_frame,
+            textvariable=self.human_vars["expand_percent"],
+            width=8,
+        )
+        self.human_expand_percent_entry.pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(mode_frame, text="Edge Fuse").pack(side=tk.LEFT, padx=(12, 4))
+        self.human_edge_fuse_check = tk.Checkbutton(
+            mode_frame,
+            text="",
+            variable=self.human_vars["edge_fuse_enabled"],
+        )
+        self.human_edge_fuse_check.pack(side=tk.LEFT, padx=(0, 4))
+        self.human_edge_fuse_entry = tk.Entry(
+            mode_frame,
+            textvariable=self.human_vars["edge_fuse_pixels"],
+            width=8,
+        )
+        self.human_edge_fuse_entry.pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(mode_frame, text="Pixels").pack(side=tk.LEFT, padx=(0, 4))
 
         row += 1
         target_frame = tk.Frame(params)
@@ -2292,6 +2662,12 @@ class PreviewApp:
 
         actions = tk.Frame(container)
         actions.pack(fill="x", padx=8, pady=(0, 8))
+        self.human_preview_button = tk.Button(
+            actions,
+            text="Preview masks",
+            command=self._preview_human_masks,
+        )
+        self.human_preview_button.pack(side=tk.LEFT, padx=4, pady=4)
         self.human_stop_button = tk.Button(
             actions,
             text="Stop",
@@ -2306,13 +2682,180 @@ class PreviewApp:
         )
         self.human_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
 
-        log_frame = tk.LabelFrame(container, text="Log")
-        log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.human_log = tk.Text(log_frame, wrap="word", height=18, cursor="arrow")
+        body_pane = ttk.PanedWindow(container, orient=tk.VERTICAL)
+        body_pane.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        preview_frame = tk.LabelFrame(body_pane, text="Preview")
+        tk.Label(
+            preview_frame,
+            textvariable=self.human_preview_status_var,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=6, pady=(4, 2))
+        preview_controls = tk.Frame(preview_frame)
+        preview_controls.pack(fill="x", padx=6, pady=(0, 6))
+        tk.Label(preview_controls, text="Mask Expand").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        self.human_preview_expand_mode_combo = ttk.Combobox(
+            preview_controls,
+            textvariable=self.human_vars["expand_mode"],
+            values=HUMAN_MASK_EXPAND_MODE_CHOICES,
+            state="readonly",
+            width=10,
+        )
+        self.human_preview_expand_mode_combo.pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        self.human_preview_expand_scale = tk.Scale(
+            preview_controls,
+            orient="horizontal",
+            from_=0,
+            to=200,
+            resolution=1,
+            showvalue=False,
+            variable=self.human_preview_slider_var,
+            command=self._on_human_preview_scale_changed,
+            length=195,
+        )
+        self.human_preview_expand_scale.pack(
+            side=tk.LEFT, padx=(0, 8), fill="x", expand=False
+        )
+        tk.Label(preview_controls, text="Pixels").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        self.human_preview_expand_pixels_entry = tk.Entry(
+            preview_controls,
+            textvariable=self.human_vars["expand_pixels"],
+            width=8,
+        )
+        self.human_preview_expand_pixels_entry.pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        tk.Label(preview_controls, text="Percent").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        self.human_preview_expand_percent_entry = tk.Entry(
+            preview_controls,
+            textvariable=self.human_vars["expand_percent"],
+            width=8,
+        )
+        self.human_preview_expand_percent_entry.pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        tk.Label(preview_controls, text="Edge Fuse").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        self.human_preview_edge_fuse_check = tk.Checkbutton(
+            preview_controls,
+            text="",
+            variable=self.human_vars["edge_fuse_enabled"],
+        )
+        self.human_preview_edge_fuse_check.pack(
+            side=tk.LEFT, padx=(0, 2)
+        )
+        self.human_preview_edge_fuse_entry = tk.Entry(
+            preview_controls,
+            textvariable=self.human_vars["edge_fuse_pixels"],
+            width=8,
+        )
+        self.human_preview_edge_fuse_entry.pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        tk.Label(preview_controls, text="Pixels").pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        tk.Label(preview_controls, text="Preview Size").pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        self.human_preview_size_combo = ttk.Combobox(
+            preview_controls,
+            textvariable=self.human_preview_size_var,
+            values=HUMAN_PREVIEW_SIZE_CHOICES,
+            state="readonly",
+            width=10,
+        )
+        self.human_preview_size_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self.human_preview_size_combo.bind(
+            "<<ComboboxSelected>>",
+            self._on_human_preview_size_changed,
+        )
+        self.human_preview_update_button = tk.Button(
+            preview_controls,
+            text="Update hidden",
+            command=self._apply_human_preview_marked_removal,
+            state="disabled",
+        )
+        self.human_preview_update_button.pack(side=tk.LEFT, padx=(12, 4))
+        self.human_preview_reset_button = tk.Button(
+            preview_controls,
+            text="Reset preview",
+            command=self._reset_human_preview_state,
+            state="disabled",
+        )
+        self.human_preview_reset_button.pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(
+            preview_frame,
+            text=(
+                "Preview controls: Left-click=mark hide, Update hidden=hide marked, "
+                "Reset preview=restore, Right-click=Mask Editor, Mouse wheel=scroll."
+            ),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=6, pady=(0, 6))
+        preview_wrap = tk.Frame(preview_frame)
+        preview_wrap.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        preview_x = tk.Scrollbar(preview_wrap, orient="horizontal")
+        preview_x.pack(side=tk.BOTTOM, fill="x")
+        preview_y = tk.Scrollbar(preview_wrap, orient="vertical")
+        preview_y.pack(side=tk.RIGHT, fill="y")
+        self.human_preview_canvas = tk.Canvas(
+            preview_wrap,
+            height=380,
+            background="#f4f4f4",
+            xscrollcommand=preview_x.set,
+            yscrollcommand=preview_y.set,
+            highlightthickness=1,
+            highlightbackground="#d0d0d0",
+        )
+        self.human_preview_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        preview_x.configure(command=self.human_preview_canvas.xview)
+        preview_y.configure(command=self.human_preview_canvas.yview)
+        self.human_preview_canvas.bind(
+            "<Configure>",
+            self._on_human_preview_canvas_configure,
+        )
+        self.human_preview_canvas.bind(
+            "<Button-1>",
+            self._on_human_preview_canvas_click,
+        )
+        self.human_preview_canvas.bind(
+            "<Button-3>",
+            self._on_human_preview_canvas_right_click,
+        )
+        self.human_preview_canvas.bind(
+            "<MouseWheel>",
+            self._on_human_preview_mousewheel,
+        )
+        self.human_preview_canvas.bind(
+            "<Button-4>",
+            self._on_human_preview_mousewheel,
+        )
+        self.human_preview_canvas.bind(
+            "<Button-5>",
+            self._on_human_preview_mousewheel,
+        )
+
+        log_frame = tk.LabelFrame(body_pane, text="Log")
+        self.human_log = tk.Text(log_frame, wrap="word", height=9, cursor="arrow")
         self.human_log.pack(fill="both", expand=True, padx=6, pady=4)
         self.human_log.bind("<Key>", self._block_text_edit)
         self.human_log.bind("<Button-1>", lambda event: self.human_log.focus_set())
         self._set_text_widget(self.human_log, "")
+        body_pane.add(preview_frame, weight=5)
+        body_pane.add(log_frame, weight=1)
+        self._update_human_expand_state()
+        self._render_human_preview_image(None)
 
     def _on_human_input_changed(self, *_args) -> None:
         self._update_human_default_output()
@@ -2321,6 +2864,1635 @@ class PreviewApp:
         if self._human_output_updating:
             return
         self._human_output_auto = False
+
+    def _update_human_expand_state(self, *_args) -> None:
+        if not self.human_vars:
+            return
+        mode = self.human_vars["expand_mode"].get().strip().lower()
+        manual_locked = bool(self._human_preview_manual_masks)
+        pixels_state = (
+            "normal" if mode == "pixels" and not manual_locked else "disabled"
+        )
+        percent_state = (
+            "normal" if mode == "percent" and not manual_locked else "disabled"
+        )
+        combo_state = "readonly" if not manual_locked else "disabled"
+        for combo in (
+            self.human_expand_mode_combo,
+            self.human_preview_expand_mode_combo,
+        ):
+            if combo is None:
+                continue
+            try:
+                combo.configure(state=combo_state)
+            except tk.TclError:
+                pass
+        for widget, state in (
+            (self.human_expand_pixels_entry, pixels_state),
+            (self.human_expand_percent_entry, percent_state),
+            (self.human_preview_expand_pixels_entry, pixels_state),
+            (self.human_preview_expand_percent_entry, percent_state),
+        ):
+            if widget is None:
+                continue
+            try:
+                widget.configure(state=state)
+            except tk.TclError:
+                pass
+        for widget in (
+            self.human_edge_fuse_entry,
+            self.human_preview_edge_fuse_entry,
+        ):
+            if widget is None:
+                continue
+            try:
+                widget.configure(
+                    state=(
+                        "normal" if bool(
+                            self.human_vars["edge_fuse_enabled"].get()
+                        ) else "disabled"
+                    )
+                )
+            except tk.TclError:
+                pass
+        scale = self.human_preview_expand_scale
+        if scale is not None:
+            if mode == "pixels":
+                scale.configure(from_=0, to=150, resolution=1)
+            else:
+                scale.configure(from_=0, to=10, resolution=0.5)
+            scale.configure(state="normal" if not manual_locked else "disabled")
+        self._sync_human_preview_slider_from_fields()
+        if self._human_preview_rendered_items:
+            self._schedule_human_preview_refresh()
+
+    def _on_human_expand_value_changed(self, *_args) -> None:
+        if self._human_expand_syncing:
+            return
+        self._sync_human_preview_slider_from_fields()
+        if self._human_preview_cache_items and not self._human_preview_busy:
+            self._schedule_human_preview_refresh()
+
+    def _sync_human_preview_slider_from_fields(self) -> None:
+        if not self.human_vars:
+            return
+        mode = self.human_vars["expand_mode"].get().strip().lower()
+        try:
+            if mode == "percent":
+                value = float(self.human_vars["expand_percent"].get().strip())
+            else:
+                value = float(self.human_vars["expand_pixels"].get().strip())
+        except ValueError:
+            return
+        if value < 0:
+            value = 0.0
+        scale = self.human_preview_expand_scale
+        if scale is not None:
+            try:
+                upper = float(scale.cget("to"))
+            except Exception:
+                upper = value
+            value = min(value, upper)
+        if abs(self.human_preview_slider_var.get() - value) > 1e-6:
+            self.human_preview_slider_var.set(value)
+        self._update_human_preview_slider_label()
+
+    def _format_human_expand_value(self, value: float, mode: str) -> str:
+        if mode == "percent":
+            rounded = round(float(value), 1)
+            if abs(rounded - int(round(rounded))) < 1e-6:
+                return str(int(round(rounded)))
+            return "{:.1f}".format(rounded)
+        return str(int(round(float(value))))
+
+    def _update_human_preview_slider_label(self) -> None:
+        return
+
+    def _update_human_preview_update_button_state(self) -> None:
+        if self.human_preview_update_button is None:
+            update_state = "disabled"
+        else:
+            update_state = (
+                "normal" if self._human_preview_marked_names else "disabled"
+            )
+            self.human_preview_update_button.configure(state=update_state)
+        if self.human_preview_reset_button is not None:
+            reset_state = (
+                "normal"
+                if self._human_preview_original_cache_items else
+                "disabled"
+            )
+            self.human_preview_reset_button.configure(state=reset_state)
+
+    def _capture_human_preview_reset_settings(self) -> Dict[str, Any]:
+        snapshot: Dict[str, Any] = {}
+        for key in (
+            "mode",
+            "expand_mode",
+            "expand_pixels",
+            "expand_percent",
+            "edge_fuse_enabled",
+            "edge_fuse_pixels",
+            "cpu",
+            "include_shadow",
+            "target_person",
+            "target_bicycle",
+            "target_car",
+            "target_animal",
+        ):
+            if key not in self.human_vars:
+                continue
+            snapshot[key] = self.human_vars[key].get()
+        return snapshot
+
+    def _restore_human_preview_reset_settings(
+        self,
+        snapshot: Dict[str, Any],
+    ) -> None:
+        if not snapshot:
+            return
+        self._human_expand_syncing = True
+        try:
+            for key, value in snapshot.items():
+                if key in self.human_vars:
+                    self.human_vars[key].set(value)
+        finally:
+            self._human_expand_syncing = False
+        self._update_human_expand_state()
+        self._sync_human_preview_slider_from_fields()
+
+    def _apply_human_preview_slider_value(self) -> None:
+        if not self.human_vars:
+            return
+        mode = self.human_vars["expand_mode"].get().strip().lower()
+        value = float(self.human_preview_slider_var.get())
+        formatted = self._format_human_expand_value(value, mode)
+        self._human_expand_syncing = True
+        try:
+            if mode == "percent":
+                if self.human_vars["expand_percent"].get().strip() != formatted:
+                    self.human_vars["expand_percent"].set(formatted)
+            else:
+                if self.human_vars["expand_pixels"].get().strip() != formatted:
+                    self.human_vars["expand_pixels"].set(formatted)
+        finally:
+            self._human_expand_syncing = False
+        self._update_human_preview_slider_label()
+
+    def _schedule_human_preview_refresh(self, delay_ms: int = HUMAN_PREVIEW_DELAY_MS) -> None:
+        if self.root is None:
+            return
+        if self._human_preview_after_id is not None:
+            try:
+                self.root.after_cancel(self._human_preview_after_id)
+            except Exception:
+                pass
+            self._human_preview_after_id = None
+        self._human_preview_after_id = self.root.after(
+            max(0, int(delay_ms)),
+            self._trigger_human_preview_refresh,
+        )
+
+    def _trigger_human_preview_refresh(self) -> None:
+        self._human_preview_after_id = None
+        self._apply_human_preview_slider_value()
+        if self._human_preview_busy:
+            self._human_preview_pending = True
+            return
+        self._rebuild_human_preview_from_cache()
+
+    def _on_human_preview_scale_changed(self, _value: str) -> None:
+        self._update_human_preview_slider_label()
+        self._schedule_human_preview_refresh()
+
+    def _on_human_preview_size_changed(self, _event=None) -> None:
+        if self._human_preview_rendered_items:
+            self._render_human_preview_sheet()
+
+    def _on_human_preview_canvas_configure(self, _event=None) -> None:
+        if self.human_preview_size_var.get().strip().lower() == "frame fit":
+            if self._human_preview_rendered_items:
+                self._render_human_preview_sheet()
+
+    def _on_human_preview_canvas_click(self, event) -> str:
+        canvas = self.human_preview_canvas
+        if canvas is None or not self._human_preview_hit_regions:
+            return "break"
+        x_pos = int(canvas.canvasx(event.x))
+        y_pos = int(canvas.canvasy(event.y))
+        for left, top, right, bottom, name in self._human_preview_hit_regions:
+            if left <= x_pos <= right and top <= y_pos <= bottom:
+                if name in self._human_preview_marked_names:
+                    self._human_preview_marked_names.remove(name)
+                else:
+                    self._human_preview_marked_names.add(name)
+                self._update_human_preview_update_button_state()
+                self._render_human_preview_sheet()
+                break
+        return "break"
+
+    def _on_human_preview_canvas_right_click(self, event) -> str:
+        canvas = self.human_preview_canvas
+        if canvas is None or not self._human_preview_hit_regions:
+            return "break"
+        x_pos = int(canvas.canvasx(event.x))
+        y_pos = int(canvas.canvasy(event.y))
+        item_name = self._human_preview_item_name_at(x_pos, y_pos)
+        if item_name:
+            self._open_human_mask_editor(item_name)
+        return "break"
+
+    def _on_human_preview_mousewheel(self, event) -> str:
+        canvas = self.human_preview_canvas
+        if canvas is None:
+            return "break"
+        delta = 0
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        elif getattr(event, "delta", 0):
+            delta = -1 if event.delta > 0 else 1
+        if delta != 0:
+            canvas.yview_scroll(delta, "units")
+        return "break"
+
+    def _collect_human_mask_settings(
+        self,
+        show_errors: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        if not self.human_vars:
+            return None
+
+        input_dir = self.human_vars["input"].get().strip()
+        if not input_dir:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Input folder is required.",
+                )
+            return None
+        input_path = Path(input_dir).expanduser()
+        if not input_path.exists() or not input_path.is_dir():
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Input folder not found:\n{}".format(input_dir),
+                )
+            return None
+
+        mode_value = self.human_vars["mode"].get().strip()
+        if mode_value not in HUMAN_MODE_CHOICES:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Mode must be one of: {}.".format(
+                        ", ".join(HUMAN_MODE_CHOICES)
+                    ),
+                )
+            return None
+
+        selected_targets: List[str] = []
+        for target_name in HUMAN_TARGET_CHOICES:
+            key = "target_{}".format(target_name)
+            if bool(self.human_vars[key].get()):
+                selected_targets.append(target_name)
+        if not selected_targets:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Select at least one target (Person, Bicycle, Car, Animal).",
+                )
+            return None
+
+        expand_mode = self.human_vars["expand_mode"].get().strip().lower()
+        if expand_mode not in HUMAN_MASK_EXPAND_MODE_CHOICES:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Mask expand mode must be 'pixels' or 'percent'.",
+                )
+            return None
+
+        expand_pixels = 0
+        expand_percent = 0.0
+        edge_fuse_pixels = 0
+        edge_fuse_enabled = bool(self.human_vars["edge_fuse_enabled"].get())
+        if expand_mode == "pixels":
+            pixels_text = self.human_vars["expand_pixels"].get().strip()
+            try:
+                expand_pixels = int(pixels_text)
+            except ValueError:
+                if show_errors:
+                    messagebox.showerror(
+                        "gs360_SegmentationMaskTool",
+                        "Mask expand pixels must be an integer.",
+                    )
+                return None
+            if expand_pixels < 0:
+                if show_errors:
+                    messagebox.showerror(
+                        "gs360_SegmentationMaskTool",
+                        "Mask expand pixels must be 0 or greater.",
+                    )
+                return None
+        else:
+            percent_text = self.human_vars["expand_percent"].get().strip()
+            try:
+                expand_percent = float(percent_text)
+            except ValueError:
+                if show_errors:
+                    messagebox.showerror(
+                        "gs360_SegmentationMaskTool",
+                        "Mask expand percent must be a number.",
+                    )
+                return None
+            if expand_percent < 0:
+                if show_errors:
+                    messagebox.showerror(
+                        "gs360_SegmentationMaskTool",
+                        "Mask expand percent must be 0 or greater.",
+                    )
+                return None
+        edge_fuse_text = self.human_vars["edge_fuse_pixels"].get().strip()
+        try:
+            edge_fuse_pixels = int(edge_fuse_text)
+        except ValueError:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Edge fuse pixels must be an integer.",
+                )
+            return None
+        if edge_fuse_pixels < 0:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Edge fuse pixels must be 0 or greater.",
+                )
+            return None
+        if not edge_fuse_enabled:
+            edge_fuse_pixels = 0
+
+        return {
+            "input_path": input_path,
+            "output_dir": self.human_vars["output"].get().strip(),
+            "mode": mode_value,
+            "targets": selected_targets,
+            "cpu": bool(self.human_vars["cpu"].get()),
+            "include_shadow": bool(self.human_vars["include_shadow"].get()),
+            "expand_mode": expand_mode,
+            "expand_pixels": expand_pixels,
+            "expand_percent": expand_percent,
+            "edge_fuse_enabled": edge_fuse_enabled,
+            "edge_fuse_pixels": edge_fuse_pixels,
+        }
+
+    def _human_preview_group_key(self, stem: str) -> str:
+        view_id = self._extract_multicam_view_id(stem)
+        if not view_id:
+            return stem
+        suffix = "_{}".format(view_id)
+        if len(stem) > len(suffix) and stem.upper().endswith(suffix.upper()):
+            return stem[:-len(suffix)]
+        return stem
+
+    def _collect_human_preview_group(
+        self, input_path: Path
+    ) -> Tuple[str, List[Path]]:
+        image_paths = sorted(
+            path for path in input_path.iterdir()
+            if path.is_file() and path.suffix.lower() in HUMAN_PREVIEW_IMAGE_EXTS
+        )
+        if not image_paths:
+            raise ValueError("No supported images found in:\n{}".format(input_path))
+        first_key = self._human_preview_group_key(image_paths[0].stem)
+        grouped = [
+            path for path in image_paths
+            if self._human_preview_group_key(path.stem) == first_key
+        ]
+        return first_key, grouped
+
+    def _human_preview_signature(
+        self,
+        settings: Dict[str, Any],
+    ) -> Tuple[Any, ...]:
+        return (
+            str(settings["input_path"]),
+            tuple(settings["targets"]),
+            bool(settings["cpu"]),
+            bool(settings["include_shadow"]),
+        )
+
+    def _should_confirm_human_preview_group(
+        self,
+        group_paths: Sequence[Path],
+    ) -> Optional[str]:
+        if not group_paths:
+            return None
+        try:
+            with Image.open(str(group_paths[0])) as img:
+                width, height = img.size
+        except Exception:
+            return None
+        ratio = (float(width) / float(height)) if height else 0.0
+        reasons: List[str] = []
+        if len(group_paths) == 1:
+            reasons.append(
+                "Input looks like a single image rather than a multi-image set."
+            )
+        if height > 0 and width >= 2048 and height >= 1024:
+            if 1.95 <= ratio <= 2.05:
+                reasons.append(
+                    "The first image looks like a high-resolution 2:1 panorama."
+                )
+        if not reasons:
+            return None
+        return "\n".join(reasons)
+
+    @staticmethod
+    def _human_expand_label(settings: Dict[str, Any]) -> str:
+        if settings["expand_mode"] == "pixels":
+            return "{} px".format(settings["expand_pixels"])
+        return "{} %".format(settings["expand_percent"])
+
+    @staticmethod
+    def _human_edge_fuse_label(settings: Dict[str, Any]) -> str:
+        if not settings.get("edge_fuse_enabled", False):
+            return "off"
+        return "{} px".format(settings["edge_fuse_pixels"])
+
+    def _load_human_segmentation_runtime(
+        self, force_cpu: bool
+    ) -> Tuple[Any, Any, Any]:
+        if self._human_segmentation_module is None:
+            self._human_segmentation_module = importlib.import_module(
+                "gs360_SegmentationMaskTool"
+            )
+        module = self._human_segmentation_module
+        device_type = "cpu"
+        if not force_cpu and module.torch.cuda.is_available():
+            device_type = "cuda"
+        if (
+            self._human_segmentation_model is None
+            or self._human_segmentation_device is None
+            or self._human_segmentation_device_type != device_type
+        ):
+            device = module.torch.device(device_type)
+            if device_type == "cuda":
+                module.torch.backends.cudnn.benchmark = True
+            model = module.load_model(device, conf_thres=module.SCORE_THRESH)
+            self._human_segmentation_model = model
+            self._human_segmentation_device = device
+            self._human_segmentation_device_type = device_type
+        return (
+            module,
+            self._human_segmentation_model,
+            self._human_segmentation_device,
+        )
+
+    def _release_human_segmentation_runtime(self) -> None:
+        module = self._human_segmentation_module
+        model = self._human_segmentation_model
+        device_type = self._human_segmentation_device_type
+        if module is not None and model is not None and device_type == "cuda":
+            try:
+                model.to(module.torch.device("cpu"))
+            except Exception:
+                pass
+        self._human_segmentation_model = None
+        self._human_segmentation_device = None
+        self._human_segmentation_device_type = None
+        if module is not None and device_type == "cuda":
+            try:
+                module.torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    def _generate_human_preview_base_mask(
+        self,
+        module: Any,
+        model: Any,
+        device: Any,
+        image: Image.Image,
+        settings: Dict[str, Any],
+    ) -> Optional[np.ndarray]:
+        tensor = module.transforms.ToTensor()(image).to(device)
+        with module.torch.no_grad():
+            if (
+                device.type == "cuda"
+                and module.USE_FP16
+                and getattr(module, "autocast", None) is not None
+            ):
+                with module.autocast():
+                    pred = model([tensor])[0]
+            else:
+                pred = model([tensor])[0]
+
+        image_shape = (image.size[1], image.size[0])
+        mask = module.target_mask_from_prediction(
+            pred,
+            settings["targets"],
+            module.SCORE_THRESH,
+            module.MASK_THRESH,
+        )
+        mask = module.refine_mask(
+            mask,
+            close=module.CLOSE_KERNEL,
+            expand_mode="pixels",
+            expand_pixels=0,
+            expand_percent=0.0,
+            image_shape=image_shape,
+        )
+        if settings["include_shadow"]:
+            shadow = module.estimate_shadow_mask(
+                np.array(image),
+                mask,
+                t=module.SHADOW_T,
+                sigma=module.SHADOW_SIGMA,
+                near_px=module.SHADOW_NEAR,
+                min_area=module.SHADOW_MIN_AREA,
+            )
+            if shadow is not None:
+                base = np.zeros_like(shadow) if mask is None else mask
+                mask = np.maximum(base, shadow)
+        return mask
+
+    def _expand_human_preview_mask(
+        self,
+        module: Any,
+        base_mask: Optional[np.ndarray],
+        image: Image.Image,
+        settings: Dict[str, Any],
+    ) -> Optional[np.ndarray]:
+        if base_mask is None:
+            return None
+        return module.expand_mask(
+            base_mask.copy(),
+            expand_mode=settings["expand_mode"],
+            expand_pixels=settings["expand_pixels"],
+            expand_percent=settings["expand_percent"],
+            image_shape=(image.size[1], image.size[0]),
+        )
+
+    def _compose_human_preview_overlay(
+        self,
+        image: Image.Image,
+        mask: Optional[np.ndarray],
+    ) -> Image.Image:
+        if mask is None or not np.any(mask):
+            return image.convert("RGB")
+
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+        active = mask > 0
+
+        darkened = rgb.astype(np.float32)
+        darkened[active] *= 0.45
+        rgb = np.clip(darkened, 0, 255).astype(np.uint8)
+        return Image.fromarray(rgb, "RGB")
+
+    def _compose_human_mask_editor_overlay(
+        self,
+        image: Image.Image,
+        base_mask: Optional[np.ndarray],
+        manual_mask: Optional[np.ndarray],
+    ) -> Image.Image:
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+        base_active = (
+            np.zeros(rgb.shape[:2], dtype=bool)
+            if base_mask is None else
+            (base_mask > 0)
+        )
+        manual_active = (
+            np.zeros(rgb.shape[:2], dtype=bool)
+            if manual_mask is None else
+            (manual_mask > 0)
+        )
+        if not np.any(base_active) and not np.any(manual_active):
+            return Image.fromarray(rgb, "RGB")
+
+        composed = rgb.astype(np.float32)
+        if np.any(base_active):
+            composed[base_active] *= 0.45
+        if np.any(manual_active):
+            manual_color = np.array(
+                self._hex_to_rgb(self._human_mask_editor_manual_color),
+                dtype=np.float32,
+            )
+            composed[manual_active] = (
+                (composed[manual_active] * 0.35) +
+                (manual_color * 0.65)
+            )
+        composed = np.clip(composed, 0, 255).astype(np.uint8)
+        return Image.fromarray(composed, "RGB")
+
+    @staticmethod
+    def _hex_to_rgb(color_text: str) -> Tuple[int, int, int]:
+        text = color_text.strip()
+        if len(text) == 7 and text.startswith("#"):
+            try:
+                return (
+                    int(text[1:3], 16),
+                    int(text[3:5], 16),
+                    int(text[5:7], 16),
+                )
+            except ValueError:
+                pass
+        return (0, 200, 255)
+
+    def _human_preview_item_name_at(
+        self,
+        x_pos: int,
+        y_pos: int,
+    ) -> Optional[str]:
+        for left, top, right, bottom, name in self._human_preview_hit_regions:
+            if left <= x_pos <= right and top <= y_pos <= bottom:
+                return name
+        return None
+
+    def _find_human_preview_cache_item(
+        self,
+        name: str,
+    ) -> Optional[Tuple[str, Image.Image, Optional[np.ndarray]]]:
+        for item in self._human_preview_cache_items:
+            if item[0] == name:
+                return item
+        return None
+
+    def _human_manual_mask_key(self, name: str) -> str:
+        stem = Path(name).stem
+        view_id = self._extract_multicam_view_id(stem)
+        if view_id:
+            return "view__{}".format(view_id)
+        return "file__{}".format(stem)
+
+    @staticmethod
+    def _normalize_binary_mask(
+        mask: Optional[np.ndarray],
+    ) -> Optional[np.ndarray]:
+        if mask is None:
+            return None
+        return np.where(mask > 0, 255, 0).astype(np.uint8)
+
+    def _apply_human_manual_mask_layers(
+        self,
+        base_mask: Optional[np.ndarray],
+        name: str,
+        image_shape: Tuple[int, int],
+    ) -> Optional[np.ndarray]:
+        add_mask = self._human_preview_manual_masks.get(
+            self._human_manual_mask_key(name)
+        )
+        mask = self._normalize_binary_mask(base_mask)
+        if mask is None:
+            if add_mask is None:
+                return None
+            mask = np.zeros(image_shape, dtype=np.uint8)
+        if add_mask is not None:
+            add_bool = add_mask > 0
+            mask[add_bool] = 255
+        if not np.any(mask):
+            return None
+        return mask
+
+    def _apply_human_edge_fuse(
+        self,
+        module: Any,
+        mask: Optional[np.ndarray],
+        settings: Dict[str, Any],
+    ) -> Optional[np.ndarray]:
+        if mask is None:
+            return None
+        return module.fuse_mask_to_edges(
+            mask,
+            edge_fuse_pixels=settings["edge_fuse_pixels"],
+        )
+
+    def _resolve_human_preview_mask(
+        self,
+        name: str,
+        image: Image.Image,
+        base_mask: Optional[np.ndarray],
+        settings: Dict[str, Any],
+    ) -> Optional[np.ndarray]:
+        auto_mask = None
+        if self._human_segmentation_module is None:
+            auto_mask = None
+        else:
+            auto_mask = self._expand_human_preview_mask(
+                self._human_segmentation_module,
+                base_mask,
+                image,
+                settings,
+            )
+            auto_mask = self._apply_human_edge_fuse(
+                self._human_segmentation_module,
+                auto_mask,
+                settings,
+            )
+        return self._apply_human_manual_mask_layers(
+            auto_mask,
+            name,
+            (image.size[1], image.size[0]),
+        )
+
+    def _build_human_preview_sheet(
+        self,
+        rendered_items: Sequence[Tuple[str, Image.Image, int]],
+    ) -> Image.Image:
+        margin = HUMAN_PREVIEW_MARGIN
+        self._human_preview_hit_regions = []
+        size_value = self.human_preview_size_var.get().strip()
+        if size_value == "800":
+            thumb_w, thumb_h = (800, 800)
+            cols = 2
+        elif size_value.lower() == "original":
+            max_w = max(item[1].width for item in rendered_items)
+            max_h = max(item[1].height for item in rendered_items)
+            thumb_w = max(1, max_w)
+            thumb_h = max(1, max_h)
+            cols = 1
+        elif size_value.lower() == "frame fit":
+            canvas_width = 1280
+            if self.human_preview_canvas is not None:
+                try:
+                    canvas_width = max(
+                        480,
+                        int(self.human_preview_canvas.winfo_width()),
+                    )
+                except Exception:
+                    canvas_width = 1280
+            cols = max(1, min(4, len(rendered_items)))
+            available_w = max(
+                120,
+                canvas_width - ((cols + 1) * margin),
+            )
+            thumb_w = max(120, int(available_w / float(cols)))
+            thumb_h = thumb_w
+        else:
+            thumb_w, thumb_h = (320, 320)
+            cols = 4
+        text_height = 42
+        rows = max(1, int(math.ceil(len(rendered_items) / float(cols))))
+        sheet_w = (cols * thumb_w) + ((cols + 1) * margin)
+        sheet_h = (rows * (thumb_h + text_height)) + ((rows + 1) * margin)
+        sheet = Image.new("RGB", (sheet_w, sheet_h), "#f4f4f4")
+        draw = ImageDraw.Draw(sheet)
+
+        for idx, (name, image, active_pixels) in enumerate(rendered_items):
+            col = idx % cols
+            row = idx // cols
+            x = margin + (col * (thumb_w + margin))
+            y = margin + (row * (thumb_h + text_height + margin))
+            draw.rectangle(
+                [x - 1, y - 1, x + thumb_w + 1, y + thumb_h + text_height + 1],
+                outline="#cfcfcf",
+                width=1,
+            )
+            if size_value.lower() == "original":
+                thumb = image.copy()
+            else:
+                thumb = image.copy()
+                thumb.thumbnail((thumb_w, thumb_h), Image.LANCZOS)
+            is_marked = name in self._human_preview_marked_names
+            if is_marked:
+                thumb = Image.blend(
+                    thumb.convert("RGB"),
+                    Image.new("RGB", thumb.size, "black"),
+                    0.68,
+                )
+            offset_x = x + max(0, (thumb_w - thumb.width) // 2)
+            offset_y = y + max(0, (thumb_h - thumb.height) // 2)
+            sheet.paste(thumb, (offset_x, offset_y))
+            self._human_preview_hit_regions.append(
+                (
+                    x,
+                    y,
+                    x + thumb_w,
+                    y + thumb_h + text_height,
+                    name,
+                )
+            )
+            name_text = name if len(name) <= 28 else "{}...".format(name[:25])
+            if is_marked:
+                name_text = "{} [hide]".format(name_text)
+            if self._human_manual_mask_key(name) in self._human_preview_manual_masks:
+                name_text = "{} [manual]".format(name_text)
+            mask_text = (
+                "mask px: {:,}".format(active_pixels)
+                if active_pixels > 0 else
+                "mask: empty"
+            )
+            draw.text((x, y + thumb_h + 6), name_text, fill="#202020")
+            draw.text((x, y + thumb_h + 22), mask_text, fill="#606060")
+        return sheet
+
+    def _render_human_preview_sheet(self) -> None:
+        if not self._human_preview_rendered_items:
+            self._render_human_preview_image(None)
+            return
+        self._render_human_preview_image(
+            self._build_human_preview_sheet(self._human_preview_rendered_items),
+            preserve_scroll=True,
+        )
+
+    def _build_human_preview_status_text(
+        self,
+        settings: Dict[str, Any],
+        device_label: str,
+    ) -> str:
+        preview_count = len(self._human_preview_cache_items)
+        total_count = max(preview_count, self._human_preview_group_total_count)
+        if total_count > preview_count:
+            count_text = "{}/{}".format(preview_count, total_count)
+        else:
+            count_text = str(preview_count)
+        status_text = (
+            "Group: {} | images: {} | targets: {} | expand: {} | edge fuse: {} | size: {} | device: {}"
+        ).format(
+            self._human_preview_group_name,
+            count_text,
+            ", ".join(settings["targets"]),
+            self._human_expand_label(settings),
+            self._human_edge_fuse_label(settings),
+            self.human_preview_size_var.get().strip(),
+            device_label,
+        )
+        manual_count = len(self._human_preview_manual_masks)
+        if manual_count > 0:
+            status_text += " | manual: {} | expand locked".format(manual_count)
+        return status_text
+
+    def _rebuild_human_preview_from_cache(self) -> bool:
+        if not self._human_preview_cache_items:
+            return False
+        if self._human_segmentation_module is None:
+            return False
+        settings = self._collect_human_mask_settings(show_errors=False)
+        if settings is None:
+            return False
+        if self._human_preview_cache_signature != self._human_preview_signature(
+            settings
+        ):
+            return False
+        rendered_items: List[Tuple[str, Image.Image, int]] = []
+        for name, image, base_mask in self._human_preview_cache_items:
+            expanded = self._resolve_human_preview_mask(
+                name,
+                image,
+                base_mask,
+                settings,
+            )
+            rendered_items.append(
+                (
+                    name,
+                    self._compose_human_preview_overlay(image, expanded),
+                    int(np.count_nonzero(expanded)) if expanded is not None else 0,
+                )
+            )
+        self._human_preview_rendered_items = rendered_items
+        self.human_preview_status_var.set(
+            self._build_human_preview_status_text(
+                settings,
+                self._human_segmentation_device_type or "cpu",
+            )
+        )
+        self._render_human_preview_sheet()
+        return True
+
+    def _render_human_preview_image(
+        self,
+        image: Optional[Image.Image],
+        preserve_scroll: bool = False,
+    ) -> None:
+        canvas = self.human_preview_canvas
+        if canvas is None:
+            return
+        x_view = canvas.xview()
+        y_view = canvas.yview()
+        canvas.delete("all")
+        self._human_preview_photo = None
+        if image is None:
+            self._human_preview_hit_regions = []
+            canvas.configure(scrollregion=(0, 0, 1, 1))
+            canvas.create_text(
+                16,
+                16,
+                anchor="nw",
+                width=max(120, int(canvas.winfo_width()) - 32),
+                text=self.human_preview_status_var.get(),
+                fill="#555555",
+            )
+            return
+        photo = ImageTk.PhotoImage(image=image, master=self.root)
+        self._human_preview_photo = photo
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        canvas.configure(scrollregion=(0, 0, image.width, image.height))
+        if preserve_scroll:
+            try:
+                canvas.xview_moveto(x_view[0] if x_view else 0.0)
+                canvas.yview_moveto(y_view[0] if y_view else 0.0)
+            except Exception:
+                canvas.xview_moveto(0.0)
+                canvas.yview_moveto(0.0)
+        else:
+            canvas.xview_moveto(0.0)
+            canvas.yview_moveto(0.0)
+
+    def _clear_human_preview_cache(self, clear_display: bool = False) -> None:
+        self._human_preview_cache_items = []
+        self._human_preview_cache_signature = None
+        self._human_preview_original_rendered_items = []
+        self._human_preview_original_cache_items = []
+        self._human_preview_original_signature = None
+        self._human_preview_original_settings = {}
+        self._human_preview_original_status_text = ""
+        self._human_preview_group_name = ""
+        self._human_preview_group_total_count = 0
+        self._human_preview_hit_regions = []
+        self._human_preview_marked_names = set()
+        self._human_preview_manual_masks = {}
+        self._human_preview_rendered_items = []
+        self._human_preview_pending = False
+        self._close_human_mask_editor()
+        self._update_human_expand_state()
+        self._update_human_preview_update_button_state()
+        if self._human_preview_after_id is not None:
+            try:
+                self.root.after_cancel(self._human_preview_after_id)
+            except Exception:
+                pass
+            self._human_preview_after_id = None
+        if clear_display:
+            self.human_preview_status_var.set(
+                "Preview cache cleared. Run Preview masks again to regenerate."
+            )
+            self._render_human_preview_image(None)
+
+    def _set_human_preview_running(self, running: bool) -> None:
+        self._human_preview_busy = running
+        if self.human_preview_button is not None:
+            self.human_preview_button.configure(
+                state="disabled" if running else "normal"
+            )
+
+    def _complete_human_preview(
+        self,
+        rendered_items: Sequence[Tuple[str, Image.Image, int]],
+        status_text: str,
+        log_line: str,
+    ) -> None:
+        self._human_preview_rendered_items = list(rendered_items)
+        self._apply_human_preview_slider_value()
+        self.human_preview_status_var.set(status_text)
+        if self._human_preview_rendered_items:
+            self._render_human_preview_sheet()
+        else:
+            self._render_human_preview_image(None)
+        if log_line:
+            self._append_text_widget(self.human_log, log_line)
+        self._set_human_preview_running(False)
+        if self._human_preview_pending:
+            self._human_preview_pending = False
+            self._schedule_human_preview_refresh(delay_ms=0)
+
+    def _apply_human_preview_marked_removal(self) -> None:
+        if not self._human_preview_marked_names:
+            return
+        hidden_names = set(self._human_preview_marked_names)
+        before_count = len(self._human_preview_cache_items)
+        self._human_preview_cache_items = [
+            item
+            for item in self._human_preview_cache_items
+            if item[0] not in hidden_names
+        ]
+        hidden_count = before_count - len(self._human_preview_cache_items)
+        self._human_preview_marked_names = set()
+        self._update_human_preview_update_button_state()
+        if hidden_count <= 0:
+            return
+        self._human_preview_rendered_items = [
+            item
+            for item in self._human_preview_rendered_items
+            if item[0] not in hidden_names
+        ]
+        if self._human_preview_cache_items and self._rebuild_human_preview_from_cache():
+            self._append_text_widget(
+                self.human_log,
+                "[preview] Hid {} image(s) from preview.".format(hidden_count),
+            )
+            return
+        if self._human_preview_rendered_items:
+            current_status = self.human_preview_status_var.get().strip()
+            if current_status:
+                current_status = "{} | hidden: {}".format(
+                    current_status,
+                    hidden_count,
+                )
+            else:
+                current_status = "Preview updated. Hidden: {} image(s).".format(
+                    hidden_count,
+                )
+            self.human_preview_status_var.set(current_status)
+            self._render_human_preview_sheet()
+            self._append_text_widget(
+                self.human_log,
+                "[preview] Hid {} image(s) from preview.".format(hidden_count),
+            )
+            return
+        self._human_preview_rendered_items = []
+        self._human_preview_hit_regions = []
+        self.human_preview_status_var.set(
+            "All preview images are hidden. Run Preview masks again to regenerate."
+        )
+        self._render_human_preview_image(None, preserve_scroll=True)
+        self._append_text_widget(
+            self.human_log,
+            "[preview] Hid {} image(s) from preview.".format(hidden_count),
+        )
+
+    def _reset_human_preview_state(self) -> None:
+        if not self._human_preview_original_cache_items:
+            return
+        self._human_preview_manual_masks = {}
+        self._restore_human_preview_reset_settings(
+            dict(self._human_preview_original_settings)
+        )
+        self._human_preview_cache_items = list(
+            self._human_preview_original_cache_items
+        )
+        self._human_preview_cache_signature = (
+            self._human_preview_original_signature
+        )
+        self._human_preview_rendered_items = list(
+            self._human_preview_original_rendered_items
+        )
+        self._human_preview_marked_names = set()
+        self._human_preview_hit_regions = []
+        self.human_preview_status_var.set(
+            self._human_preview_original_status_text or
+            "Preview reset to the last inferred state."
+        )
+        self._close_human_mask_editor()
+        self._update_human_expand_state()
+        self._update_human_preview_update_button_state()
+        if self._human_preview_rendered_items:
+            self._render_human_preview_sheet()
+        else:
+            self._render_human_preview_image(None, preserve_scroll=True)
+        self._append_text_widget(
+            self.human_log,
+            "[preview] Preview reset to the last inferred state.",
+        )
+
+    def _ensure_human_mask_editor_window(self) -> Optional[tk.Toplevel]:
+        if self.root is None:
+            return None
+        existing = self._human_mask_editor_window
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    return existing
+            except Exception:
+                pass
+        top = tk.Toplevel(self.root)
+        top.title("Mask Editor")
+        top.geometry("980x920")
+        top.protocol("WM_DELETE_WINDOW", self._close_human_mask_editor)
+
+        controls = tk.Frame(top)
+        controls.pack(fill="x", padx=8, pady=(8, 4))
+        tk.Label(controls, text="Tool").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Radiobutton(
+            controls,
+            text="Add",
+            variable=self._human_mask_editor_tool_var,
+            value="add",
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Radiobutton(
+            controls,
+            text="Erase",
+            variable=self._human_mask_editor_tool_var,
+            value="erase",
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Scale(
+            controls,
+            orient="horizontal",
+            from_=2,
+            to=200,
+            resolution=1,
+            showvalue=True,
+            variable=self._human_mask_editor_brush_var,
+            length=240,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Button(
+            controls,
+            text="Manual Color...",
+            command=self._choose_human_mask_editor_manual_color,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        self._human_mask_editor_color_swatch = tk.Label(
+            controls,
+            width=3,
+            relief="solid",
+            borderwidth=1,
+            background=self._human_mask_editor_manual_color,
+        )
+        self._human_mask_editor_color_swatch.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Button(
+            controls,
+            text="Apply",
+            command=self._apply_human_mask_editor,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(
+            controls,
+            text="Close",
+            command=self._close_human_mask_editor,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(
+            controls,
+            text="Reset",
+            command=self._reset_human_mask_editor,
+        ).pack(side=tk.RIGHT, padx=(4, 0))
+
+        note = tk.Label(
+            top,
+            text=(
+                "Recommended for multi-360 camera rigs or a 360 camera mounted on a drone.\n"
+                "Manual paint is shared per camera ID such as _A, _B, ... _X.\n"
+                "Auto mask=dark overlay, manual paint=selected color. Erase removes manual paint only."
+            ),
+            anchor="w",
+            justify="left",
+            wraplength=920,
+        )
+        note.pack(fill="x", padx=8, pady=(0, 4))
+
+        canvas_wrap = tk.Frame(top)
+        canvas_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        canvas_x = tk.Scrollbar(canvas_wrap, orient="horizontal")
+        canvas_x.pack(side=tk.BOTTOM, fill="x")
+        canvas_y = tk.Scrollbar(canvas_wrap, orient="vertical")
+        canvas_y.pack(side=tk.RIGHT, fill="y")
+        canvas = tk.Canvas(
+            canvas_wrap,
+            background="#202020",
+            xscrollcommand=canvas_x.set,
+            yscrollcommand=canvas_y.set,
+            highlightthickness=1,
+            highlightbackground="#404040",
+            cursor="crosshair",
+        )
+        canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        canvas_x.configure(command=canvas.xview)
+        canvas_y.configure(command=canvas.yview)
+        canvas.bind("<ButtonPress-1>", self._on_human_mask_editor_press)
+        canvas.bind("<B1-Motion>", self._on_human_mask_editor_drag)
+        canvas.bind(
+            "<ButtonRelease-1>",
+            self._on_human_mask_editor_release,
+        )
+        canvas.bind("<MouseWheel>", self._on_human_mask_editor_mousewheel)
+        canvas.bind("<Button-4>", self._on_human_mask_editor_mousewheel)
+        canvas.bind("<Button-5>", self._on_human_mask_editor_mousewheel)
+        self._human_mask_editor_window = top
+        self._human_mask_editor_canvas = canvas
+        return top
+
+    def _close_human_mask_editor(self) -> None:
+        top = self._human_mask_editor_window
+        self._human_mask_editor_window = None
+        self._human_mask_editor_canvas = None
+        self._human_mask_editor_photo = None
+        self._human_mask_editor_color_swatch = None
+        self._human_mask_editor_name = ""
+        self._human_mask_editor_image = None
+        self._human_mask_editor_base_mask = None
+        self._human_mask_editor_mask = None
+        self._human_mask_editor_initial_mask = None
+        self._human_mask_editor_last_point = None
+        if top is not None:
+            try:
+                if top.winfo_exists():
+                    top.destroy()
+            except Exception:
+                pass
+
+    def _update_human_mask_editor_color_swatch(self) -> None:
+        swatch = self._human_mask_editor_color_swatch
+        if swatch is None:
+            return
+        try:
+            swatch.configure(background=self._human_mask_editor_manual_color)
+        except tk.TclError:
+            pass
+
+    def _choose_human_mask_editor_manual_color(self) -> None:
+        initial = self._human_mask_editor_manual_color
+        try:
+            _rgb, color_text = colorchooser.askcolor(
+                color=initial,
+                title="Select manual paint color",
+                parent=self._human_mask_editor_window,
+            )
+        except Exception:
+            color_text = None
+        if not color_text:
+            return
+        self._human_mask_editor_manual_color = str(color_text)
+        self._update_human_mask_editor_color_swatch()
+        self._render_human_mask_editor()
+
+    def _open_human_mask_editor(self, name: str) -> None:
+        cache_item = self._find_human_preview_cache_item(name)
+        if cache_item is None:
+            return
+        settings = self._collect_human_mask_settings(show_errors=False)
+        if settings is None:
+            return
+        _, image, base_mask = cache_item
+        auto_mask = None
+        if self._human_segmentation_module is not None:
+            auto_mask = self._expand_human_preview_mask(
+                self._human_segmentation_module,
+                base_mask,
+                image,
+                settings,
+            )
+            auto_mask = self._apply_human_edge_fuse(
+                self._human_segmentation_module,
+                auto_mask,
+                settings,
+            )
+        manual_key = self._human_manual_mask_key(name)
+        add_mask = self._human_preview_manual_masks.get(manual_key)
+        if add_mask is None:
+            add_mask = np.zeros((image.size[1], image.size[0]), dtype=np.uint8)
+        else:
+            add_mask = self._normalize_binary_mask(add_mask)
+        top = self._ensure_human_mask_editor_window()
+        if top is None:
+            return
+        self._human_mask_editor_name = name
+        self._human_mask_editor_image = image.copy()
+        self._human_mask_editor_base_mask = self._normalize_binary_mask(auto_mask)
+        self._human_mask_editor_mask = add_mask.copy()
+        self._human_mask_editor_initial_mask = add_mask.copy()
+        self._human_mask_editor_last_point = None
+        longest_side = max(image.size[0], image.size[1], 1)
+        self._human_mask_editor_zoom = min(1.0, 800.0 / float(longest_side))
+        if self._human_mask_editor_zoom <= 0:
+            self._human_mask_editor_zoom = 1.0
+        top.title("Mask Editor - {}".format(name))
+        top.deiconify()
+        top.lift()
+        top.focus_force()
+        self._render_human_mask_editor()
+
+    def _render_human_mask_editor(self) -> None:
+        canvas = self._human_mask_editor_canvas
+        image = self._human_mask_editor_image
+        manual_mask = self._human_mask_editor_mask
+        if canvas is None or image is None or manual_mask is None:
+            return
+        display_mask = self._normalize_binary_mask(self._human_mask_editor_base_mask)
+        if display_mask is None:
+            display_mask = np.zeros((image.size[1], image.size[0]), dtype=np.uint8)
+        else:
+            display_mask = display_mask.copy()
+        overlay = self._compose_human_mask_editor_overlay(
+            image,
+            display_mask,
+            manual_mask,
+        )
+        src_w, src_h = overlay.size
+        zoom = max(0.01, float(self._human_mask_editor_zoom))
+        dst_w = max(1, int(round(src_w * zoom)))
+        dst_h = max(1, int(round(src_h * zoom)))
+        if (dst_w, dst_h) != overlay.size:
+            overlay = overlay.resize((dst_w, dst_h), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(image=overlay, master=self.root)
+        self._human_mask_editor_photo = photo
+        canvas.delete("all")
+        canvas.create_image(0, 0, anchor="nw", image=photo)
+        canvas.configure(scrollregion=(0, 0, dst_w, dst_h))
+        canvas.xview_moveto(0.0)
+        canvas.yview_moveto(0.0)
+
+    def _human_mask_editor_canvas_to_image(
+        self,
+        event,
+    ) -> Optional[Tuple[int, int]]:
+        canvas = self._human_mask_editor_canvas
+        image = self._human_mask_editor_image
+        if canvas is None or image is None:
+            return None
+        zoom = max(0.01, float(self._human_mask_editor_zoom))
+        x_pos = int(canvas.canvasx(event.x) / zoom)
+        y_pos = int(canvas.canvasy(event.y) / zoom)
+        if x_pos < 0 or y_pos < 0:
+            return None
+        if x_pos >= image.size[0] or y_pos >= image.size[1]:
+            return None
+        return (x_pos, y_pos)
+
+    def _paint_human_mask_editor_segment(
+        self,
+        start_point: Tuple[int, int],
+        end_point: Tuple[int, int],
+    ) -> None:
+        mask = self._human_mask_editor_mask
+        if mask is None:
+            return
+        brush_radius = max(
+            1,
+            int(round(float(self._human_mask_editor_brush_var.get()) / 2.0)),
+        )
+        value = 255 if self._human_mask_editor_tool_var.get() == "add" else 0
+        x0 = float(start_point[0])
+        y0 = float(start_point[1])
+        x1 = float(end_point[0])
+        y1 = float(end_point[1])
+        dx = x1 - x0
+        dy = y1 - y0
+        distance = math.hypot(dx, dy)
+        spacing = max(1.0, float(brush_radius) * 0.3)
+        steps = max(1, int(math.ceil(distance / spacing)))
+        for step in range(steps + 1):
+            t_value = float(step) / float(steps)
+            px = int(round(x0 + (dx * t_value)))
+            py = int(round(y0 + (dy * t_value)))
+            cv2.circle(
+                mask,
+                (px, py),
+                brush_radius,
+                int(value),
+                thickness=-1,
+            )
+
+    def _on_human_mask_editor_press(self, event) -> str:
+        coords = self._human_mask_editor_canvas_to_image(event)
+        if coords is None:
+            self._human_mask_editor_last_point = None
+            return "break"
+        self._human_mask_editor_last_point = coords
+        self._paint_human_mask_editor_segment(coords, coords)
+        self._render_human_mask_editor()
+        return "break"
+
+    def _on_human_mask_editor_drag(self, event) -> str:
+        coords = self._human_mask_editor_canvas_to_image(event)
+        if coords is None:
+            return "break"
+        last_point = self._human_mask_editor_last_point
+        if last_point is None:
+            last_point = coords
+        self._paint_human_mask_editor_segment(last_point, coords)
+        self._human_mask_editor_last_point = coords
+        self._render_human_mask_editor()
+        return "break"
+
+    def _on_human_mask_editor_release(self, _event=None) -> str:
+        self._human_mask_editor_last_point = None
+        return "break"
+
+    def _on_human_mask_editor_mousewheel(self, event) -> str:
+        canvas = self._human_mask_editor_canvas
+        if canvas is None:
+            return "break"
+        delta = 0
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        elif getattr(event, "delta", 0):
+            delta = -1 if event.delta > 0 else 1
+        if delta != 0:
+            canvas.yview_scroll(delta, "units")
+        return "break"
+
+    def _reset_human_mask_editor(self) -> None:
+        if self._human_mask_editor_initial_mask is None:
+            return
+        self._human_mask_editor_mask = self._human_mask_editor_initial_mask.copy()
+        self._human_mask_editor_last_point = None
+        self._render_human_mask_editor()
+
+    def _apply_human_mask_editor(self) -> None:
+        name = self._human_mask_editor_name
+        mask = self._human_mask_editor_mask
+        if not name or mask is None:
+            return
+        manual_key = self._human_manual_mask_key(name)
+        add_mask = self._normalize_binary_mask(mask)
+        if add_mask is not None and np.any(add_mask):
+            self._human_preview_manual_masks[manual_key] = add_mask
+        else:
+            self._human_preview_manual_masks.pop(manual_key, None)
+        self._human_preview_marked_names.discard(name)
+        self._update_human_expand_state()
+        self._update_human_preview_update_button_state()
+        if self._rebuild_human_preview_from_cache():
+            self._append_text_widget(
+                self.human_log,
+                "[manual] Applied manual mask edit to {}.".format(name),
+            )
+        self._close_human_mask_editor()
+
+    def _complete_human_preview_loaded(
+        self,
+        rendered_items: Sequence[Tuple[str, Image.Image, int]],
+        cache_items: Sequence[Tuple[str, Image.Image, Optional[np.ndarray]]],
+        signature: Tuple[Any, ...],
+        group_name: str,
+        total_count: int,
+        settings: Dict[str, Any],
+        device_label: str,
+        log_line: str,
+    ) -> None:
+        self._human_preview_cache_items = list(cache_items)
+        self._human_preview_cache_signature = signature
+        self._human_preview_original_rendered_items = list(rendered_items)
+        self._human_preview_original_cache_items = list(cache_items)
+        self._human_preview_original_signature = signature
+        self._human_preview_original_settings = (
+            self._capture_human_preview_reset_settings()
+        )
+        self._human_preview_group_name = group_name
+        self._human_preview_group_total_count = int(total_count)
+        self._human_preview_hit_regions = []
+        self._human_preview_marked_names = set()
+        self._human_preview_manual_masks = {}
+        self._close_human_mask_editor()
+        status_text = self._build_human_preview_status_text(
+            settings,
+            device_label,
+        )
+        self._human_preview_original_status_text = status_text
+        self._update_human_expand_state()
+        self._update_human_preview_update_button_state()
+        self._complete_human_preview(
+            rendered_items,
+            status_text,
+            log_line,
+        )
+
+    def _preview_human_masks(self, auto_refresh: bool = False) -> None:
+        settings = self._collect_human_mask_settings(show_errors=not auto_refresh)
+        if settings is None or self._human_preview_busy:
+            return
+        if auto_refresh and self._rebuild_human_preview_from_cache():
+            return
+        try:
+            group_name, group_paths = self._collect_human_preview_group(
+                settings["input_path"]
+            )
+        except Exception as exc:
+            if not auto_refresh:
+                messagebox.showerror(
+                    "SegmentationMaskTool Preview",
+                    str(exc),
+                )
+            return
+        confirm_message = self._should_confirm_human_preview_group(group_paths)
+        if confirm_message and not auto_refresh:
+            proceed = messagebox.askyesno(
+                "SegmentationMaskTool Preview",
+                "{}\n\nContinue preview generation?".format(confirm_message),
+            )
+            if not proceed:
+                return
+        preview_paths = list(group_paths[:HUMAN_PREVIEW_MAX_IMAGES])
+        self._set_human_preview_running(True)
+        status = "Generating preview for the first image group..."
+        self.human_preview_status_var.set(status)
+        if not self._human_preview_rendered_items:
+            self._render_human_preview_image(None)
+        if not auto_refresh:
+            self._append_text_widget(
+                self.human_log,
+                "[preview] Generating mask overlay preview...",
+            )
+
+        def worker() -> None:
+            try:
+                module, model, device = self._load_human_segmentation_runtime(
+                    settings["cpu"]
+                )
+                cache_items: List[
+                    Tuple[str, Image.Image, Optional[np.ndarray]]
+                ] = []
+                rendered_items: List[Tuple[str, Image.Image, int]] = []
+                for path in preview_paths:
+                    image = Image.open(str(path)).convert("RGB")
+                    base_mask = self._generate_human_preview_base_mask(
+                        module,
+                        model,
+                        device,
+                        image,
+                        settings,
+                    )
+                    cache_items.append((path.name, image.copy(), base_mask))
+                    mask = self._expand_human_preview_mask(
+                        module,
+                        base_mask,
+                        image,
+                        settings,
+                    )
+                    mask = self._apply_human_edge_fuse(
+                        module,
+                        mask,
+                        settings,
+                    )
+                    rendered_items.append(
+                        (
+                            path.name,
+                            self._compose_human_preview_overlay(image, mask),
+                            int(np.count_nonzero(mask)) if mask is not None else 0,
+                        )
+                    )
+                log_line = (
+                    "[preview] Updated group '{}' ({} images shown / {} total, expand={}, size={}, device={})"
+                ).format(
+                    group_name,
+                    len(preview_paths),
+                    len(group_paths),
+                    self._human_expand_label(settings),
+                    self.human_preview_size_var.get().strip(),
+                    device.type,
+                )
+                if auto_refresh:
+                    log_line = ""
+                self.root.after(
+                    0,
+                    lambda items=rendered_items,
+                    cache=cache_items,
+                    line=log_line,
+                    name=group_name,
+                    total=len(group_paths),
+                    cfg=dict(settings),
+                    dev=device.type:
+                    self._complete_human_preview_loaded(
+                        items,
+                        cache,
+                        self._human_preview_signature(settings),
+                        name,
+                        total,
+                        cfg,
+                        dev,
+                        line,
+                    ),
+                )
+            except Exception as exc:
+                error_text = "Preview failed: {}".format(exc)
+                self.root.after(
+                    0,
+                    lambda text=error_text: self._complete_human_preview(
+                        [],
+                        text,
+                        "[preview] {}".format(text),
+                    ),
+                )
+            finally:
+                self._release_human_segmentation_runtime()
+
+        threading.Thread(
+            target=worker,
+            name="human-mask-preview",
+            daemon=True,
+        ).start()
+
+    def _cleanup_human_manual_mask_temp_dir(self) -> None:
+        temp_dir = self._human_manual_mask_temp_dir
+        self._human_manual_mask_temp_dir = None
+        if temp_dir is None:
+            return
+        try:
+            if temp_dir.exists():
+                shutil.rmtree(str(temp_dir), ignore_errors=True)
+        except Exception:
+            pass
+
+    def _prepare_human_manual_mask_override_dir(self) -> Optional[Path]:
+        self._cleanup_human_manual_mask_temp_dir()
+        if not self._human_preview_manual_masks:
+            return None
+        temp_root = SCRIPT_DIR / "_temp" / "human_manual_masks"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(
+            tempfile.mkdtemp(
+                prefix="manual_mask_",
+                dir=str(temp_root),
+            )
+        )
+        for manual_key, add_mask in self._human_preview_manual_masks.items():
+            if add_mask is None:
+                continue
+            out_path = temp_dir / "{}__add.png".format(manual_key)
+            Image.fromarray(self._normalize_binary_mask(add_mask)).save(
+                str(out_path)
+            )
+        self._human_manual_mask_temp_dir = temp_dir
+        return temp_dir
 
     def _human_default_output_for_input(self, input_text: str) -> Optional[str]:
         text = input_text.strip()
@@ -2922,6 +5094,606 @@ class PreviewApp:
         self._set_text_widget(self.msxml_log, "")
         self._update_msxml_cut_state()
         self._update_msxml_format_state()
+
+    def _build_dualfisheye_tab(self, parent: tk.Widget) -> None:
+        container = tk.Frame(parent)
+        container.pack(fill="both", expand=True)
+
+        scroll_wrap = tk.Frame(container)
+        scroll_wrap.pack(fill="both", expand=True)
+        scroll_canvas = tk.Canvas(scroll_wrap, highlightthickness=0)
+        scroll_bar = tk.Scrollbar(
+            scroll_wrap,
+            orient=tk.VERTICAL,
+            command=scroll_canvas.yview,
+        )
+        scroll_canvas.configure(yscrollcommand=scroll_bar.set)
+        scroll_bar.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_canvas.pack(side=tk.LEFT, fill="both", expand=True)
+        content = tk.Frame(scroll_canvas)
+        content_window = scroll_canvas.create_window(
+            (0, 0),
+            window=content,
+            anchor="nw",
+        )
+
+        def _update_dualfisheye_scrollregion(_event: tk.Event) -> None:
+            scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+
+        def _resize_dualfisheye_scroll_content(event: tk.Event) -> None:
+            scroll_canvas.itemconfigure(content_window, width=event.width)
+
+        content.bind("<Configure>", _update_dualfisheye_scrollregion)
+        scroll_canvas.bind("<Configure>", _resize_dualfisheye_scroll_content)
+
+        params = tk.LabelFrame(content, text="Parameters")
+        params.pack(fill="x", padx=8, pady=(8, 8))
+
+        default_xml = (
+            self.cli_tools_dir / "templates" / "Osmo360-Fisheye-Distortion.xml"
+        )
+        default_lut_rel = (
+            "cli_tools/templates/DJI Osmo 360 D-Log M to Rec.709 V1.cube"
+        )
+        default_lut = str(
+            (self.cli_tools_dir.parent / default_lut_rel).resolve()
+        )
+        default_workers = str(max(1, os.cpu_count() or 1))
+        self.dualfisheye_vars = {
+            "video": tk.StringVar(),
+            "pairs_output": tk.StringVar(),
+            "pair_input": tk.StringVar(),
+            "prefix": tk.StringVar(value="out"),
+            "camera_xml": tk.StringVar(value=str(default_xml)),
+            "fps": tk.StringVar(value="1"),
+            "ext": tk.StringVar(value="jpg"),
+            "start": tk.StringVar(),
+            "end": tk.StringVar(),
+            "keep_rec709": tk.BooleanVar(value=False),
+            "overwrite": tk.BooleanVar(value=False),
+            "use_input_lut": tk.BooleanVar(value=True),
+            "input_lut": tk.StringVar(value=default_lut),
+            "lut_output_color_space": tk.StringVar(value="sRGB"),
+            "save_fisheye_output": tk.BooleanVar(value=False),
+            "fisheye_output": tk.StringVar(),
+            "no_perspective": tk.BooleanVar(value=False),
+            "perspective_output": tk.StringVar(),
+            "perspective_ext": tk.StringVar(value="jpg"),
+            "perspective_size": tk.StringVar(value="1750"),
+            "perspective_focal_mm": tk.StringVar(value="14.0"),
+            "save_color_corrected_output": tk.BooleanVar(value=False),
+            "color_output": tk.StringVar(),
+            "workers": tk.StringVar(value=default_workers),
+            "memory_throttle_percent": tk.StringVar(value="80"),
+            "dry_run": tk.BooleanVar(value=False),
+        }
+
+        self.dualfisheye_vars["video"].trace_add(
+            "write", self._on_dualfisheye_video_changed
+        )
+        self.dualfisheye_vars["prefix"].trace_add(
+            "write", self._on_dualfisheye_prefix_changed
+        )
+        self.dualfisheye_vars["pair_input"].trace_add(
+            "write", self._on_dualfisheye_pair_input_changed
+        )
+        self.dualfisheye_vars["save_color_corrected_output"].trace_add(
+            "write", self._on_dualfisheye_output_toggle_changed
+        )
+        self.dualfisheye_vars["save_fisheye_output"].trace_add(
+            "write", self._on_dualfisheye_output_toggle_changed
+        )
+        self.dualfisheye_vars["no_perspective"].trace_add(
+            "write", self._on_dualfisheye_output_toggle_changed
+        )
+        for key in (
+            "pairs_output",
+            "fisheye_output",
+            "perspective_output",
+            "color_output",
+        ):
+            self.dualfisheye_vars[key].trace_add(
+                "write",
+                lambda *_args, output_key=key: self._on_dualfisheye_output_changed(
+                    output_key
+                ),
+            )
+
+        row = 0
+        extraction_frame = tk.LabelFrame(params, text="Stage 1: Pair Extraction")
+        extraction_frame.grid(
+            row=row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(4, 6),
+        )
+        extraction_frame.grid_columnconfigure(1, weight=1)
+
+        e_row = 0
+        tk.Label(
+            extraction_frame,
+            text="Experimental: Fisheye extraction (raw video input)",
+            anchor="w",
+            justify="left",
+        ).grid(
+            row=e_row,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            padx=4,
+            pady=(4, 2),
+        )
+
+        e_row += 1
+        tk.Label(extraction_frame, text="Input Raw Video").grid(
+            row=e_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            extraction_frame,
+            textvariable=self.dualfisheye_vars["video"],
+            width=52,
+        ).grid(row=e_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            extraction_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.dualfisheye_vars["video"],
+                title="Select raw dual-fisheye video",
+            ),
+        ).grid(row=e_row, column=2, padx=4, pady=4)
+
+        e_row += 1
+        tk.Label(extraction_frame, text="Output Pair Folder").grid(
+            row=e_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            extraction_frame,
+            textvariable=self.dualfisheye_vars["pairs_output"],
+            width=52,
+        ).grid(row=e_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            extraction_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["pairs_output"],
+                title="Select extracted pair folder",
+            ),
+        ).grid(row=e_row, column=2, padx=4, pady=4)
+
+        e_row += 1
+        fps_ext_frame = tk.Frame(extraction_frame)
+        fps_ext_frame.grid(
+            row=e_row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=4,
+        )
+        tk.Label(fps_ext_frame, text="FPS").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            fps_ext_frame,
+            textvariable=self.dualfisheye_vars["fps"],
+            width=10,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(fps_ext_frame, text="Extension").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Combobox(
+            fps_ext_frame,
+            textvariable=self.dualfisheye_vars["ext"],
+            values=("jpg", "png", "tif"),
+            state="readonly",
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(fps_ext_frame, text="Prefix").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            fps_ext_frame,
+            textvariable=self.dualfisheye_vars["prefix"],
+            width=14,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(fps_ext_frame, text="Start (s)").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        tk.Entry(
+            fps_ext_frame,
+            textvariable=self.dualfisheye_vars["start"],
+            width=10,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(fps_ext_frame, text="End (s)").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        tk.Entry(
+            fps_ext_frame,
+            textvariable=self.dualfisheye_vars["end"],
+            width=10,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            fps_ext_frame,
+            text="Convert Rec.709 to sRGB in extracted pairs",
+            variable=self.dualfisheye_vars["keep_rec709"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            fps_ext_frame,
+            text="Overwrite extracted pairs",
+            variable=self.dualfisheye_vars["overwrite"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        e_row += 1
+        extraction_actions = tk.Frame(extraction_frame)
+        extraction_actions.grid(
+            row=e_row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(0, 4),
+        )
+        self.dualfisheye_inspect_button = tk.Button(
+            extraction_actions,
+            text="Inspect video",
+            command=self._inspect_dualfisheye_video_metadata,
+            state="disabled",
+        )
+        self.dualfisheye_inspect_button.pack(side=tk.LEFT, padx=4, pady=4)
+        tk.Checkbutton(
+            extraction_actions,
+            text="Set FPS",
+            variable=self.dualfisheye_set_fps_var,
+        ).pack(side=tk.LEFT, padx=4, pady=4)
+        self.dualfisheye_extract_stop_button = tk.Button(
+            extraction_actions,
+            text="Stop Pair Extraction",
+            command=lambda: self._stop_cli_process("dualfisheye_extract"),
+        )
+        self.dualfisheye_extract_stop_button.pack(
+            side=tk.RIGHT, padx=4, pady=4
+        )
+        self.dualfisheye_extract_stop_button.configure(state="disabled")
+        self.dualfisheye_extract_run_button = tk.Button(
+            extraction_actions,
+            text="Run Fisheye Pair Extraction",
+            command=self._run_dualfisheye_extract_tool,
+        )
+        self.dualfisheye_extract_run_button.pack(
+            side=tk.RIGHT, padx=4, pady=4
+        )
+
+        row += 1
+        tk.Label(
+            params,
+            text="Stage 2: Go to FrameSelector and select images. (Not implemented yet)",
+            anchor="w",
+            justify="left",
+        ).grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 6))
+
+        row += 1
+        calibration_frame = tk.LabelFrame(
+            params,
+            text="Stage 3: Distortion Calibration / Perspective Output",
+        )
+        calibration_frame.grid(
+            row=row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(2, 4),
+        )
+        calibration_frame.grid_columnconfigure(1, weight=1)
+
+        c_row = 0
+        tk.Label(calibration_frame, text="Pair Folder").grid(
+            row=c_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_frame,
+            textvariable=self.dualfisheye_vars["pair_input"],
+            width=52,
+        ).grid(row=c_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["pair_input"],
+                title="Select pair input folder",
+            ),
+        ).grid(row=c_row, column=2, padx=4, pady=4)
+
+        c_row += 1
+        calibration_input_frame = tk.LabelFrame(
+            calibration_frame,
+            text="Calibration",
+        )
+        calibration_input_frame.grid(
+            row=c_row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(2, 4),
+        )
+        calibration_input_frame.grid_columnconfigure(1, weight=1)
+        tk.Label(
+            calibration_input_frame,
+            text="Fisheye Distortion XML",
+        ).grid(
+            row=0, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_input_frame,
+            textvariable=self.dualfisheye_vars["camera_xml"],
+            width=52,
+        ).grid(row=0, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_input_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.dualfisheye_vars["camera_xml"],
+                title="Select camera calibration XML",
+                filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=2, padx=4, pady=4)
+        tk.Label(calibration_input_frame, text="Input LUT").grid(
+            row=1, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_input_frame,
+            textvariable=self.dualfisheye_vars["input_lut"],
+            width=52,
+        ).grid(row=1, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_input_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.dualfisheye_vars["input_lut"],
+                title="Select input LUT",
+                filetypes=[("Cube LUT", "*.cube"), ("All files", "*.*")],
+            ),
+        ).grid(row=1, column=2, padx=4, pady=4)
+        tk.Label(
+            calibration_input_frame,
+            text="TODO: add Chromatic Aberration Correction here later.",
+            anchor="w",
+            justify="left",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        tk.Label(
+            calibration_input_frame,
+            text="TODO: add camera extrinsics matrix (XML) support later.",
+            anchor="w",
+            justify="left",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+
+        c_row += 1
+        options_frame = tk.LabelFrame(calibration_frame, text="Options")
+        options_frame.grid(
+            row=c_row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(2, 4),
+        )
+        options_frame.grid_columnconfigure(0, weight=1)
+        flags_row = tk.Frame(options_frame)
+        flags_row.grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        tk.Checkbutton(
+            flags_row,
+            text="Use Input LUT",
+            variable=self.dualfisheye_vars["use_input_lut"],
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
+        tk.Checkbutton(
+            flags_row,
+            text="Save Color Correct Only Output",
+            variable=self.dualfisheye_vars["save_color_corrected_output"],
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
+        tk.Checkbutton(
+            flags_row,
+            text="Save undistorted fisheye output",
+            variable=self.dualfisheye_vars["save_fisheye_output"],
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
+        tk.Checkbutton(
+            flags_row,
+            text="Disable perspective output",
+            variable=self.dualfisheye_vars["no_perspective"],
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
+        tk.Checkbutton(
+            flags_row,
+            text="Calibration dry run",
+            variable=self.dualfisheye_vars["dry_run"],
+        ).pack(side=tk.LEFT, padx=(0, 6), pady=0)
+
+        perspective_row = tk.Frame(options_frame)
+        perspective_row.grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        tk.Label(perspective_row, text="Output color space").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Combobox(
+            perspective_row,
+            textvariable=self.dualfisheye_vars["lut_output_color_space"],
+            values=("passthrough", "sRGB"),
+            state="readonly",
+            width=16,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(perspective_row, text="Ext").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Combobox(
+            perspective_row,
+            textvariable=self.dualfisheye_vars["perspective_ext"],
+            values=("jpg", "png", "tif"),
+            state="readonly",
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(perspective_row, text="Size").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        tk.Entry(
+            perspective_row,
+            textvariable=self.dualfisheye_vars["perspective_size"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(perspective_row, text="Focal mm").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        tk.Entry(
+            perspective_row,
+            textvariable=self.dualfisheye_vars["perspective_focal_mm"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        worker_row = tk.Frame(options_frame)
+        worker_row.grid(row=2, column=0, sticky="w", padx=4, pady=(0, 4))
+        tk.Label(worker_row, text="Workers").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        tk.Entry(
+            worker_row,
+            textvariable=self.dualfisheye_vars["workers"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(
+            worker_row,
+            text="Memory throttle %",
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            worker_row,
+            textvariable=self.dualfisheye_vars["memory_throttle_percent"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(
+            worker_row,
+            text="(default: 80)",
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        c_row += 1
+        output_frame = tk.LabelFrame(
+            calibration_frame,
+            text="Calibration Outputs",
+        )
+        output_frame.grid(
+            row=c_row,
+            column=0,
+            columnspan=3,
+            sticky="we",
+            padx=4,
+            pady=(2, 4),
+        )
+        output_frame.grid_columnconfigure(1, weight=1)
+
+        o_row = 0
+        tk.Label(output_frame, text="Perspective").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.dualfisheye_perspective_output_entry = tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_vars["perspective_output"],
+            width=52,
+        )
+        self.dualfisheye_perspective_output_entry.grid(
+            row=o_row, column=1, sticky="we", padx=4, pady=4
+        )
+        self.dualfisheye_perspective_output_button = tk.Button(
+            output_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["perspective_output"],
+                title="Select perspective output folder",
+            ),
+        )
+        self.dualfisheye_perspective_output_button.grid(
+            row=o_row, column=2, padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="Color corrected only").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.dualfisheye_color_output_entry = tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_vars["color_output"],
+            width=52,
+        )
+        self.dualfisheye_color_output_entry.grid(
+            row=o_row, column=1, sticky="we", padx=4, pady=4
+        )
+        self.dualfisheye_color_output_button = tk.Button(
+            output_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["color_output"],
+                title="Select color-corrected output folder",
+            ),
+        )
+        self.dualfisheye_color_output_button.grid(
+            row=o_row, column=2, padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="Undistorted fisheye").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        self.dualfisheye_fisheye_output_entry = tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_vars["fisheye_output"],
+            width=52,
+        )
+        self.dualfisheye_fisheye_output_entry.grid(
+            row=o_row, column=1, sticky="we", padx=4, pady=4
+        )
+        self.dualfisheye_fisheye_output_button = tk.Button(
+            output_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["fisheye_output"],
+                title="Select undistorted fisheye output folder",
+            ),
+        )
+        self.dualfisheye_fisheye_output_button.grid(
+            row=o_row, column=2, padx=4, pady=4
+        )
+
+        params.grid_columnconfigure(1, weight=1)
+
+        actions = tk.Frame(content)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        self.dualfisheye_calibration_stop_button = tk.Button(
+            actions,
+            text="Stop Calibration",
+            command=lambda: self._stop_cli_process("dualfisheye_calibration"),
+        )
+        self.dualfisheye_calibration_stop_button.pack(
+            side=tk.RIGHT, padx=4, pady=4
+        )
+        self.dualfisheye_calibration_stop_button.configure(state="disabled")
+        self.dualfisheye_calibration_run_button = tk.Button(
+            actions,
+            text="Run Distortion Calibration",
+            command=self._run_dualfisheye_calibration_tool,
+        )
+        self.dualfisheye_calibration_run_button.pack(
+            side=tk.RIGHT, padx=4, pady=4
+        )
+
+        log_frame = tk.LabelFrame(content, text="Log")
+        log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.dualfisheye_log = tk.Text(
+            log_frame,
+            wrap="word",
+            height=18,
+            cursor="arrow",
+        )
+        self.dualfisheye_log.pack(fill="both", expand=True, padx=6, pady=4)
+        self.dualfisheye_log.bind("<Key>", self._block_text_edit)
+        self.dualfisheye_log.bind(
+            "<Button-1>",
+            lambda event: self.dualfisheye_log.focus_set(),
+        )
+        self._set_text_widget(self.dualfisheye_log, "")
+        self._update_dualfisheye_default_paths(force=False)
+        self._update_dualfisheye_output_controls_state()
 
     def _build_ply_tab(self, parent: tk.Widget) -> None:
         container = tk.Frame(parent)
@@ -3779,6 +6551,8 @@ class PreviewApp:
             return
         else:
             self._queued_cli_commands.pop(key, None)
+        if key == "human":
+            self._cleanup_human_manual_mask_temp_dir()
         if key == "selector":
             duration_message = None
             if start_time is not None:
@@ -3883,57 +6657,40 @@ class PreviewApp:
         self.append_log_line("[EXEC] Stop requested...")
 
     def _run_human_mask_tool(self) -> None:
-        if not self.human_vars:
+        settings = self._collect_human_mask_settings()
+        if settings is None:
             return
-        input_dir = self.human_vars["input"].get().strip()
-        if not input_dir:
-            messagebox.showerror(
-                "gs360_SegmentationMaskTool",
-                "Input folder is required.",
-            )
-            return
-        input_path = Path(input_dir).expanduser()
-        if not input_path.exists() or not input_path.is_dir():
-            messagebox.showerror(
-                "gs360_SegmentationMaskTool",
-                f"Input folder not found:\n{input_dir}",
-            )
-            return
+        manual_override_dir = self._prepare_human_manual_mask_override_dir()
+        self._clear_human_preview_cache(clear_display=True)
 
         cmd: List[str] = [
             sys.executable,
             str(self.cli_tools_dir / "gs360_SegmentationMaskTool.py"),
             "-i",
-            str(input_path),
+            str(settings["input_path"]),
         ]
 
-        output_dir = self.human_vars["output"].get().strip()
+        output_dir = settings["output_dir"]
         if output_dir:
             cmd.extend(["-o", output_dir])
 
-        mode_value = self.human_vars["mode"].get().strip()
-        if mode_value and mode_value in HUMAN_MODE_CHOICES:
-            cmd.extend(["--mode", mode_value])
-
-        selected_targets: List[str] = []
-        for target_name in HUMAN_TARGET_CHOICES:
-            key = f"target_{target_name}"
-            if bool(self.human_vars[key].get()):
-                selected_targets.append(target_name)
-
-        if not selected_targets:
-            messagebox.showerror(
-                "gs360_SegmentationMaskTool",
-                "Select at least one target (Person, Bicycle, Car, Animal).",
-            )
-            return
-        for target_name in selected_targets:
+        cmd.extend(["--mode", settings["mode"]])
+        for target_name in settings["targets"]:
             cmd.extend(["--target", target_name])
 
-        if bool(self.human_vars["cpu"].get()):
+        if settings["cpu"]:
             cmd.append("--cpu")
-        if bool(self.human_vars["include_shadow"].get()):
+        if settings["include_shadow"]:
             cmd.append("--include_shadow")
+        if manual_override_dir is not None:
+            cmd.extend(["--manual-mask-dir", str(manual_override_dir)])
+
+        cmd.extend(["--mask-expand-mode", settings["expand_mode"]])
+        if settings["expand_mode"] == "pixels":
+            cmd.extend(["--mask-expand-pixels", str(settings["expand_pixels"])])
+        else:
+            cmd.extend(["--mask-expand-percent", str(settings["expand_percent"])])
+        cmd.extend(["--edge-fuse-pixels", str(settings["edge_fuse_pixels"])])
 
         self._run_cli_command(
             cmd,
@@ -4157,122 +6914,9 @@ class PreviewApp:
         if bool(self.video_vars["overwrite"].get()):
             base_cmd.append("--overwrite")
 
-        fisheye_enabled = bool(self.video_vars["fisheye_experimental"].get())
-        dual_perspective_enabled = fisheye_enabled and bool(
-            self.video_vars["fisheye_perspective"].get()
-        )
-        dual_focal_value: Optional[float] = None
-        dual_fov_value: Optional[float] = None
-        dual_size_value: Optional[int] = None
-        if dual_perspective_enabled:
-            fov_text = self.video_vars["fisheye_input_fov"].get().strip()
-            if not fov_text:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Enter an input FOV (degrees) for the dual fisheye perspective option.",
-                )
-                return
-            try:
-                dual_fov_value = float(fov_text)
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Input FOV must be numeric (degrees).",
-                )
-                return
-            if dual_fov_value <= 0.0:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Input FOV must be greater than zero.",
-                )
-                return
-            focal_text = self.video_vars["fisheye_persp_focal"].get().strip()
-            if not focal_text:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Enter an output focal length (mm, approximate) for the dual fisheye perspective option.",
-                )
-                return
-            try:
-                dual_focal_value = float(focal_text)
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Output focal must be numeric (mm, approximate value).",
-                )
-                return
-            if dual_focal_value <= 0.0:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Output focal must be greater than zero.",
-                )
-                return
-            size_text = self.video_vars["fisheye_persp_size"].get().strip()
-            if not size_text:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Enter an output size (pixels) for the dual fisheye perspective option.",
-                )
-                return
-            try:
-                dual_size_value = int(size_text)
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Output size must be an integer (pixels).",
-                )
-                return
-            if dual_size_value <= 0:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Output size must be greater than zero.",
-                )
-                return
-            projection_value = self.video_vars["fisheye_projection"].get().strip().lower()
-            if projection_value not in {"equidistant", "equisolid"}:
-                messagebox.showerror(
-                    "gs360_Video2Frames",
-                    "Projection must be either 'equidistant' or 'equisolid'.",
-                )
-                return
-            base_cmd.extend(["--fisheye-perspective"])
-            base_cmd.extend(["--fisheye-input-fov", str(dual_fov_value)])
-            base_cmd.extend(["--fisheye-focal-mm", str(dual_focal_value)])
-            base_cmd.extend(["--fisheye-size", str(dual_size_value)])
-            base_cmd.extend(["--fisheye-projection", projection_value])
-
         ffmpeg_path = self.ffmpeg_path_var.get().strip()
         if ffmpeg_path:
             base_cmd.extend(["--ffmpeg", ffmpeg_path])
-
-        if fisheye_enabled:
-            cmd_primary = list(base_cmd)
-            cmd_secondary = list(base_cmd)
-            cmd_primary.extend(
-                ["--map-stream", "0:v:0", "--name-suffix", "_X"]
-            )
-            cmd_secondary.extend(
-                ["--map-stream", "0:v:1", "--name-suffix", "_Y"]
-            )
-            self._queued_cli_commands.pop("video", None)
-            self._queued_cli_commands["video"] = [
-                (
-                    cmd_secondary,
-                    self.cli_tools_dir,
-                    False,
-                    "[next] Experimental dual fisheye (map 0:v:1)" if dual_perspective_enabled else "[next] Experimental fisheye (map 0:v:1)",
-                ),
-            ]
-            self._run_cli_command(
-                cmd_primary,
-                self.video_log,
-                self.video_run_button,
-                process_key="video",
-                stop_button=self.video_stop_button,
-                cwd=self.cli_tools_dir,
-                clear_log=True,
-            )
-            return
 
         self._run_cli_command(
             base_cmd,
@@ -4281,6 +6925,354 @@ class PreviewApp:
             process_key="video",
             stop_button=self.video_stop_button,
             cwd=self.cli_tools_dir,
+        )
+
+    def _run_dualfisheye_extract_tool(self) -> None:
+        if not self.dualfisheye_vars:
+            return
+
+        video_path = self.dualfisheye_vars["video"].get().strip()
+        if not video_path:
+            messagebox.showerror(
+                "DualFisheyePipeline", "Input raw video is required."
+            )
+            return
+        video_file = Path(video_path).expanduser()
+        if not video_file.exists():
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                f"Input raw video not found:\n{video_path}",
+            )
+            return
+
+        pairs_output = self.dualfisheye_vars["pairs_output"].get().strip()
+        if not pairs_output:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Extracted pair folder is required.",
+            )
+            return
+
+        fps_value = self.dualfisheye_vars["fps"].get().strip()
+        try:
+            fps_float = float(fps_value)
+            if fps_float <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror(
+                "DualFisheyePipeline", "FPS must be a positive number."
+            )
+            return
+        fps_formatted = self._format_fps_for_output(fps_value) or f"{fps_float}"
+
+        ext_value = self.dualfisheye_vars["ext"].get().strip() or "jpg"
+        prefix_text = self.dualfisheye_vars["prefix"].get().strip()
+        if not prefix_text:
+            prefix_text = re.sub(r"\s+", "_", video_file.stem) or "dualfisheye"
+
+        base_cmd: List[str] = [
+            sys.executable,
+            str(self.cli_tools_dir / "gs360_Video2Frames.py"),
+            "-i",
+            video_path,
+            "-f",
+            fps_formatted,
+            "-o",
+            pairs_output,
+            "--ext",
+            ext_value,
+            "--prefix",
+            prefix_text,
+        ]
+
+        start_value = self.dualfisheye_vars["start"].get().strip()
+        if start_value:
+            try:
+                float(start_value)
+            except ValueError:
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    "Start time must be numeric.",
+                )
+                return
+            base_cmd.extend(["--start", start_value])
+
+        end_value = self.dualfisheye_vars["end"].get().strip()
+        if end_value:
+            try:
+                float(end_value)
+            except ValueError:
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    "End time must be numeric.",
+                )
+                return
+            base_cmd.extend(["--end", end_value])
+
+        if not bool(self.dualfisheye_vars["keep_rec709"].get()):
+            base_cmd.append("--keep-rec709")
+        if bool(self.dualfisheye_vars["overwrite"].get()):
+            base_cmd.append("--overwrite")
+
+        ffmpeg_path = self.ffmpeg_path_var.get().strip()
+        if ffmpeg_path:
+            base_cmd.extend(["--ffmpeg", ffmpeg_path])
+
+        extract_y_cmd = list(base_cmd)
+        extract_y_cmd.extend(["--map-stream", "0:v:0", "--name-suffix", "_Y"])
+        extract_x_cmd = list(base_cmd)
+        extract_x_cmd.extend(["--map-stream", "0:v:1", "--name-suffix", "_X"])
+
+        self._set_text_widget(self.dualfisheye_log, "")
+        self._append_text_widget(
+            self.dualfisheye_log,
+            "[INFO] Stage 1 extraction started: raw video -> fisheye pair folder",
+        )
+        self._append_text_widget(
+            self.dualfisheye_log,
+            "[INFO] Queue order: lens Y (0:v:0) then lens X (0:v:1)",
+        )
+        self._queued_cli_commands.pop("dualfisheye_extract", None)
+        self._queued_cli_commands["dualfisheye_extract"] = [
+            (
+                extract_x_cmd,
+                self.cli_tools_dir,
+                False,
+                "[next] Extract raw lens X frames (map 0:v:1)",
+            ),
+        ]
+        self._run_cli_command(
+            extract_y_cmd,
+            self.dualfisheye_log,
+            self.dualfisheye_extract_run_button,
+            process_key="dualfisheye_extract",
+            stop_button=self.dualfisheye_extract_stop_button,
+            cwd=self.cli_tools_dir,
+            clear_log=False,
+        )
+
+    def _run_dualfisheye_calibration_tool(self) -> None:
+        if not self.dualfisheye_vars:
+            return
+
+        dry_run = bool(self.dualfisheye_vars["dry_run"].get())
+        camera_xml = self.dualfisheye_vars["camera_xml"].get().strip()
+        if not camera_xml:
+            messagebox.showerror(
+                "DualFisheyePipeline", "Calibration XML is required."
+            )
+            return
+        camera_xml_path = Path(camera_xml).expanduser()
+        if not camera_xml_path.exists():
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                f"Calibration XML not found:\n{camera_xml}",
+            )
+            return
+
+        pairs_output = self.dualfisheye_vars["pair_input"].get().strip()
+        if not pairs_output:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Pair folder is required.",
+            )
+            return
+        pairs_dir = Path(pairs_output).expanduser()
+        if not pairs_dir.exists():
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                f"Pair folder not found:\n{pairs_output}",
+            )
+            return
+
+        no_perspective = bool(self.dualfisheye_vars["no_perspective"].get())
+        save_fisheye = bool(self.dualfisheye_vars["save_fisheye_output"].get())
+        save_color = bool(
+            self.dualfisheye_vars["save_color_corrected_output"].get()
+        )
+        if no_perspective and not save_fisheye and not save_color:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                (
+                    "Enable at least one output type when perspective "
+                    "output is disabled."
+                ),
+            )
+            return
+
+        calibration_cmd: List[str] = [
+            sys.executable,
+            str(
+                self.cli_tools_dir
+                / "gs360_DualFisheyeDistortionCalibration.py"
+            ),
+            "-i",
+            pairs_output,
+            "-x",
+            camera_xml,
+        ]
+
+        fisheye_output = self.dualfisheye_vars["fisheye_output"].get().strip()
+        if save_fisheye and fisheye_output:
+            calibration_cmd.extend(["-o", fisheye_output])
+
+        use_input_lut = bool(self.dualfisheye_vars["use_input_lut"].get())
+        input_lut = self.dualfisheye_vars["input_lut"].get().strip()
+        if use_input_lut and input_lut:
+            input_lut_path = Path(input_lut).expanduser()
+            if not input_lut_path.is_absolute():
+                input_lut_path = (self.cli_tools_dir.parent / input_lut).resolve()
+            if not input_lut_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    f"Input LUT not found:\n{input_lut}",
+                )
+                return
+            calibration_cmd.extend(["--input-lut", str(input_lut_path)])
+
+        lut_output_color_space = (
+            self.dualfisheye_vars["lut_output_color_space"].get().strip()
+            or "sRGB"
+        )
+        calibration_cmd.extend(
+            ["--lut-output-color-space", lut_output_color_space.lower()]
+        )
+
+        if no_perspective:
+            calibration_cmd.append("--no-perspective")
+        else:
+            perspective_output = self.dualfisheye_vars[
+                "perspective_output"
+            ].get().strip()
+            if perspective_output:
+                calibration_cmd.extend(
+                    ["--perspective-output-dir", perspective_output]
+                )
+            perspective_ext = (
+                self.dualfisheye_vars["perspective_ext"].get().strip() or "jpg"
+            )
+            calibration_cmd.extend(["--perspective-ext", perspective_ext])
+
+            perspective_size = self.dualfisheye_vars[
+                "perspective_size"
+            ].get().strip()
+            if perspective_size:
+                try:
+                    int(perspective_size)
+                except ValueError:
+                    messagebox.showerror(
+                        "DualFisheyePipeline",
+                        "Perspective size must be an integer.",
+                    )
+                    return
+                calibration_cmd.extend(
+                    ["--perspective-size", perspective_size]
+                )
+
+            perspective_focal_mm = self.dualfisheye_vars[
+                "perspective_focal_mm"
+            ].get().strip()
+            if perspective_focal_mm:
+                try:
+                    float(perspective_focal_mm)
+                except ValueError:
+                    messagebox.showerror(
+                        "DualFisheyePipeline",
+                        "Perspective focal mm must be numeric.",
+                    )
+                    return
+                calibration_cmd.extend(
+                    ["--perspective-focal-mm", perspective_focal_mm]
+                )
+
+        workers_value = self.dualfisheye_vars["workers"].get().strip()
+        if not workers_value:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Workers must be an integer >= 1.",
+            )
+            return
+        try:
+            workers_int = int(workers_value)
+        except ValueError:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Workers must be an integer >= 1.",
+            )
+            return
+        if workers_int < 1:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Workers must be an integer >= 1.",
+            )
+            return
+        calibration_cmd.extend(["--workers", str(workers_int)])
+
+        memory_throttle_value = self.dualfisheye_vars[
+            "memory_throttle_percent"
+        ].get().strip()
+        if not memory_throttle_value:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Memory throttle % must be > 0 and <= 100.",
+            )
+            return
+        try:
+            memory_throttle_float = float(memory_throttle_value)
+        except ValueError:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Memory throttle % must be > 0 and <= 100.",
+            )
+            return
+        if memory_throttle_float <= 0.0 or memory_throttle_float > 100.0:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "Memory throttle % must be > 0 and <= 100.",
+            )
+            return
+        calibration_cmd.extend(
+            [
+                "--memory-throttle-percent",
+                str(memory_throttle_float),
+            ]
+        )
+
+        if save_fisheye:
+            calibration_cmd.append("--save-fisheye-output")
+
+        if save_color:
+            calibration_cmd.append("--save-color-corrected-output")
+            color_output = self.dualfisheye_vars["color_output"].get().strip()
+            if color_output:
+                calibration_cmd.extend(
+                    ["--color-corrected-output-dir", color_output]
+                )
+
+        if dry_run:
+            calibration_cmd.append("--dry-run")
+
+        self._set_text_widget(self.dualfisheye_log, "")
+        self._append_text_widget(
+            self.dualfisheye_log,
+            "[INFO] Stage 3 calibration started: pair folder -> outputs",
+        )
+        self._append_text_widget(
+            self.dualfisheye_log,
+            "[INFO] Pair-worker mode: {} workers, memory throttle {}%".format(
+                workers_int,
+                memory_throttle_float,
+            ),
+        )
+        self._queued_cli_commands.pop("dualfisheye_calibration", None)
+        self._run_cli_command(
+            calibration_cmd,
+            self.dualfisheye_log,
+            self.dualfisheye_calibration_run_button,
+            process_key="dualfisheye_calibration",
+            stop_button=self.dualfisheye_calibration_stop_button,
+            cwd=self.cli_tools_dir,
+            clear_log=False,
         )
 
     def _run_frame_selector(self) -> None:
