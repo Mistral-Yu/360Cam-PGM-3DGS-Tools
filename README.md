@@ -50,7 +50,7 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
 - `360PerspCut` tab: Convert panoramas into perspective views.
 - `SegmentationMaskTool` tab: Use SegmentationMaskTool to preview and refine masks for unwanted subjects or rig elements before reconstruction to reduce ghosts and cleanup artifacts.
 - Use exported views to align in your photogrammetry software (RealityScan, Metashape, etc.) and export the PLY point cloud plus camera metadata.
-- `PointCloudOptimizer` tab: Downsample/merge the PLY or Colmap PointCloud3D for your 3DGS tool (PostShot, gsplat, etc.) with PointCloudOptimizer. Delete sky point clouds generated with photogrammetry software, add Sky point clouds.
+- `PointCloudOptimizer` tab: Optimize initial point cloud, Downsample/merge the PLY or Colmap PointCloud3D for your 3DGS tool (PostShot, gsplat, etc.) . Delete sky point clouds generated with photogrammetry software, add clean Sky point clouds.
 - `MS360xmlToPerspCams` tab: Experimental tool for convert Metashape spherical camera XML into perspective camera parameters. Colmap, Metashape xml, transform.json, RealityScan xmp.
 - `DualFisheyePipeline` tab: Experimental tool for correcting dual-fisheye distortion from Metashape XML calibration and exporting perspective views.
 
