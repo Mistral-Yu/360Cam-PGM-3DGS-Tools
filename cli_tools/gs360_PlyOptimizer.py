@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Utilities for optimizing PGM PLY point clouds for 3DGS workflows.
+"""Utilities for optimizing point clouds for 3DGS workflows.
 
-The module loads XYZ/RGB data, can downsample voxels, append extra clouds,
-and writes the result as a binary little-endian PLY file.
+The module loads XYZ/RGB data from either a PLY file or a COLMAP text-model
+folder, can downsample voxels, append extra clouds, and writes the result
+back in the same format as the input source.
 """
 
 
@@ -12,9 +13,10 @@ import argparse
 import heapq
 import math
 import os
+import pathlib
 from dataclasses import dataclass
 from itertools import count
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from plyfile import PlyData, PlyElement
@@ -53,6 +55,30 @@ class PointCloudStats:
     xyz_max: np.ndarray
     extent: np.ndarray
     volume: float
+
+
+@dataclass
+class ColmapTextModel:
+    """COLMAP text-model data required for point filtering and export."""
+
+    source_dir: pathlib.Path
+    cameras_text: str
+    image_header: List[str]
+    images: List[Dict[str, object]]
+    points: Dict[int, Dict[str, object]]
+    point_order: List[int]
+
+
+@dataclass
+class LoadedPointCloud:
+    """Normalized point-cloud input representation."""
+
+    input_kind: str
+    source_path: pathlib.Path
+    xyz: np.ndarray
+    rgb: np.ndarray
+    point_ids: Optional[np.ndarray] = None
+    colmap_model: Optional[ColmapTextModel] = None
 
 
 def compute_point_cloud_stats(xyz: np.ndarray) -> PointCloudStats:
@@ -159,7 +185,10 @@ def _rotation_matrix_from_axis(axis: np.ndarray, angle: float) -> np.ndarray:
     )
 
 
-def _rotation_matrix_from_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+def _rotation_matrix_from_vectors(
+    source: np.ndarray,
+    target: np.ndarray,
+) -> np.ndarray:
     src = source / max(np.linalg.norm(source), 1e-6)
     tgt = target / max(np.linalg.norm(target), 1e-6)
     c = float(np.dot(src, tgt))
@@ -231,7 +260,7 @@ def _parse_sky_color(text: Optional[str]) -> np.ndarray:
             hexval = "".join(ch * 2 for ch in hexval)
         if len(hexval) != 6:
             raise ValueError("hex color must be #RGB or #RRGGBB")
-        comps = [int(hexval[i : i + 2], 16) for i in (0, 2, 4)]
+        comps = [int(hexval[i:i + 2], 16) for i in (0, 2, 4)]
     else:
         raise ValueError("use #RRGGBB or R,G,B format")
     clamped = [max(0, min(255, int(c))) for c in comps]
@@ -352,6 +381,300 @@ def save_ply_binary_little(
     PlyData([el], text=False, byte_order="<").write(path)
 
 
+def _is_colmap_text_model_dir(path: pathlib.Path) -> bool:
+    return (
+        path.is_dir()
+        and (path / "cameras.txt").is_file()
+        and (path / "images.txt").is_file()
+        and (path / "points3D.txt").is_file()
+    )
+
+
+def _parse_colmap_images_txt(
+    path: pathlib.Path,
+) -> Tuple[List[str], List[Dict[str, object]]]:
+    header: List[str] = []
+    images: List[Dict[str, object]] = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            header.append(raw)
+            idx += 1
+            continue
+        parts = line.split()
+        if len(parts) < 10:
+            raise ValueError(f"Invalid COLMAP image line: {raw}")
+        obs_line = lines[idx + 1] if (idx + 1) < len(lines) else ""
+        obs_parts = obs_line.split()
+        observations = []
+        obs_limit = len(obs_parts) - (len(obs_parts) % 3)
+        for obs_idx in range(0, obs_limit, 3):
+            observations.append(
+                (
+                    float(obs_parts[obs_idx]),
+                    float(obs_parts[obs_idx + 1]),
+                    int(obs_parts[obs_idx + 2]),
+                )
+            )
+        images.append(
+            {
+                "image_id": int(parts[0]),
+                "pose_fields": parts[1:9],
+                "name": " ".join(parts[9:]),
+                "observations": observations,
+            }
+        )
+        idx += 2
+    return header, images
+
+
+def _parse_colmap_points3d_txt(
+    path: pathlib.Path,
+) -> Tuple[List[str], Dict[int, Dict[str, object]], List[int]]:
+    header: List[str] = []
+    points: Dict[int, Dict[str, object]] = {}
+    order: List[int] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                header.append(raw.rstrip("\n"))
+                continue
+            parts = line.split()
+            if len(parts) < 8:
+                raise ValueError(f"Invalid COLMAP point line: {raw.rstrip()}")
+            point_id = int(parts[0])
+            track = []
+            track_parts = parts[8:]
+            track_limit = len(track_parts) - (len(track_parts) % 2)
+            for track_idx in range(0, track_limit, 2):
+                track.append(
+                    (
+                        int(track_parts[track_idx]),
+                        int(track_parts[track_idx + 1]),
+                    )
+                )
+            points[point_id] = {
+                "id": point_id,
+                "xyz": np.array(
+                    [float(parts[1]), float(parts[2]), float(parts[3])],
+                    dtype=np.float32,
+                ),
+                # COLMAP text colors are treated as sRGB 8-bit values.
+                "rgb": np.array(
+                    [int(parts[4]), int(parts[5]), int(parts[6])],
+                    dtype=np.uint8,
+                ),
+                "error": float(parts[7]),
+                "track": track,
+            }
+            order.append(point_id)
+    return header, points, order
+
+
+def load_colmap_xyz_rgb(path: pathlib.Path) -> LoadedPointCloud:
+    """Load XYZ/RGB data from a COLMAP text-model directory."""
+
+    if not _is_colmap_text_model_dir(path):
+        raise ValueError(
+            "COLMAP input requires cameras.txt, images.txt, and points3D.txt"
+        )
+
+    cameras_path = path / "cameras.txt"
+    images_path = path / "images.txt"
+    points_path = path / "points3D.txt"
+
+    image_header, images = _parse_colmap_images_txt(images_path)
+    points, order = _parse_colmap_points3d_txt(points_path)[1:]
+
+    if order:
+        xyz = np.stack([points[pid]["xyz"] for pid in order], axis=0).astype(
+            np.float32,
+            copy=False,
+        )
+        rgb = np.stack([points[pid]["rgb"] for pid in order], axis=0).astype(
+            np.uint8,
+            copy=False,
+        )
+        point_ids = np.asarray(order, dtype=np.int64)
+    else:
+        xyz = np.zeros((0, 3), dtype=np.float32)
+        rgb = np.zeros((0, 3), dtype=np.uint8)
+        point_ids = np.zeros((0,), dtype=np.int64)
+
+    model = ColmapTextModel(
+        source_dir=path,
+        cameras_text=cameras_path.read_text(encoding="utf-8"),
+        image_header=image_header,
+        images=images,
+        points=points,
+        point_order=order,
+    )
+    return LoadedPointCloud(
+        input_kind="colmap",
+        source_path=path,
+        xyz=xyz,
+        rgb=rgb,
+        point_ids=point_ids,
+        colmap_model=model,
+    )
+
+
+def load_point_cloud_input(path_text: str) -> LoadedPointCloud:
+    """Load a point cloud from either a PLY file or a COLMAP folder."""
+
+    source_path = pathlib.Path(os.path.expanduser(path_text)).resolve()
+    if _is_colmap_text_model_dir(source_path):
+        return load_colmap_xyz_rgb(source_path)
+
+    xyz, rgb = load_ply_xyz_rgb(str(source_path))
+    return LoadedPointCloud(
+        input_kind="ply",
+        source_path=source_path,
+        xyz=xyz,
+        rgb=rgb,
+    )
+
+
+def save_colmap_text_model(
+    out_dir: pathlib.Path,
+    model: ColmapTextModel,
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    point_ids: np.ndarray,
+) -> None:
+    """Save a filtered point cloud back to a COLMAP text-model directory."""
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cameras_path = out_dir / "cameras.txt"
+    images_path = out_dir / "images.txt"
+    points_path = out_dir / "points3D.txt"
+
+    cameras_path.write_text(model.cameras_text, encoding="utf-8")
+
+    kept_original_ids: Set[int] = set()
+    new_points: List[Dict[str, object]] = []
+    next_point_id = max(model.point_order) + 1 if model.point_order else 0
+
+    for row_idx in range(int(xyz.shape[0])):
+        source_id = int(point_ids[row_idx]) if row_idx < len(point_ids) else -1
+        if source_id >= 0:
+            kept_original_ids.add(source_id)
+            continue
+        new_points.append(
+            {
+                "id": next_point_id,
+                "xyz": np.asarray(xyz[row_idx], dtype=np.float32),
+                "rgb": np.asarray(rgb[row_idx], dtype=np.uint8),
+                "error": 0.0,
+                "track": [],
+            }
+        )
+        next_point_id += 1
+
+    filtered_images: List[Dict[str, object]] = []
+    total_observations = 0
+    for image in model.images:
+        observations = [
+            obs
+            for obs in image["observations"]
+            if int(obs[2]) < 0 or int(obs[2]) in kept_original_ids
+        ]
+        filtered_images.append(
+            {
+                "image_id": int(image["image_id"]),
+                "pose_fields": list(image["pose_fields"]),
+                "name": str(image["name"]),
+                "observations": observations,
+            }
+        )
+        total_observations += len(observations)
+
+    with images_path.open("w", encoding="utf-8") as handle:
+        handle.write("# Image list with two lines of data per image:\n")
+        handle.write(
+            "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n"
+        )
+        handle.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+        mean_obs = (
+            float(total_observations) / float(len(filtered_images))
+            if filtered_images
+            else 0.0
+        )
+        handle.write(
+            (
+                "# Number of images: {}, mean observations per image: "
+                "{:.6f}\n"
+            ).format(
+                len(filtered_images),
+                mean_obs,
+            )
+        )
+        for image in filtered_images:
+            pose_fields = " ".join(
+                str(field) for field in image["pose_fields"]
+            )
+            handle.write(
+                "{} {} {}\n".format(
+                    image["image_id"],
+                    pose_fields,
+                    image["name"],
+                )
+            )
+            obs_text = " ".join(
+                "{:.12g} {:.12g} {}".format(obs[0], obs[1], int(obs[2]))
+                for obs in image["observations"]
+            )
+            handle.write(obs_text + "\n")
+
+    kept_points: List[Dict[str, object]] = [
+        model.points[point_id]
+        for point_id in model.point_order
+        if point_id in kept_original_ids
+    ]
+    kept_points.extend(new_points)
+    track_total = sum(len(point["track"]) for point in kept_points)
+    mean_track = (
+        float(track_total) / float(len(kept_points)) if kept_points else 0.0
+    )
+
+    with points_path.open("w", encoding="utf-8") as handle:
+        handle.write("# 3D point list with one line of data per point:\n")
+        handle.write(
+            "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as "
+            "(IMAGE_ID, POINT2D_IDX)\n"
+        )
+        handle.write(
+            "# Number of points: {}, mean track length: {:.6f}\n".format(
+                len(kept_points),
+                mean_track,
+            )
+        )
+        for point in kept_points:
+            xyz_value = np.asarray(point["xyz"], dtype=np.float32)
+            rgb_value = np.asarray(point["rgb"], dtype=np.uint8)
+            fields = [
+                str(int(point["id"])),
+                "{:.12g}".format(float(xyz_value[0])),
+                "{:.12g}".format(float(xyz_value[1])),
+                "{:.12g}".format(float(xyz_value[2])),
+                str(int(rgb_value[0])),
+                str(int(rgb_value[1])),
+                str(int(rgb_value[2])),
+                "{:.12g}".format(float(point["error"])),
+            ]
+            track = point["track"]
+            if track:
+                fields.extend(
+                    "{} {}".format(int(img_id), int(point2d_idx))
+                    for img_id, point2d_idx in track
+                )
+            handle.write(" ".join(fields) + "\n")
+
+
 # ------------------------------ Downsampling ------------------------------
 
 
@@ -385,6 +708,7 @@ def voxel_downsample_by_size(
     voxel: float,
     *,
     representative: str = "centroid",
+    return_indices: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Downsample points using a fixed voxel size.
 
@@ -402,9 +726,11 @@ def voxel_downsample_by_size(
         ValueError: If representative is not recognized.
     """
     if xyz.shape[0] == 0:
-        return xyz.astype(np.float32, copy=False), rgb.astype(
-            np.uint8, copy=False
-        )
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.zeros((0,), dtype=np.int64)
+        return out_xyz, out_rgb
 
     xyz_min = xyz.min(axis=0, keepdims=True)
     keys = _grid_keys(xyz, voxel, xyz_min)  # (N,3) int64
@@ -470,6 +796,8 @@ def voxel_downsample_by_size(
 
     out_xyz = xyz[pick_idx].astype(np.float32, copy=False)
     out_rgb = rgb[pick_idx].astype(np.uint8, copy=False)
+    if return_indices:
+        return out_xyz, out_rgb, pick_idx.astype(np.int64, copy=False)
     return out_xyz, out_rgb
 
 
@@ -501,6 +829,7 @@ def voxel_downsample_to_target(
     stats: Optional[PointCloudStats] = None,
     log_bounds: bool = True,
     representative: str = "centroid",
+    return_indices: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Downsample points to approach a target count.
 
@@ -526,9 +855,11 @@ def voxel_downsample_to_target(
 
     n = xyz.shape[0]
     if n == 0:
-        return xyz.astype(np.float32, copy=False), rgb.astype(
-            np.uint8, copy=False
-        )
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.zeros((0,), dtype=np.int64)
+        return out_xyz, out_rgb
 
     if stats is None or stats.count != n:
         stats = compute_point_cloud_stats(xyz)
@@ -543,9 +874,11 @@ def voxel_downsample_to_target(
             f"target={target_points} is out of range "
             "(output = input)"
         )
-        return xyz.astype(np.float32, copy=False), rgb.astype(
-            np.uint8, copy=False
-        )
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.arange(n, dtype=np.int64)
+        return out_xyz, out_rgb
 
     xyz_min = stats.xyz_min
     vol = stats.volume
@@ -640,10 +973,18 @@ def voxel_downsample_to_target(
         f"(best_diff={best_diff:,})"
     )
 
-    out_xyz, out_rgb = voxel_downsample_by_size(
-        xyz, rgb, best_voxel, representative=representative
+    result = voxel_downsample_by_size(
+        xyz,
+        rgb,
+        best_voxel,
+        representative=representative,
+        return_indices=return_indices,
     )
+    out_xyz = result[0]
+    out_rgb = result[1]
     print(f"[final] voxel={best_voxel:.6g}  out_points={out_xyz.shape[0]:,}")
+    if return_indices:
+        return out_xyz, out_rgb, result[2]
     return out_xyz, out_rgb
 
 
@@ -654,6 +995,7 @@ def spatial_hash_downsample_one_pass(
     voxel_size: Optional[float] = None,
     stats: Optional[PointCloudStats] = None,
     representative: str = "centroid",
+    return_indices: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Approximate downsampling with a single spatial-hash voxel pass.
 
@@ -674,9 +1016,11 @@ def spatial_hash_downsample_one_pass(
     """
     n = int(xyz.shape[0])
     if n == 0:
-        return xyz.astype(np.float32, copy=False), rgb.astype(
-            np.uint8, copy=False
-        )
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.zeros((0,), dtype=np.int64)
+        return out_xyz, out_rgb
 
     voxel: Optional[float] = None
     if voxel_size is not None and voxel_size > 0:
@@ -689,9 +1033,11 @@ def spatial_hash_downsample_one_pass(
                 "[spatial-hash] skip: "
                 f"target={target:,} is not smaller than input={n:,}"
             )
-            return xyz.astype(np.float32, copy=False), rgb.astype(
-                np.uint8, copy=False
-            )
+            out_xyz = xyz.astype(np.float32, copy=False)
+            out_rgb = rgb.astype(np.uint8, copy=False)
+            if return_indices:
+                return out_xyz, out_rgb, np.arange(n, dtype=np.int64)
+            return out_xyz, out_rgb
         if stats is None or stats.count != n:
             stats = compute_point_cloud_stats(xyz)
         vol = stats.volume
@@ -759,17 +1105,27 @@ def spatial_hash_downsample_one_pass(
         )
     else:
         print("[spatial-hash] skip (no voxel-size/target-points)")
-        return xyz.astype(np.float32, copy=False), rgb.astype(
-            np.uint8, copy=False
-        )
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.arange(n, dtype=np.int64)
+        return out_xyz, out_rgb
 
-    out_xyz, out_rgb = voxel_downsample_by_size(
-        xyz, rgb, voxel, representative=representative
+    result = voxel_downsample_by_size(
+        xyz,
+        rgb,
+        voxel,
+        representative=representative,
+        return_indices=return_indices,
     )
+    out_xyz = result[0]
+    out_rgb = result[1]
     print(
         f"[spatial-hash] voxel={voxel:.6g}  "
         f"out_points={out_xyz.shape[0]:,} (approx)"
     )
+    if return_indices:
+        return out_xyz, out_rgb, result[2]
     return out_xyz, out_rgb
 
 
@@ -782,6 +1138,7 @@ def adaptive_voxel_downsample(
     min_voxel_size: Optional[float] = None,
     representative: str = "centroid",
     max_depth: int = 12,
+    return_indices: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Adaptive octree-based voxel sampling that prefers dense regions.
 
@@ -804,7 +1161,11 @@ def adaptive_voxel_downsample(
 
     n = int(xyz.shape[0])
     if n == 0:
-        return xyz.astype(np.float32, copy=False), rgb.astype(np.uint8, copy=False)
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.zeros((0,), dtype=np.int64)
+        return out_xyz, out_rgb
 
     if target_points is None or target_points <= 0:
         target = n
@@ -812,7 +1173,11 @@ def adaptive_voxel_downsample(
         target = int(max(1, min(n, target_points)))
 
     if target >= n:
-        return xyz.astype(np.float32, copy=False), rgb.astype(np.uint8, copy=False)
+        out_xyz = xyz.astype(np.float32, copy=False)
+        out_rgb = rgb.astype(np.uint8, copy=False)
+        if return_indices:
+            return out_xyz, out_rgb, np.arange(n, dtype=np.int64)
+        return out_xyz, out_rgb
 
     xyz32 = xyz.astype(np.float32, copy=False)
     rgb8 = rgb.astype(np.uint8, copy=False)
@@ -825,7 +1190,11 @@ def adaptive_voxel_downsample(
     cube_size = float(np.max(extent))
     if cube_size <= 0.0:
         keep = np.arange(0, target, dtype=np.int64)
-        return xyz32[keep], rgb8[keep]
+        out_xyz = xyz32[keep]
+        out_rgb = rgb8[keep]
+        if return_indices:
+            return out_xyz, out_rgb, keep
+        return out_xyz, out_rgb
 
     pad = np.maximum((cube_size - extent) * 0.5, 0.0)
     cube_min = np.asarray(stats.xyz_min - pad, dtype=np.float32)
@@ -938,7 +1307,11 @@ def adaptive_voxel_downsample(
     leaves = [leaf for leaf in leaves if leaf.count > 0]
     if not leaves:
         idx = np.arange(0, min(n, desired), dtype=np.int64)
-        return xyz32[idx], rgb8[idx]
+        out_xyz = xyz32[idx]
+        out_rgb = rgb8[idx]
+        if return_indices:
+            return out_xyz, out_rgb, idx
+        return out_xyz, out_rgb
 
     leaves.sort(
         key=lambda node: (node.weight, node.count, -int(node.indices[0])),
@@ -978,17 +1351,25 @@ def adaptive_voxel_downsample(
 
     if not chosen:
         idx = np.arange(0, min(n, desired), dtype=np.int64)
-        return xyz32[idx], rgb8[idx]
+        out_xyz = xyz32[idx]
+        out_rgb = rgb8[idx]
+        if return_indices:
+            return out_xyz, out_rgb, idx
+        return out_xyz, out_rgb
 
     chosen_idx = np.asarray(chosen, dtype=np.int64)
-    return xyz32[chosen_idx], rgb8[chosen_idx]
+    out_xyz = xyz32[chosen_idx]
+    out_rgb = rgb8[chosen_idx]
+    if return_indices:
+        return out_xyz, out_rgb, chosen_idx
+    return out_xyz, out_rgb
 
 
 # ------------------------------ CLI ------------------------------
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Entry point for the gs360_PlyOptimizer CLI.
+    """Entry point for the PointCloudOptimizer CLI.
 
     Args:
         argv: Optional argument vector to parse instead of sys.argv.
@@ -997,10 +1378,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         Process exit code.
     """
     ap = argparse.ArgumentParser(
-        prog="gs360_PlyOptimizer",
+        prog="PointCloudOptimizer",
         description=(
-            "PGM to 3DGS PLY optimizer (XYZ+RGB load/save, "
-            "voxel downsampling, append)"
+            "PGM to 3DGS point-cloud optimizer "
+            "(PLY / COLMAP text model, downsampling, append)"
         ),
     )
     ap.add_argument(
@@ -1008,7 +1389,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--in",
         dest="input",
         required=True,
-        help="Input PLY file path",
+        help="Input PLY file path or COLMAP text-model folder path",
     )
     ap.add_argument(
         "-o",
@@ -1016,7 +1397,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         dest="output",
         default=None,
         help=(
-            "Output PLY (binary little-endian). "
+            "Output PLY file path or COLMAP output folder path. "
             "Omit to only display point cloud statistics."
         ),
     )
@@ -1063,7 +1444,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help=(
             "Enable adaptive voxel sampling (octree). "
-            "Requires target points/percent; keeps more points in dense areas. "
+            "Requires target points/percent; "
+            "keeps more points in dense areas. "
             "When --voxel-size is set it becomes the minimum leaf size."
         ),
     )
@@ -1073,7 +1455,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=1.0,
         metavar="POWER",
         help=(
-            "Weight exponent for adaptive sampling. Values >1 favour splitting "
+            "Weight exponent for adaptive sampling. "
+            "Values >1 favour splitting "
             "dense voxels more aggressively, 0 treats all voxels equally."
         ),
     )
@@ -1084,7 +1467,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=[],
         help=(
             "Additional PLY files to append after downsampling."
-            " Paths are resolved relative to the input file when not absolute."
+            " Paths are resolved relative to the input source "
+            "when not absolute."
             " May be specified multiple times."
         ),
     )
@@ -1114,7 +1498,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--sky-scale",
         type=float,
         default=100.0,
-        help="Radius of the generated sky hemisphere (same units as the PLY).",
+        help=(
+            "Radius of the generated sky hemisphere "
+            "(same units as the input point cloud)."
+        ),
     )
     ap.add_argument(
         "--sky-count",
@@ -1143,14 +1530,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ValueError as exc:
             ap.error(f"--sky-color {exc}")
 
-    base_path = os.path.expanduser(args.input)
-    if not os.path.isabs(base_path):
-        base_path = os.path.abspath(base_path)
-    base_dir = os.path.dirname(base_path) or "."
+    loaded = load_point_cloud_input(args.input)
+    base_path = str(loaded.source_path)
+    base_dir = (
+        str(loaded.source_path)
+        if loaded.source_path.is_dir()
+        else str(loaded.source_path.parent)
+    )
 
     # 1) Load
-    xyz, rgb = load_ply_xyz_rgb(base_path)
-    print(f"[load] base: {base_path}  points={xyz.shape[0]:,}")
+    xyz = loaded.xyz
+    rgb = loaded.rgb
+    point_ids = (
+        loaded.point_ids.astype(np.int64, copy=True)
+        if loaded.point_ids is not None
+        else None
+    )
+    print(
+        f"[load] kind={loaded.input_kind} base={base_path}  "
+        f"points={xyz.shape[0]:,}"
+    )
 
     stats = compute_point_cloud_stats(xyz)
 
@@ -1209,11 +1608,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         downsample_method = "adaptive"
 
     adaptive_min_voxel = (
-        args.voxel_size if args.voxel_size is not None and args.voxel_size > 0 else None
+        args.voxel_size
+        if args.voxel_size is not None and args.voxel_size > 0
+        else None
     )
     if downsample_method == "adaptive":
         adaptive_target = (
-            target_points if target_points is not None and target_points > 0 else stats.count
+            target_points
+            if target_points is not None and target_points > 0
+            else stats.count
         )
         if adaptive_target == stats.count:
             print(
@@ -1226,7 +1629,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 f"{adaptive_min_voxel:.6g}" if adaptive_min_voxel else "auto",
             )
         )
-        xyz, rgb = adaptive_voxel_downsample(
+        result = adaptive_voxel_downsample(
             xyz,
             rgb,
             adaptive_target,
@@ -1234,34 +1637,61 @@ def main(argv: Optional[List[str]] = None) -> int:
             stats=stats,
             min_voxel_size=adaptive_min_voxel,
             representative=args.keep_strategy,
+            return_indices=point_ids is not None,
         )
+        xyz = result[0]
+        rgb = result[1]
+        if point_ids is not None:
+            point_ids = point_ids[result[2]]
         print(
             f"[adaptive] target~{adaptive_target:,} -> {xyz.shape[0]:,} points"
         )
     elif downsample_method == "spatial-hash":
-        xyz, rgb = spatial_hash_downsample_one_pass(
+        result = spatial_hash_downsample_one_pass(
             xyz,
             rgb,
             target_points=target_points,
-            voxel_size=args.voxel_size if args.voxel_size and args.voxel_size > 0 else None,
+            voxel_size=(
+                args.voxel_size
+                if args.voxel_size and args.voxel_size > 0
+                else None
+            ),
             stats=stats,
             representative=args.keep_strategy,
+            return_indices=point_ids is not None,
         )
+        xyz = result[0]
+        rgb = result[1]
+        if point_ids is not None:
+            point_ids = point_ids[result[2]]
     elif args.voxel_size is not None and args.voxel_size > 0:
         print(f"[downsample] fixed voxel-size={args.voxel_size:.6g}")
-        xyz, rgb = voxel_downsample_by_size(
-            xyz, rgb, args.voxel_size, representative=args.keep_strategy
+        result = voxel_downsample_by_size(
+            xyz,
+            rgb,
+            args.voxel_size,
+            representative=args.keep_strategy,
+            return_indices=point_ids is not None,
         )
+        xyz = result[0]
+        rgb = result[1]
+        if point_ids is not None:
+            point_ids = point_ids[result[2]]
         print(f"[downsample] -> {xyz.shape[0]:,} points")
     elif target_points is not None and target_points > 0:
-        xyz, rgb = voxel_downsample_to_target(
+        result = voxel_downsample_to_target(
             xyz,
             rgb,
             target_points,
             stats=stats,
             log_bounds=False,
             representative=args.keep_strategy,
+            return_indices=point_ids is not None,
         )
+        xyz = result[0]
+        rgb = result[1]
+        if point_ids is not None:
+            point_ids = point_ids[result[2]]
         print(
             f"[downsample] target_points={target_points:,} -> "
             f"{xyz.shape[0]:,} points"
@@ -1279,6 +1709,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         ax, ac = load_ply_xyz_rgb(full_path)
         xyz = np.concatenate([xyz, ax], axis=0)
         rgb = np.concatenate([rgb, ac], axis=0)
+        if point_ids is not None:
+            appended_ids = np.full(ax.shape[0], -1, dtype=np.int64)
+            point_ids = np.concatenate([point_ids, appended_ids], axis=0)
         total_added += ax.shape[0]
         print(
             f"[append] {full_path} +{ax.shape[0]:,} -> total {xyz.shape[0]:,}"
@@ -1297,23 +1730,47 @@ def main(argv: Optional[List[str]] = None) -> int:
             axis_vec,
             float(args.sky_scale),
             int(args.sky_count),
-            sky_color if sky_color is not None else np.array([135, 206, 250], dtype=np.uint8),
+            (
+                sky_color
+                if sky_color is not None
+                else np.array([135, 206, 250], dtype=np.uint8)
+            ),
         )
         xyz = np.concatenate([xyz, sky_points], axis=0)
         rgb = np.concatenate([rgb, sky_colors], axis=0)
+        if point_ids is not None:
+            sky_ids = np.full(sky_points.shape[0], -1, dtype=np.int64)
+            point_ids = np.concatenate([point_ids, sky_ids], axis=0)
         print(
             f"[sky] axis={args.sky_axis} scale={args.sky_scale:.6g} "
             f"count={sky_points.shape[0]:,} -> total {xyz.shape[0]:,}"
         )
 
     # 4) Save
-    out_path = os.path.expanduser(args.output)
-    if not os.path.isabs(out_path):
-        out_path = os.path.abspath(out_path)
-    save_ply_binary_little(out_path, xyz, rgb)
-    print(
-        f"[save] {out_path}  points={xyz.shape[0]:,}  (binary little-endian)"
-    )
+    out_path = pathlib.Path(os.path.expanduser(args.output))
+    if not out_path.is_absolute():
+        out_path = out_path.resolve()
+
+    if loaded.input_kind == "colmap":
+        save_colmap_text_model(
+            out_path,
+            loaded.colmap_model,
+            xyz,
+            rgb,
+            point_ids
+            if point_ids is not None
+            else np.full(xyz.shape[0], -1, dtype=np.int64),
+        )
+        print(
+            f"[save] {out_path}  points={xyz.shape[0]:,}  "
+            "(COLMAP text model)"
+        )
+    else:
+        save_ply_binary_little(str(out_path), xyz, rgb)
+        print(
+            f"[save] {out_path}  points={xyz.shape[0]:,}  "
+            "(binary little-endian PLY)"
+        )
     return 0
 
 
