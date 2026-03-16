@@ -49,6 +49,7 @@ if str(CLI_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_TOOLS_DIR))
 
 cutter = importlib.import_module("gs360_360PerspCut")
+pointcloud_optimizer = importlib.import_module("gs360_PlyOptimizer")
 
 COLOR_CYCLE = [
     "#ff6b6b",
@@ -871,11 +872,13 @@ class PreviewApp:
         }
         self._last_ply_output_path: Optional[Path] = None
         self._ply_current_file_path: Optional[Path] = None
+        self._ply_source_kind = "ply"
+        self._ply_colmap_model = None
         self._ply_viewer_root: Optional[tk.Widget] = None
         self._ply_view_canvas: Optional[tk.Canvas] = None
         self._ply_canvas_image_id: Optional[int] = None
         self._ply_canvas_photo: Optional[ImageTk.PhotoImage] = None
-        self._ply_view_info_var = tk.StringVar(value="PLY viewer is idle")
+        self._ply_view_info_var = tk.StringVar(value="Point cloud viewer is idle")
         self._ply_view_points: Optional[np.ndarray] = None
         self._ply_view_points_centered: Optional[np.ndarray] = None
         self._ply_view_colors: Optional[np.ndarray] = None
@@ -921,9 +924,11 @@ class PreviewApp:
         self._ply_sky_save_path_var = tk.StringVar()
         self._ply_sky_points: Optional[np.ndarray] = None
         self._ply_sky_colors: Optional[np.ndarray] = None
+        self._ply_view_point_ids: Optional[np.ndarray] = None
         self._ply_view_rgb_mean: Optional[Tuple[float, float, float]] = None
         self._ply_loaded_points: Optional[np.ndarray] = None
         self._ply_loaded_colors: Optional[np.ndarray] = None
+        self._ply_loaded_point_ids: Optional[np.ndarray] = None
         self._ply_loaded_total_points = 0
         self._ply_loaded_sample_step = 1
         self._ply_is_interacting = False
@@ -1029,7 +1034,7 @@ class PreviewApp:
         self.notebook.add(selector_tab, text="FrameSelector")
         self.notebook.add(preview_tab, text="360PerspCut")
         self.notebook.add(human_tab, text="SegmentationMaskTool")
-        self.notebook.add(ply_tab, text="PlyOptimizer")
+        self.notebook.add(ply_tab, text="PointCloudOptimizer")
         self.notebook.add(msxml_tab, text="MS360xmlToPersCams")
         self.notebook.add(
             dualfisheye_tab,
@@ -5740,11 +5745,11 @@ class PreviewApp:
         }
 
         row = 0
-        tk.Label(params, text="Input PLY").grid(row=row, column=0, sticky="e", padx=4, pady=4)
+        tk.Label(params, text="Input Point Cloud").grid(row=row, column=0, sticky="e", padx=4, pady=4)
         tk.Entry(params, textvariable=self.ply_vars["input"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
         tk.Button(
             params,
-            text="Browse...",
+            text="Ply File",
             command=lambda: self._select_file(
                 self.ply_vars["input"],
                 title="Select input PLY",
@@ -5752,15 +5757,32 @@ class PreviewApp:
                 on_select=self._on_ply_input_selected,
             ),
         ).grid(row=row, column=2, padx=4, pady=4)
+        tk.Button(
+            params,
+            text="Colmap Folder",
+            command=lambda: self._select_directory(
+                self.ply_vars["input"],
+                title="Select input COLMAP folder",
+                on_select=self._on_ply_input_selected,
+            ),
+        ).grid(row=row, column=3, padx=4, pady=4)
 
         row += 1
-        tk.Label(params, text="Output PLY").grid(row=row, column=0, sticky="e", padx=4, pady=4)
+        tk.Label(params, text="Output Point Cloud").grid(row=row, column=0, sticky="e", padx=4, pady=4)
         tk.Entry(params, textvariable=self.ply_vars["output"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
         tk.Button(
             params,
-            text="Browse...",
+            text="Ply File",
             command=lambda: self._select_save_file(self.ply_vars["output"], title="Select output PLY", defaultextension=".ply", filetypes=[("PLY files", "*.ply"), ("All files", "*.*")]),
         ).grid(row=row, column=2, padx=4, pady=4)
+        tk.Button(
+            params,
+            text="Colmap Folder",
+            command=lambda: self._select_directory(
+                self.ply_vars["output"],
+                title="Select output COLMAP folder",
+            ),
+        ).grid(row=row, column=3, padx=4, pady=4)
 
         row += 1
         downsample_frame = tk.Frame(params)
@@ -5825,14 +5847,14 @@ class PreviewApp:
         self.ply_stop_button.configure(state="disabled")
         self.ply_run_button = tk.Button(
             params_actions,
-            text="Run gs360_PlyOptimizer",
+            text="Run PointCloudOptimizer",
             command=self._run_ply_optimizer,
         )
         self.ply_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
 
         params.grid_columnconfigure(1, weight=1)
 
-        viewer_frame = tk.LabelFrame(left_panel, text="Ply Viewer")
+        viewer_frame = tk.LabelFrame(left_panel, text="Point Cloud Viewer")
         viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
         self._ply_viewer_root = viewer_frame
 
@@ -5840,13 +5862,13 @@ class PreviewApp:
         viewer_actions.pack(fill="x", padx=12, pady=(8, 0))
         self.ply_input_view_button = tk.Button(
             viewer_actions,
-            text="Show Input PLY",
+            text="Show Input",
             command=self._on_show_input_ply,
         )
         self.ply_input_view_button.pack(side=tk.LEFT, padx=(0, 4), pady=0)
         self.ply_view_button = tk.Button(
             viewer_actions,
-            text="Show Output PLY",
+            text="Show Output",
             command=self._on_show_ply,
         )
         self.ply_view_button.pack(side=tk.LEFT, padx=4, pady=0)
@@ -5872,7 +5894,7 @@ class PreviewApp:
         )
         self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
-        tk.Label(viewer_actions, text="Low quality pts").pack(
+        tk.Label(viewer_actions, text="Interactive Render Points").pack(
             side=tk.LEFT, padx=(12, 4)
         )
         interactive_max_points_entry = tk.Entry(
@@ -5888,7 +5910,7 @@ class PreviewApp:
             "<FocusOut>", self._on_ply_interactive_max_points_commit
         )
         self._ply_interactive_max_points_entry = interactive_max_points_entry
-        tk.Label(viewer_actions, text="High quality pts").pack(
+        tk.Label(viewer_actions, text="Final Render Points").pack(
             side=tk.LEFT, padx=(12, 4)
         )
         high_max_points_entry = tk.Entry(
@@ -6049,7 +6071,7 @@ class PreviewApp:
 
         save_top_controls = tk.Frame(viewer_frame)
         save_top_controls.pack(fill="x", padx=12, pady=(4, 0))
-        tk.Label(save_top_controls, text="Save viewed PLY").pack(
+        tk.Label(save_top_controls, text="Save Viewed Point Cloud").pack(
             side=tk.LEFT, padx=(0, 4)
         )
         sky_save_entry = tk.Entry(
@@ -6066,7 +6088,7 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(4, 4))
         tk.Button(
             save_top_controls,
-            text="Save Displayed PLY",
+            text="Save Viewed Point Cloud",
             width=action_button_width,
             command=self._on_save_sky_points,
         ).pack(side=tk.LEFT)
@@ -6078,9 +6100,10 @@ class PreviewApp:
             bg="#101010",
             highlightthickness=0,
         )
-        canvas.pack(padx=12, pady=12, anchor="center")
+        canvas.pack(fill="both", expand=True, padx=12, pady=12)
         self._ply_canvas_image_id = canvas.create_image(0, 0, anchor="nw")
         self._ply_view_canvas = canvas
+        canvas.bind("<Configure>", self._on_ply_canvas_configure)
         canvas.bind("<ButtonPress-1>", self._on_ply_drag_start)
         canvas.bind("<B1-Motion>", self._on_ply_drag_move)
         canvas.bind("<ButtonRelease-1>", self._on_ply_drag_end)
@@ -6582,7 +6605,7 @@ class PreviewApp:
                 elapsed = max(0.0, time.perf_counter() - start_time)
                 self._append_text_widget(
                     log_widget,
-                    f"[time] PlyOptimizer elapsed: {elapsed:.2f}s",
+                    f"[time] PointCloudOptimizer elapsed: {elapsed:.2f}s",
                 )
             if not stopped and rc == 0:
                 self.root.after(100, self._auto_show_ply_output_after_run)
@@ -7617,6 +7640,15 @@ class PreviewApp:
             return
         self._ply_output_auto = False
 
+    @staticmethod
+    def _is_colmap_text_model_dir(path: Path) -> bool:
+        return (
+            path.is_dir()
+            and (path / "cameras.txt").is_file()
+            and (path / "images.txt").is_file()
+            and (path / "points3D.txt").is_file()
+        )
+
     def _ply_default_output_for_input(self, input_text: str) -> Optional[str]:
         text = input_text.strip()
         if not text:
@@ -7625,6 +7657,11 @@ class PreviewApp:
             path_obj = Path(text).expanduser()
         except Exception:
             return None
+        if self._is_colmap_text_model_dir(path_obj):
+            try:
+                return str(path_obj.with_name(f"{path_obj.name}_output"))
+            except Exception:
+                return None
         suffix = path_obj.suffix if path_obj.suffix else ".ply"
         try:
             return str(path_obj.with_name(f"{path_obj.stem}_output{suffix}"))
@@ -7701,8 +7738,8 @@ class PreviewApp:
         """Append additional PLY files into the current viewer buffers."""
         if self._ply_view_points is None or self._ply_view_colors is None:
             messagebox.showerror(
-                "PLY Viewer",
-                "Load a PLY before appending files to the viewer.",
+                "Point Cloud Viewer",
+                "Load a point cloud before appending files to the viewer.",
             )
             return
         if not self.ply_vars:
@@ -7712,7 +7749,7 @@ class PreviewApp:
         items = self._parse_ply_append_items(raw_text)
         if not items:
             messagebox.showerror(
-                "PLY Viewer",
+                "Point Cloud Viewer",
                 "Specify at least one append PLY file.",
             )
             return
@@ -7755,7 +7792,7 @@ class PreviewApp:
 
         if not append_points:
             messagebox.showerror(
-                "PLY Viewer",
+                "Point Cloud Viewer",
                 "Failed to append PLY files to viewer.",
             )
             if failed:
@@ -7778,6 +7815,15 @@ class PreviewApp:
         self._ply_view_colors = np.concatenate(merged_colors, axis=0).astype(
             np.uint8, copy=False
         )
+        if self._ply_view_point_ids is not None:
+            merged_ids = [self._ply_view_point_ids.astype(np.int64, copy=False)]
+            for pts in append_points:
+                merged_ids.append(
+                    np.full(pts.shape[0], -1, dtype=np.int64)
+                )
+            self._ply_view_point_ids = np.concatenate(
+                merged_ids, axis=0
+            ).astype(np.int64, copy=False)
         self._ply_view_points_centered = self._ply_view_points.astype(
             np.float32, copy=False
         )
@@ -7785,6 +7831,11 @@ class PreviewApp:
         self._ply_view_sample_step = 1
         self._ply_loaded_points = self._ply_view_points.astype(np.float32, copy=True)
         self._ply_loaded_colors = self._ply_view_colors.astype(np.uint8, copy=True)
+        self._ply_loaded_point_ids = (
+            self._ply_view_point_ids.astype(np.int64, copy=True)
+            if self._ply_view_point_ids is not None
+            else None
+        )
         self._ply_loaded_total_points = int(self._ply_view_total_points)
         self._ply_loaded_sample_step = 1
 
@@ -7824,7 +7875,10 @@ class PreviewApp:
             return
         input_path = self.ply_vars["input"].get().strip()
         if not input_path:
-            messagebox.showerror("gs360_PlyOptimizer", "Input PLY is required.")
+            messagebox.showerror(
+                "PointCloudOptimizer",
+                "Input point cloud is required.",
+            )
             return
 
         cmd: List[str] = [
@@ -7852,21 +7906,30 @@ class PreviewApp:
             try:
                 int(target_value)
             except ValueError:
-                messagebox.showerror("gs360_PlyOptimizer", "Target points must be an integer.")
+                messagebox.showerror(
+                    "PointCloudOptimizer",
+                    "Target points must be an integer.",
+                )
                 return
             cmd.extend(["-t", target_value])
         elif mode_key == "percent" and target_value:
             try:
                 float(target_value)
             except ValueError:
-                messagebox.showerror("gs360_PlyOptimizer", "Target percent must be numeric.")
+                messagebox.showerror(
+                    "PointCloudOptimizer",
+                    "Target percent must be numeric.",
+                )
                 return
             cmd.extend(["-r", target_value])
         elif mode_key == "voxel" and target_value:
             try:
                 float(target_value)
             except ValueError:
-                messagebox.showerror("gs360_PlyOptimizer", "Voxel size must be numeric.")
+                messagebox.showerror(
+                    "PointCloudOptimizer",
+                    "Voxel size must be numeric.",
+                )
                 return
             cmd.extend(["-v", target_value])
 
@@ -7882,7 +7945,10 @@ class PreviewApp:
                 try:
                     float(weight_text)
                 except ValueError:
-                    messagebox.showerror("gs360_PlyOptimizer", "Adaptive weight must be numeric.")
+                    messagebox.showerror(
+                        "PointCloudOptimizer",
+                        "Adaptive weight must be numeric.",
+                    )
                     return
                 cmd.extend(["--adaptive-weight", weight_text])
 
@@ -7932,16 +7998,22 @@ class PreviewApp:
             return None
 
     def _on_show_ply(self) -> None:
-        path = self._resolve_ply_display_path()
+        path = self._get_ply_var_path("output")
         if path is None:
-            messagebox.showerror("Show PLY", "No PLY path is configured yet.")
+            messagebox.showerror(
+                "Show Point Cloud",
+                "Output point cloud path is not set.",
+            )
             return
         self._show_ply_from_path(path, "output")
 
     def _on_show_input_ply(self) -> None:
         path = self._get_ply_var_path("input")
         if path is None:
-            messagebox.showerror("Show PLY", "Input PLY path is not set.")
+            messagebox.showerror(
+                "Show Point Cloud",
+                "Input point cloud path is not set.",
+            )
             return
         self._show_ply_from_path(path, "input")
 
@@ -7953,21 +8025,25 @@ class PreviewApp:
                 pass
             self._ply_interaction_after_id = None
         self._ply_is_interacting = False
-        self._ply_view_info_var.set("PLY viewer is idle")
+        self._ply_view_info_var.set("Point cloud viewer is idle")
         self._ply_view_points = None
         self._ply_view_points_centered = None
         self._ply_view_colors = None
+        self._ply_view_point_ids = None
         self._ply_view_center = np.zeros(3, dtype=np.float32)
         self._ply_sky_points = None
         self._ply_sky_colors = None
         self._ply_loaded_points = None
         self._ply_loaded_colors = None
+        self._ply_loaded_point_ids = None
         self._ply_loaded_total_points = 0
         self._ply_loaded_sample_step = 1
         self._ply_view_total_points = 0
         self._ply_view_sample_step = 1
         self._ply_view_source_label = "PLY"
         self._ply_current_file_path = None
+        self._ply_source_kind = "ply"
+        self._ply_colmap_model = None
         self._ply_sky_save_path_var.set("")
         self._ply_view_rgb_mean = None
         remove_color = self._parse_color_to_rgb(self._ply_sky_color_var.get())
@@ -7980,13 +8056,16 @@ class PreviewApp:
 
     def _show_ply_from_path(self, path: Path, label: str) -> None:
         if not path.exists():
-            messagebox.showerror("Show PLY", f"{path} was not found.")
+            messagebox.showerror("Show Point Cloud", f"{path} was not found.")
             return
         self._update_ply_high_max_default_from_path(path)
         self._ply_view_source_label = label
         canvas = self._ensure_ply_viewer_window()
         if canvas is None:
-            messagebox.showerror("Show PLY", "Ply Viewer canvas is not available.")
+            messagebox.showerror(
+                "Show Point Cloud",
+                "Point cloud viewer canvas is not available.",
+            )
             return
         self._ply_view_info_var.set(f"Loading {label} ({path.name}) ...")
         self._redraw_ply_canvas()
@@ -8038,15 +8117,15 @@ class PreviewApp:
         except ValueError:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
-                    "Low quality pts must be numeric.",
+                    "Point Cloud Viewer",
+                    "Interactive Render Points must be numeric.",
                 )
             return None
         if value <= 0:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
-                    "Low quality pts must be greater than zero.",
+                    "Point Cloud Viewer",
+                    "Interactive Render Points must be greater than zero.",
                 )
             return None
         return value
@@ -8094,8 +8173,26 @@ class PreviewApp:
             return None
         return vertex_count
 
+    def _read_colmap_point_count(self, path: Path) -> Optional[int]:
+        points_path = path / "points3D.txt"
+        if not points_path.exists():
+            return None
+        count = 0
+        try:
+            with points_path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    line = raw.strip()
+                    if line and not line.startswith("#"):
+                        count += 1
+        except Exception:
+            return None
+        return count
+
     def _update_ply_high_max_default_from_path(self, path: Path) -> None:
-        vertex_count = self._read_ply_vertex_count_from_header(path)
+        if self._is_colmap_text_model_dir(path):
+            vertex_count = self._read_colmap_point_count(path)
+        else:
+            vertex_count = self._read_ply_vertex_count_from_header(path)
         if vertex_count is None:
             return
         current = self._ply_view_high_max_points_var.get().strip()
@@ -8119,15 +8216,15 @@ class PreviewApp:
         except ValueError:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
-                    "High quality pts must be numeric.",
+                    "Point Cloud Viewer",
+                    "Final Render Points must be numeric.",
                 )
             return None
         if value <= 0:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
-                    "High quality pts must be greater than zero.",
+                    "Point Cloud Viewer",
+                    "Final Render Points must be greater than zero.",
                 )
             return None
         return value
@@ -8166,6 +8263,44 @@ class PreviewApp:
             self._redraw_ply_canvas()
         return "break"
 
+    def _load_point_cloud_view_data(
+        self,
+        path: Path,
+        max_points: Optional[int],
+    ) -> Tuple[np.ndarray, np.ndarray, int, int, Dict[str, Any]]:
+        if self._is_colmap_text_model_dir(path):
+            loaded = pointcloud_optimizer.load_point_cloud_input(str(path))
+            total_count = int(loaded.xyz.shape[0])
+            if max_points is None or max_points <= 0:
+                sample_step = 1
+            else:
+                sample_step = self._compute_sample_step(total_count, max_points)
+            points = loaded.xyz[::sample_step].astype(np.float32, copy=False)
+            colors = loaded.rgb[::sample_step].astype(np.uint8, copy=False)
+            point_ids = None
+            if loaded.point_ids is not None:
+                point_ids = loaded.point_ids[::sample_step].astype(
+                    np.int64,
+                    copy=False,
+                )
+            meta = {
+                "input_kind": "colmap",
+                "point_ids": point_ids,
+                "colmap_model": loaded.colmap_model,
+            }
+            return points, colors, total_count, max(1, sample_step), meta
+
+        points, colors, total_count, sample_step = self._load_binary_ply_points(
+            path,
+            max_points=max_points,
+        )
+        meta = {
+            "input_kind": "ply",
+            "point_ids": None,
+            "colmap_model": None,
+        }
+        return points, colors, total_count, sample_step, meta
+
     def _start_ply_async_load(self, path: Path) -> None:
         max_points = self._get_ply_view_high_max_points(show_error=True)
         if max_points is None:
@@ -8185,7 +8320,7 @@ class PreviewApp:
         self, path: Path, token: object, max_points: int
     ) -> None:
         try:
-            points, colors, original_count, sample_step = self._load_binary_ply_points(
+            points, colors, original_count, sample_step, meta = self._load_point_cloud_view_data(
                 path,
                 max_points=max_points,
             )
@@ -8201,6 +8336,7 @@ class PreviewApp:
                 colors,
                 original_count,
                 sample_step,
+                meta,
             ),
         )
 
@@ -8212,6 +8348,7 @@ class PreviewApp:
         colors: np.ndarray,
         original_count: int,
         sample_step: int,
+        meta: Dict[str, Any],
     ) -> None:
         if token is not self._ply_view_load_token:
             return
@@ -8228,7 +8365,10 @@ class PreviewApp:
             self._ply_view_rgb_mean = None
             self._ply_view_info_var.set(f"{path.name}: no points")
             self._redraw_ply_canvas()
-            messagebox.showinfo("Show PLY", "No points were available for display.")
+            messagebox.showinfo(
+                "Show Point Cloud",
+                "No points were available for display.",
+            )
             return
         rgb_mean = colors.mean(axis=0)
         self._ply_view_rgb_mean = (
@@ -8243,14 +8383,27 @@ class PreviewApp:
         self._ply_view_points = points
         self._ply_view_points_centered = centered_points
         self._ply_view_colors = colors.astype(np.uint8, copy=False)
+        point_ids = meta.get("point_ids")
+        self._ply_view_point_ids = (
+            point_ids.astype(np.int64, copy=False)
+            if isinstance(point_ids, np.ndarray)
+            else None
+        )
         self._ply_view_max_extent = max_extent
         self._ply_view_depth_offset = max_extent * 2.5
         self._ply_view_center = center.astype(np.float32, copy=False)
         self._ply_current_file_path = path
+        self._ply_source_kind = str(meta.get("input_kind") or "ply")
+        self._ply_colmap_model = meta.get("colmap_model")
         self._ply_view_total_points = original_count
         self._ply_view_sample_step = max(1, sample_step)
         self._ply_loaded_points = points.astype(np.float32, copy=True)
         self._ply_loaded_colors = colors.astype(np.uint8, copy=True)
+        self._ply_loaded_point_ids = (
+            self._ply_view_point_ids.astype(np.int64, copy=True)
+            if self._ply_view_point_ids is not None
+            else None
+        )
         self._ply_loaded_total_points = original_count
         self._ply_loaded_sample_step = max(1, sample_step)
         self._reset_ply_view_transform()
@@ -8287,9 +8440,12 @@ class PreviewApp:
         self._ply_is_interacting = False
         self._set_ply_view_loading_state(False)
         self._ply_view_rgb_mean = None
-        self._ply_view_info_var.set("PLY viewer is idle")
+        self._ply_view_info_var.set("Point cloud viewer is idle")
         self._redraw_ply_canvas()
-        messagebox.showerror("Show PLY", f"Failed to load the PLY file.\n{exc}")
+        messagebox.showerror(
+            "Show Point Cloud",
+            f"Failed to load the point cloud.\n{exc}",
+        )
 
     def _reset_ply_view_transform(self) -> None:
         yaw = math.radians(35.0)
@@ -8309,6 +8465,9 @@ class PreviewApp:
         if canvas is None or not canvas.winfo_exists():
             return
         self._render_ply_points(canvas)
+
+    def _on_ply_canvas_configure(self, _event=None) -> None:
+        self._redraw_ply_canvas()
 
     def _begin_ply_interaction(self) -> None:
         self._ply_is_interacting = True
@@ -8609,14 +8768,14 @@ class PreviewApp:
         except ValueError:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
+                    "Point Cloud Viewer",
                     "Remove color tolerance must be numeric.",
                 )
             return None
         if value < 0:
             if show_error:
                 messagebox.showerror(
-                    "PLY Viewer",
+                    "Point Cloud Viewer",
                     "Remove color tolerance must be zero or greater.",
                 )
             return None
@@ -8720,7 +8879,10 @@ class PreviewApp:
 
     def _on_add_sky_points(self) -> None:
         if self._ply_view_points_centered is None:
-            messagebox.showerror("Sky PointCloud", "Load a PLY before adding sky points.")
+            messagebox.showerror(
+                "Sky PointCloud",
+                "Load a point cloud before adding sky points.",
+            )
             return
         axis_label = (self._ply_sky_axis_var.get() or "+Z").upper()
         scale_text = self._ply_sky_scale_var.get().strip() or "100"
@@ -8778,7 +8940,10 @@ class PreviewApp:
 
     def _on_auto_pick_sky_color(self) -> None:
         if self._ply_view_points_centered is None or self._ply_view_colors is None:
-            messagebox.showerror("Sky PointCloud", "Load a PLY before auto picking a color.")
+            messagebox.showerror(
+                "Sky PointCloud",
+                "Load a point cloud before auto picking a color.",
+            )
             return
         rgb = self._sample_auto_sky_color()
         if rgb is None:
@@ -8813,13 +8978,16 @@ class PreviewApp:
 
     def _on_remove_color_points(self) -> None:
         if self._ply_view_points is None or self._ply_view_colors is None:
-            messagebox.showerror("PLY Viewer", "Load a PLY before removing colors.")
+            messagebox.showerror(
+                "Point Cloud Viewer",
+                "Load a point cloud before removing colors.",
+            )
             return
         target_text = self._ply_remove_color_var.get().strip()
         target_rgb = self._parse_color_to_rgb(target_text)
         if target_rgb is None:
             messagebox.showerror(
-                "PLY Viewer",
+                "Point Cloud Viewer",
                 "Remove color must be a valid color (e.g., #87cefa).",
             )
             return
@@ -8848,6 +9016,10 @@ class PreviewApp:
         self._ply_view_colors = self._ply_view_colors[keep_mask].astype(
             np.uint8, copy=False
         )
+        if self._ply_view_point_ids is not None:
+            self._ply_view_point_ids = self._ply_view_point_ids[
+                keep_mask
+            ].astype(np.int64, copy=False)
         self._ply_view_points_centered = self._ply_view_points.astype(
             np.float32, copy=False
         )
@@ -8903,6 +9075,11 @@ class PreviewApp:
         self._ply_view_colors = self._ply_loaded_colors.astype(
             np.uint8, copy=True
         )
+        self._ply_view_point_ids = (
+            self._ply_loaded_point_ids.astype(np.int64, copy=True)
+            if self._ply_loaded_point_ids is not None
+            else None
+        )
         self._ply_view_points_centered = self._ply_view_points.astype(
             np.float32, copy=False
         )
@@ -8921,8 +9098,15 @@ class PreviewApp:
         self._redraw_ply_canvas()
 
     def _update_sky_save_default(self, source_path: Path) -> None:
-        suffix = source_path.suffix or ".ply"
-        candidate = source_path.with_name(f"{source_path.stem}_viewed{suffix}")
+        if self._ply_source_kind == "colmap" or self._is_colmap_text_model_dir(
+            source_path
+        ):
+            candidate = source_path.with_name(f"{source_path.name}_viewed")
+        else:
+            suffix = source_path.suffix or ".ply"
+            candidate = source_path.with_name(
+                f"{source_path.stem}_viewed{suffix}"
+            )
         self._ply_sky_save_path_var.set(str(candidate))
 
     def _on_browse_sky_save_path(self) -> None:
@@ -8943,35 +9127,59 @@ class PreviewApp:
                 initial_dir = self.base_dir
         except Exception:
             initial_dir = self.base_dir
-        path = filedialog.asksaveasfilename(
-            title="Save viewed PLY",
-            initialdir=str(initial_dir),
-            defaultextension=".ply",
-            filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
-        )
+        if self._ply_source_kind == "colmap":
+            path = filedialog.askdirectory(
+                title="Save Viewed COLMAP Folder",
+                initialdir=str(initial_dir),
+            )
+        else:
+            path = filedialog.asksaveasfilename(
+                title="Save Viewed PLY",
+                initialdir=str(initial_dir),
+                defaultextension=".ply",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            )
         if path:
             self._ply_sky_save_path_var.set(path)
 
     def _on_save_sky_points(self) -> None:
         if self._ply_view_points is None or self._ply_view_colors is None:
-            messagebox.showerror("PLY Viewer", "Load a PLY before saving.")
+            messagebox.showerror(
+                "Point Cloud Viewer",
+                "Load a point cloud before saving.",
+            )
             return
         dest_text = self._ply_sky_save_path_var.get().strip()
         if not dest_text:
-            messagebox.showerror("PLY Viewer", "Specify a save path first.")
+            messagebox.showerror(
+                "Point Cloud Viewer",
+                "Specify a save path first.",
+            )
             return
         dest_path = Path(dest_text).expanduser()
         try:
             dest_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            messagebox.showerror("PLY Viewer", f"Failed to prepare destination.\n{exc}")
+            messagebox.showerror(
+                "Point Cloud Viewer",
+                f"Failed to prepare destination.\n{exc}",
+            )
             return
         try:
-            self._write_binary_ply_from_view(dest_path)
+            if self._ply_source_kind == "colmap":
+                self._write_colmap_from_view(dest_path)
+            else:
+                self._write_binary_ply_from_view(dest_path)
         except Exception as exc:
-            messagebox.showerror("PLY Viewer", f"Failed to save PLY.\n{exc}")
+            messagebox.showerror(
+                "Point Cloud Viewer",
+                f"Failed to save point cloud.\n{exc}",
+            )
             return
-        messagebox.showinfo("PLY Viewer", f"Saved viewed PLY:\n{dest_path}")
+        messagebox.showinfo(
+            "Point Cloud Viewer",
+            f"Saved viewed point cloud:\n{dest_path}",
+        )
 
     def _write_binary_ply_from_view(self, path: Path) -> None:
         base_points = self._ply_view_points
@@ -9023,6 +9231,43 @@ class PreviewApp:
         with path.open("wb") as fh:
             fh.write(header.encode("ascii"))
             fh.write(data.tobytes())
+
+    def _write_colmap_from_view(self, path: Path) -> None:
+        if self._ply_colmap_model is None:
+            raise ValueError("COLMAP model metadata is not available.")
+        base_points = self._ply_view_points
+        base_colors = self._ply_view_colors
+        if base_points is None or base_colors is None:
+            raise ValueError("Missing loaded point cloud data.")
+        point_ids = self._ply_view_point_ids
+        if point_ids is None:
+            point_ids = np.full(base_points.shape[0], -1, dtype=np.int64)
+        sky_points = self._ply_sky_points
+        sky_colors = self._ply_sky_colors
+        points_list: List[np.ndarray] = [base_points.astype(np.float32, copy=False)]
+        colors_list: List[np.ndarray] = [base_colors.astype(np.uint8, copy=False)]
+        ids_list: List[np.ndarray] = [point_ids.astype(np.int64, copy=False)]
+        if sky_points is not None and sky_colors is not None:
+            center = self._ply_view_center
+            if not isinstance(center, np.ndarray):
+                center = np.zeros(3, dtype=np.float32)
+            sky_world = (sky_points + center).astype(np.float32, copy=False)
+            points_list.append(sky_world)
+            colors_list.append(sky_colors.astype(np.uint8, copy=False))
+            ids_list.append(np.full(sky_world.shape[0], -1, dtype=np.int64))
+        xyz = np.concatenate(points_list, axis=0).astype(np.float32, copy=False)
+        rgb = np.concatenate(colors_list, axis=0).astype(np.uint8, copy=False)
+        merged_ids = np.concatenate(ids_list, axis=0).astype(
+            np.int64,
+            copy=False,
+        )
+        pointcloud_optimizer.save_colmap_text_model(
+            path,
+            self._ply_colmap_model,
+            xyz,
+            rgb,
+            merged_ids,
+        )
 
 
     def _load_binary_ply_points(
@@ -9189,7 +9434,10 @@ class PreviewApp:
         iy = np.rint(sy).astype(np.int32)
         valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
         if not np.any(valid):
-            messagebox.showinfo("Show PLY", "No visible points remained after projection.")
+            messagebox.showinfo(
+                "Show Point Cloud",
+                "No visible points remained after projection.",
+            )
             self._render_ply_idle_canvas(canvas)
             return
         depth_valid = depth[valid]
