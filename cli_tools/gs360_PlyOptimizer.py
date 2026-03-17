@@ -215,10 +215,15 @@ def _rotation_matrix_from_vectors(
     return r.astype(np.float32)
 
 
-def _sample_hemisphere_points(count: int) -> np.ndarray:
+def _sample_hemisphere_points(
+    count: int,
+    sky_percent: float = 50.0,
+) -> np.ndarray:
     idx = np.arange(count, dtype=np.float32)
     phi = math.pi * (3.0 - math.sqrt(5.0))
-    z = 1.0 - idx / count
+    coverage = float(np.clip(sky_percent, 0.0, 100.0)) / 100.0
+    z_min = 1.0 - 2.0 * coverage
+    z = 1.0 - (idx / count) * (1.0 - z_min)
     radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
     x = np.cos(phi * idx) * radius
     y = np.sin(phi * idx) * radius
@@ -231,8 +236,12 @@ def _generate_sky_points(
     scale: float,
     count: int,
     color: np.ndarray,
+    sky_percent: float = 50.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    samples = _sample_hemisphere_points(count) * float(scale)
+    samples = _sample_hemisphere_points(
+        count,
+        sky_percent=sky_percent,
+    ) * float(scale)
     rot = _rotation_matrix_from_vectors(
         np.array([0.0, 0.0, 1.0], dtype=np.float32), axis_vec
     )
@@ -1499,7 +1508,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         type=float,
         default=100.0,
         help=(
-            "Radius of the generated sky hemisphere "
+            "Radius of the generated sky sphere patch "
             "(same units as the input point cloud)."
         ),
     )
@@ -1507,7 +1516,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--sky-count",
         type=int,
         default=4000,
-        help="Number of points to generate for the sky hemisphere.",
+        help="Number of points to generate for the sky sphere patch.",
+    )
+    ap.add_argument(
+        "--sky-percent",
+        type=float,
+        default=50.0,
+        help=(
+            "Coverage of the generated sky sphere in percent. "
+            "50=hemisphere, 100=full sphere."
+        ),
     )
     ap.add_argument(
         "--sky-color",
@@ -1525,6 +1543,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             ap.error("--sky-scale must be > 0 when --sky-axis is set")
         if args.sky_count is None or args.sky_count <= 0:
             ap.error("--sky-count must be > 0 when --sky-axis is set")
+        if args.sky_percent is None or not (0.0 < args.sky_percent <= 100.0):
+            ap.error(
+                "--sky-percent must be > 0 and <= 100 when --sky-axis is set"
+            )
         try:
             sky_color = _parse_sky_color(args.sky_color)
         except ValueError as exc:
@@ -1735,6 +1757,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if sky_color is not None
                 else np.array([135, 206, 250], dtype=np.uint8)
             ),
+            sky_percent=float(args.sky_percent),
         )
         xyz = np.concatenate([xyz, sky_points], axis=0)
         rgb = np.concatenate([rgb, sky_colors], axis=0)
@@ -1743,6 +1766,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             point_ids = np.concatenate([point_ids, sky_ids], axis=0)
         print(
             f"[sky] axis={args.sky_axis} scale={args.sky_scale:.6g} "
+            f"percent={args.sky_percent:.6g} "
             f"count={sky_points.shape[0]:,} -> total {xyz.shape[0]:,}"
         )
 
