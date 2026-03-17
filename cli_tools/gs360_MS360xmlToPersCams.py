@@ -56,7 +56,6 @@ ADD_CAM_DEG = 30.0
 CUBE_FOV_DEG = 105.0
 TRANSFORMS_X_FIX_DEG = 270.0
 COLMAP_X_BASE_DEG = 0.0
-COLMAP_POINTS_X_DEG = 90.0
 POINTCLOUD_PLY_X_DEG = 180.0
 REALITYSCAN_AXIS = [
     [1.0, 0.0, 0.0],
@@ -783,8 +782,9 @@ def build_points_outputs(
     ply_path,
     out_dir,
     world_from_metashape,
-    rotate_x_plus180,
+    pointcloud_ply_x_deg,
     scale_cm,
+    write_transforms_ply=True,
 ):
     vertices, prop_names = read_ply_vertices(ply_path)
     has_color = (
@@ -792,8 +792,8 @@ def build_points_outputs(
     )
     rot_world = extract_rot3(world_from_metashape)
     rot_ply = None
-    if rotate_x_plus180:
-        rot_ply = rot_x_deg(POINTCLOUD_PLY_X_DEG)
+    if abs(pointcloud_ply_x_deg) > 1e-6:
+        rot_ply = rot_x_deg(pointcloud_ply_x_deg)
 
     points = []
     out_vertices = []
@@ -832,13 +832,14 @@ def build_points_outputs(
             out_row.update({"red": r, "green": g, "blue": b})
         out_vertices.append(out_row)
 
-    if has_color:
-        out_prop_names = ["x", "y", "z", "red", "green", "blue"]
-    else:
-        out_prop_names = ["x", "y", "z"]
-    out_ply = out_dir / "pointcloud_rotated.ply"
-    write_ply_vertices(out_ply, out_vertices, out_prop_names)
-    print("[OK] Rotated pointcloud:", out_ply)
+    if write_transforms_ply:
+        if has_color:
+            out_prop_names = ["x", "y", "z", "red", "green", "blue"]
+        else:
+            out_prop_names = ["x", "y", "z"]
+        out_ply = out_dir / "pointcloud_for_transforms.ply"
+        write_ply_vertices(out_ply, out_vertices, out_prop_names)
+        print("[OK] Rotated pointcloud:", out_ply)
     return points
 
 
@@ -1687,9 +1688,6 @@ def build_outputs(
         "[INFO] colmap X base: +{:.1f} deg".format(COLMAP_X_BASE_DEG)
     )
     print(
-        "[INFO] colmap points X: +{:.1f} deg".format(COLMAP_POINTS_X_DEG)
-    )
-    print(
         "[INFO] pointcloud ply X: +{:.1f} deg".format(POINTCLOUD_PLY_X_DEG)
     )
 
@@ -1816,20 +1814,24 @@ def build_arg_parser():
     )
     ap.add_argument(
         "--pc-rotate-x-plus180",
-        dest="pc_rotate_x_plus180",
-        action="store_true",
-        help="Rotate pointcloud PLY (fixed X +180)",
+        dest="pc_rotate_x_deg",
+        action="store_const",
+        const=180.0,
+        default=0.0,
+        help="Rotate output pointcloud PLY around X by +180 degrees",
     )
     ap.add_argument(
         "--pc-rotate-x-plus90",
-        dest="pc_rotate_x_plus180",
-        action="store_true",
+        dest="pc_rotate_x_deg",
+        action="store_const",
+        const=90.0,
         help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--pc-rotate-x-minus90",
-        dest="pc_rotate_x_plus180",
-        action="store_true",
+        dest="pc_rotate_x_deg",
+        action="store_const",
+        const=-90.0,
         help=argparse.SUPPRESS,
     )
     return ap
@@ -1968,8 +1970,9 @@ def main():
             points_ply_path,
             out_dir,
             world_from_metashape,
-            args.pc_rotate_x_plus180,
+            args.pc_rotate_x_deg,
             args.scale,
+            write_transforms_ply=args.format in ("transforms", "all"),
         )
     if needs_colmap:
         colmap_images = compute_colmap_images(frames, COLMAP_X_BASE_DEG)
