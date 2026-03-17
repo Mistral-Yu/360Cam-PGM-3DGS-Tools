@@ -92,19 +92,19 @@ MSXML_PRESET_CHOICES = [
     "cube105",
 ]
 MSXML_FORMAT_CHOICES = [
-    "Metashape",
-    "Metashape-Multi-Camera-System",
-    "transforms",
+    "Metashape XML",
+    "Metashape-Multi-Camera-System XML",
+    "transforms.json",
     "COLMAP",
-    "RealityScan",
+    "RealityScan XMP",
     "all",
 ]
 MSXML_FORMAT_TO_CLI = {
-    "Metashape": "metashape",
-    "Metashape-Multi-Camera-System": "metashape-multi-camera-system",
-    "transforms": "transforms",
+    "Metashape XML": "metashape",
+    "Metashape-Multi-Camera-System XML": "metashape-multi-camera-system",
+    "transforms.json": "transforms",
     "COLMAP": "colmap",
-    "RealityScan": "realityscan",
+    "RealityScan XMP": "realityscan",
     "all": "all",
 }
 
@@ -910,6 +910,7 @@ class PreviewApp:
         self._ply_sky_axis_var = tk.StringVar(value="+Z")
         self._ply_sky_scale_var = tk.StringVar(value="100")
         self._ply_sky_count_var = tk.StringVar(value="4000")
+        self._ply_sky_percent_var = tk.StringVar(value="50")
         self._ply_sky_color_var = tk.StringVar(value="#87cefa")
         self._ply_sky_color_rgb_var = tk.StringVar(value="RGB(135, 206, 250)")
         self._ply_sky_color_label: Optional[tk.Label] = None
@@ -4666,12 +4667,23 @@ class PreviewApp:
         for widget in (
             self.msxml_points_entry,
             self.msxml_points_button,
-            self.msxml_points_rotate_check,
         ):
             if widget is None:
                 continue
             try:
                 widget.configure(state=state)
+            except tk.TclError:
+                pass
+        rotate_enabled = fmt in {"transforms", "all"}
+        if not rotate_enabled:
+            self.msxml_vars["pc_rotate_x"].set(False)
+        elif not self.msxml_vars["pc_rotate_x"].get():
+            self.msxml_vars["pc_rotate_x"].set(True)
+        if self.msxml_points_rotate_check is not None:
+            try:
+                self.msxml_points_rotate_check.configure(
+                    state="normal" if rotate_enabled else "disabled"
+                )
             except tk.TclError:
                 pass
 
@@ -4814,7 +4826,7 @@ class PreviewApp:
             "xml": tk.StringVar(),
             "output": tk.StringVar(),
             "preset": tk.StringVar(value="full360coverage"),
-            "format": tk.StringVar(value="Metashape"),
+            "format": tk.StringVar(value="Metashape XML"),
             "ext": tk.StringVar(value="jpg"),
             "scale": tk.StringVar(value="1.0"),
             "world_axis": tk.StringVar(value="0 1 0"),
@@ -4823,7 +4835,7 @@ class PreviewApp:
             "cut_input": tk.StringVar(),
             "cut_out": tk.StringVar(),
             "points_ply": tk.StringVar(),
-            "pc_rotate_x": tk.BooleanVar(value=True),
+            "pc_rotate_x": tk.BooleanVar(value=False),
         }
         self.msxml_multicam_vars = {
             "source": tk.StringVar(),
@@ -5024,7 +5036,7 @@ class PreviewApp:
         p_row += 1
         self.msxml_points_rotate_check = tk.Checkbutton(
             persp_frame,
-            text="Rotate pointcloud X +180",
+            text="Rotate pointcloud for transforms.json (X +180)",
             variable=self.msxml_vars["pc_rotate_x"],
         )
         self.msxml_points_rotate_check.grid(
@@ -6031,6 +6043,15 @@ class PreviewApp:
             width=10,
         )
         sky_count_entry.pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(button_row, text="Sky sphere %").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        sky_percent_entry = tk.Entry(
+            button_row,
+            textvariable=self._ply_sky_percent_var,
+            width=6,
+        )
+        sky_percent_entry.pack(side=tk.LEFT, padx=(0, 12))
         tk.Button(
             button_row,
             text="Add Sky PointClouds (Preview)",
@@ -6846,7 +6867,10 @@ class PreviewApp:
                 )
                 return
             cmd.extend(["--points-ply", points_ply])
-            if bool(self.msxml_vars["pc_rotate_x"].get()):
+            if (
+                format_value == "all"
+                and bool(self.msxml_vars["pc_rotate_x"].get())
+            ):
                 cmd.append("--pc-rotate-x-plus180")
         elif format_value == "transforms":
             points_ply = self.msxml_vars["points_ply"].get().strip()
@@ -8666,6 +8690,7 @@ class PreviewApp:
         axis_label: str,
         scale: float,
         count: int,
+        sky_percent: float,
         color_rgb: Tuple[int, int, int],
     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         direction = self._axis_direction(axis_label)
@@ -8674,7 +8699,9 @@ class PreviewApp:
         count = max(1000, min(20000, int(count)))
         indices = np.arange(count, dtype=np.float32)
         phi = math.pi * (3.0 - math.sqrt(5.0))
-        z = 1.0 - indices / count
+        coverage = float(np.clip(sky_percent, 0.0, 100.0)) / 100.0
+        z_min = 1.0 - 2.0 * coverage
+        z = 1.0 - (indices / count) * (1.0 - z_min)
         radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
         x = np.cos(phi * indices) * radius
         y = np.sin(phi * indices) * radius
@@ -8903,13 +8930,34 @@ class PreviewApp:
         if count_value <= 0:
             messagebox.showerror("Sky PointCloud", "Sky points must be greater than zero.")
             return
+        percent_text = self._ply_sky_percent_var.get().strip() or "50"
+        try:
+            percent_value = float(percent_text)
+        except ValueError:
+            messagebox.showerror(
+                "Sky PointCloud",
+                "Sky sphere % must be numeric.",
+            )
+            return
+        if percent_value <= 0 or percent_value > 100:
+            messagebox.showerror(
+                "Sky PointCloud",
+                "Sky sphere % must be > 0 and <= 100.",
+            )
+            return
         color_text = self._ply_sky_color_var.get().strip() or "#87cefa"
         color_rgb = self._parse_color_to_rgb(color_text)
         if color_rgb is None:
             messagebox.showerror("Sky PointCloud", "Sky color must be a valid color (e.g., #87cefa).")
             return
         self._update_sky_color_display(color_rgb, color_text)
-        points, colors = self._generate_sky_points(axis_label, scale_value, count_value, color_rgb)
+        points, colors = self._generate_sky_points(
+            axis_label,
+            scale_value,
+            count_value,
+            percent_value,
+            color_rgb,
+        )
         if points is None or colors is None:
             messagebox.showerror("Sky PointCloud", "Failed to generate sky points. Check axis selection.")
             return
