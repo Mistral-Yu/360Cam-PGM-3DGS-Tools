@@ -53,6 +53,7 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
 - `PointCloudOptimizer` tab: Optimize initial point cloud, Downsample/merge the PLY or Colmap PointCloud3D for your 3DGS tool (PostShot, gsplat, etc.) . Delete sky point clouds generated with photogrammetry software, add clean Sky point clouds.
 - `MS360xmlToPerspCams` tab: Experimental tool for convert Metashape spherical camera XML into perspective camera parameters. Colmap, Metashape xml, transform.json, RealityScan xmp.
 - `DualFisheyePipeline` tab: Experimental tool for correcting dual-fisheye distortion from Metashape XML calibration and exporting perspective views.
+- `CameraOptimization` tab: Experimental tool. Preview and convert camera poses and point clouds between supported formats. TODO: Reduce camera count to lower VRAM/RAM usage.
 
 ### Workflows (GUI)
 #### Rapid
