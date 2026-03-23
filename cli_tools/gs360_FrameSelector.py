@@ -341,6 +341,180 @@ BRIGHTNESS_SHARPNESS_MIN_KEEP = 0
 MIN_DIFF_FRAMES_RATIO = 0.2
 DEFAULT_SCORE_BACKEND = "ffmpeg"
 FFMPEG_BINARY = "ffmpeg"
+PAIR_X_SUFFIX = "_X"
+PAIR_Y_SUFFIX = "_Y"
+
+
+def split_stem_suffix(stem, x_suffix=PAIR_X_SUFFIX, y_suffix=PAIR_Y_SUFFIX):
+    """Split a stem into pair base name and lens key."""
+    if stem.endswith(x_suffix):
+        return stem[:-len(x_suffix)], "X"
+    if stem.endswith(y_suffix):
+        return stem[:-len(y_suffix)], "Y"
+    return stem, ""
+
+
+def build_pair_records(file_paths, sorter):
+    """Build sorted X/Y pair records from flat file paths."""
+    table = {}
+    unmatched_files = []
+    for fp in file_paths:
+        base_name = os.path.basename(fp)
+        stem, _ext = os.path.splitext(base_name)
+        pair_base, lens_key = split_stem_suffix(stem)
+        if lens_key not in {"X", "Y"}:
+            unmatched_files.append(fp)
+            continue
+        entry = table.setdefault(pair_base, {})
+        entry[lens_key] = fp
+
+    incomplete_bases = []
+    pair_records = []
+    for pair_base, item in table.items():
+        x_path = item.get("X")
+        y_path = item.get("Y")
+        if not x_path or not y_path:
+            incomplete_bases.append(pair_base)
+            continue
+        pair_records.append(
+            {
+                "input_mode": "pair",
+                "display_name": pair_base,
+                "pair_base": pair_base,
+                "primary_path": x_path,
+                "file_paths": [x_path, y_path],
+                "x_path": x_path,
+                "y_path": y_path,
+            }
+        )
+
+    pair_records = sorted(pair_records, key=lambda item: sorter(item["primary_path"]))
+    return pair_records, unmatched_files, incomplete_bases
+
+
+def build_input_records(file_paths, input_mode, sorter):
+    """Build sorted input records for either single-frame or X/Y-pair mode."""
+    single_records = [
+        {
+            "input_mode": "single",
+            "display_name": os.path.basename(fp),
+            "pair_base": "",
+            "primary_path": fp,
+            "file_paths": [fp],
+            "x_path": "",
+            "y_path": "",
+        }
+        for fp in file_paths
+    ]
+    single_records = sorted(single_records, key=lambda item: sorter(item["primary_path"]))
+
+    if input_mode == "single":
+        return "single", single_records
+
+    pair_records, unmatched_files, incomplete_bases = build_pair_records(file_paths, sorter)
+    if input_mode == "pair":
+        if unmatched_files or incomplete_bases:
+            raise SystemExit(
+                "Pair mode requires complete _X/_Y image pairs only. "
+                "unmatched_files={}, incomplete_pairs={}".format(
+                    len(unmatched_files),
+                    len(incomplete_bases),
+                )
+            )
+        if not pair_records:
+            raise SystemExit("Pair mode found no valid _X/_Y image pairs.")
+        return "pair", pair_records
+
+    if pair_records and not unmatched_files and not incomplete_bases:
+        return "pair", pair_records
+    return "single", single_records
+
+
+def record_exists(record):
+    """Return True when all files represented by the record exist."""
+    file_paths = record.get("file_paths", [])
+    if not file_paths:
+        return False
+    return all(os.path.isfile(path) for path in file_paths)
+
+
+def record_filename_for_csv(record):
+    """Return the primary CSV filename label for one record."""
+    return str(record.get("display_name", "") or os.path.basename(record["primary_path"]))
+
+
+def record_pair_base_for_csv(record):
+    """Return the pair base label for one record."""
+    return str(record.get("pair_base", "") or "")
+
+
+def record_mask_mode(record):
+    """Return the scoring/motion mask mode for one record."""
+    if str(record.get("input_mode", "")).strip().lower() == "pair":
+        return "fisheye_circle"
+    return "none"
+
+
+def _mean_optional(values, default=None):
+    """Return the mean of finite numeric values or the given default."""
+    valid = [
+        float(value)
+        for value in values
+        if value is not None and math.isfinite(float(value))
+    ]
+    if not valid:
+        return default
+    return float(sum(valid) / float(len(valid)))
+
+
+def score_one_record(
+        record,
+        metric,
+        crop_ratio,
+        max_long,
+        augment_motion,
+        ignore_highlights,
+        score_backend,
+):
+    """Compute scoring metrics for one single-image or X/Y-pair record."""
+    mask_mode = record_mask_mode(record)
+    backend = score_backend
+    if mask_mode == "fisheye_circle" and backend == "ffmpeg":
+        backend = "opencv"
+    score_func = (
+        score_one_file_ffmpeg
+        if backend == "ffmpeg"
+        else score_one_file
+    )
+    results = []
+    for fp in record.get("file_paths", []):
+        results.append(
+            score_func(
+                fp,
+                metric,
+                crop_ratio,
+                max_long,
+                augment_motion,
+                ignore_highlights,
+                mask_mode,
+            )
+        )
+    if not results:
+        return None, 0.0, 0.0, 0.0, 1.0, None, None, None, 1.0
+
+    sharp_values = [item[0] for item in results if item[0] is not None]
+    sharp = _mean_optional(sharp_values, default=None)
+    return (
+        sharp,
+        _mean_optional([item[1] for item in results], default=0.0),
+        _mean_optional([item[2] for item in results], default=0.0),
+        _mean_optional([item[3] for item in results], default=0.0),
+        _mean_optional([item[4] for item in results], default=1.0),
+        _mean_optional([item[5] for item in results], default=None),
+        _mean_optional([item[6] for item in results], default=None),
+        _mean_optional([item[7] for item in results], default=None),
+        _mean_optional([item[8] for item in results], default=1.0),
+    )
 
 
 def update_progress(label, completed, total, last_pct):
@@ -515,6 +689,34 @@ def crop_by_ratio_gray_and_mask(gray, mask, crop_ratio):
     cropped_mask = mask[y0:y1, :]
     return cropped_gray, cropped_mask
 
+
+def build_circular_valid_mask(shape):
+    """Build an inscribed-circle validity mask for fisheye image analysis."""
+    if not shape or len(shape) < 2:
+        return None
+    height, width = int(shape[0]), int(shape[1])
+    if height <= 0 or width <= 0:
+        return None
+    center_x = (width - 1) * 0.5
+    center_y = (height - 1) * 0.5
+    radius = max(1.0, min(width, height) * 0.5)
+    yy, xx = np.ogrid[:height, :width]
+    dist2 = (xx - center_x) ** 2 + (yy - center_y) ** 2
+    return (dist2 <= (radius * radius)).astype(np.uint8)
+
+
+def apply_mask_mode_to_gray(gray, valid_mask, mask_mode):
+    """Apply an optional geometric validity mask to grayscale data."""
+    if mask_mode == "fisheye_circle":
+        circle_mask = build_circular_valid_mask(gray.shape)
+        if circle_mask is not None:
+            if valid_mask is None:
+                valid_mask = circle_mask
+            else:
+                valid_mask = ((valid_mask > 0) & (circle_mask > 0)).astype(np.uint8)
+    return valid_mask
+
+
 def lapvar32(gray, mask=None):
     lap = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
     if mask is not None and np.any(mask):
@@ -628,8 +830,19 @@ def score_one_file_ffmpeg(
         max_long,
         augment_motion,
         ignore_highlights,
+        mask_mode="none",
 ):
     """Compute sharpness/brightness via ffmpeg signalstats + sobel."""
+    if mask_mode == "fisheye_circle":
+        return score_one_file(
+            fp,
+            metric,
+            crop_ratio,
+            max_long,
+            augment_motion,
+            ignore_highlights,
+            mask_mode=mask_mode,
+        )
     try:
         vf = _build_ffmpeg_filtergraph(crop_ratio, max_long)
         cmd = [
@@ -693,6 +906,7 @@ def score_one_file(
         max_long,
         augment_motion,
         ignore_highlights,
+        mask_mode="none",
 ):
     """Compute the sharpness score and ancillary metrics for one frame."""
     try:
@@ -723,17 +937,26 @@ def score_one_file(
 
         gray = np.clip(gray, 0.0, 255.0, out=None)
 
-        valid_mask = None
+        valid_mask = apply_mask_mode_to_gray(gray, None, mask_mode)
         p255 = 0.0
         if ignore_highlights:
             highlight_threshold = 0.95 * 255.0
             highlight_mask = gray >= highlight_threshold
             if highlight_mask.size:
-                p255 = float(np.mean(highlight_mask))
-            if 0.0 < p255 < 1.0:
-                valid_mask = (~highlight_mask).astype(np.uint8)
-            elif p255 >= 1.0:
-                valid_mask = None
+                if valid_mask is not None and np.any(valid_mask):
+                    valid_bool = valid_mask > 0
+                    denom = float(np.count_nonzero(valid_bool))
+                    if denom > 0.0:
+                        p255 = float(np.count_nonzero(highlight_mask & valid_bool) / denom)
+                else:
+                    p255 = float(np.mean(highlight_mask))
+            if valid_mask is None:
+                if 0.0 < p255 < 1.0:
+                    valid_mask = (~highlight_mask).astype(np.uint8)
+                elif p255 >= 1.0:
+                    valid_mask = None
+            else:
+                valid_mask = ((valid_mask > 0) & (~highlight_mask)).astype(np.uint8)
 
         gray, valid_mask = downscale_gray_and_mask(gray, valid_mask, max_long)
         gray, valid_mask = crop_by_ratio_gray_and_mask(gray, valid_mask, crop_ratio)
@@ -1011,11 +1234,12 @@ def augment_spacing(
     return augmented
 
 
-def _load_flow_gray(path, crop_ratio):
-    """Load and optionally downscale a grayscale frame for flow."""
+def _load_flow_gray(path, crop_ratio, mask_mode="none"):
+    """Load and optionally downscale a grayscale frame and mask for flow."""
     flow_gray = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if flow_gray is None:
-        return None
+        return None, None
+    valid_mask = apply_mask_mode_to_gray(flow_gray, None, mask_mode)
     h, w = flow_gray.shape[:2]
     if crop_ratio and 0.0 < crop_ratio < 1.0:
         crop_h = max(1, int(round(h * crop_ratio)))
@@ -1025,6 +1249,8 @@ def _load_flow_gray(path, crop_ratio):
         end_y = start_y + crop_h
         end_x = start_x + crop_w
         flow_gray = flow_gray[start_y:end_y, start_x:end_x]
+        if valid_mask is not None:
+            valid_mask = valid_mask[start_y:end_y, start_x:end_x]
         h, w = flow_gray.shape[:2]
     if FLOW_DOWNSCALE and max(h, w) > FLOW_DOWNSCALE:
         scale = FLOW_DOWNSCALE / float(max(h, w))
@@ -1033,24 +1259,41 @@ def _load_flow_gray(path, crop_ratio):
             (max(1, int(w * scale)), max(1, int(h * scale))),
             interpolation=cv2.INTER_AREA,
         )
-    return flow_gray
+        if valid_mask is not None:
+            valid_mask = cv2.resize(
+                (valid_mask > 0).astype(np.uint8),
+                (max(1, int(w * scale)), max(1, int(h * scale))),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            valid_mask = (valid_mask > 0).astype(np.uint8)
+    return flow_gray, valid_mask
 
 
 
 
 
-def _compute_pair_flow_magnitude(prev_path, curr_path, crop_ratio):
-    prev_gray = _load_flow_gray(prev_path, crop_ratio)
+def _compute_pair_flow_magnitude(prev_path, curr_path, crop_ratio, mask_mode="none"):
+    prev_gray, prev_mask = _load_flow_gray(prev_path, crop_ratio, mask_mode=mask_mode)
     if prev_gray is None:
         return None
-    curr_gray = _load_flow_gray(curr_path, crop_ratio)
+    curr_gray, curr_mask = _load_flow_gray(curr_path, crop_ratio, mask_mode=mask_mode)
     if curr_gray is None or prev_gray.shape != curr_gray.shape:
         return None
+    valid_mask = None
+    if prev_mask is not None and curr_mask is not None:
+        valid_mask = ((prev_mask > 0) & (curr_mask > 0)).astype(np.uint8)
+    elif prev_mask is not None:
+        valid_mask = (prev_mask > 0).astype(np.uint8)
+    elif curr_mask is not None:
+        valid_mask = (curr_mask > 0).astype(np.uint8)
 
     if FLOW_METHOD == "lucas_kanade":
         feature_params = dict(maxCorners=1000, qualityLevel=0.01, minDistance=5, blockSize=7)
         lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        p0 = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
+        feature_mask = None
+        if valid_mask is not None and np.any(valid_mask):
+            feature_mask = (valid_mask > 0).astype(np.uint8) * 255
+        p0 = cv2.goodFeaturesToTrack(prev_gray, mask=feature_mask, **feature_params)
         if p0 is None or len(p0) == 0:
             return None
         p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, p0, None, **lk_params)
@@ -1076,23 +1319,51 @@ def _compute_pair_flow_magnitude(prev_path, curr_path, crop_ratio):
     except Exception:
         return None
     mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-    mean_mag = float(np.mean(mag))
+    if valid_mask is not None and np.any(valid_mask):
+        valid_bool = valid_mask > 0
+        mean_mag = float(np.mean(mag[valid_bool]))
+    else:
+        mean_mag = float(np.mean(mag))
     if not np.isfinite(mean_mag):
         return None
     return mean_mag
 
 
-def _compute_flow_magnitudes(files, flow_mag_arr, flow_crop_ratio, workers, label, limiter=None):
-    """Compute mean optical-flow magnitudes between consecutive frames."""
-    if len(files) < 2:
+def _compute_record_flow_magnitude(prev_record, curr_record, crop_ratio):
+    """Compute one flow magnitude for either single-image or pair records."""
+    prev_paths = list(prev_record.get("file_paths", []))
+    curr_paths = list(curr_record.get("file_paths", []))
+    if not prev_paths or not curr_paths:
+        return None
+    if len(prev_paths) != len(curr_paths):
+        return None
+    magnitudes = []
+    mask_mode = record_mask_mode(curr_record)
+    for prev_path, curr_path in zip(prev_paths, curr_paths):
+        mean_mag = _compute_pair_flow_magnitude(
+            prev_path,
+            curr_path,
+            crop_ratio,
+            mask_mode=mask_mode,
+        )
+        if mean_mag is not None and math.isfinite(mean_mag):
+            magnitudes.append(float(mean_mag))
+    if not magnitudes:
+        return None
+    return float(sum(magnitudes) / float(len(magnitudes)))
+
+
+def _compute_flow_magnitudes(records, flow_mag_arr, flow_crop_ratio, workers, label, limiter=None):
+    """Compute mean optical-flow magnitudes between consecutive records."""
+    if len(records) < 2:
         return 0
 
     pair_indices = []
     prev_idx = None
-    for idx, fp in enumerate(files):
+    for idx, record in enumerate(records):
         if cancel_event.is_set():
             break
-        if not os.path.isfile(fp):
+        if not record_exists(record):
             prev_idx = None
             continue
         if prev_idx is not None:
@@ -1108,7 +1379,11 @@ def _compute_flow_magnitudes(files, flow_mag_arr, flow_crop_ratio, workers, labe
 
     def _process_pair(pair):
         left_idx, right_idx = pair
-        mean_mag = _compute_pair_flow_magnitude(files[left_idx], files[right_idx], flow_crop_ratio)
+        mean_mag = _compute_record_flow_magnitude(
+            records[left_idx],
+            records[right_idx],
+            flow_crop_ratio,
+        )
         if mean_mag is None or not math.isfinite(mean_mag):
             mean_mag = FLOW_MISSING_HIGH_VALUE
         return left_idx, right_idx, mean_mag
@@ -1485,7 +1760,7 @@ def _boundary_pair_objective(
 
 def refine_segment_selection_boundary_local(
     group_infos,
-    files,
+    records,
     scores,
     initial_selected,
     min_diff,
@@ -1512,7 +1787,7 @@ def refine_segment_selection_boundary_local(
     for info in group_infos:
         start = int(info.get("start", 0))
         end = int(info.get("end", start))
-        group_existing = [i for i in range(start, end) if os.path.isfile(files[i])]
+        group_existing = [i for i in range(start, end) if record_exists(records[i])]
         group_valid = [
             i for i in group_existing
             if scores[i] is not None and math.isfinite(scores[i])
@@ -1665,6 +1940,12 @@ def main():
         help="Sorting rule applied before scoring.",
     )
     ap.add_argument(
+        "--input_mode",
+        choices=["auto", "single", "pair"],
+        default="auto",
+        help="Interpret the folder as single images or _X/_Y pairs (default: auto).",
+    )
+    ap.add_argument(
         "-w",
         "--workers",
         type=int,
@@ -1755,12 +2036,6 @@ def main():
         args.dry_run = True
 
     scoring_needed = not args.apply_csv and not args.reselect_csv
-    if args.score_backend == "ffmpeg" and scoring_needed:
-        ensure_ffmpeg_available()
-        if args.ignore_highlights:
-            print("[INFO] ffmpeg backend ignores --ignore-highlights; disabling.")
-            args.ignore_highlights = False
-        print("[INFO] score_backend=ffmpeg uses sobel+signalstats; --metric ignored.")
 
     try:
         signal.signal(signal.SIGINT, _handle_sigint)
@@ -1786,8 +2061,8 @@ def main():
     except Exception:
         pass
 
-    files = gather_files(args.in_dir, args.ext)
-    if not files:
+    raw_files = gather_files(args.in_dir, args.ext)
+    if not raw_files:
         print(f"No input images found: {args.in_dir}")
         sys.exit(1)
 
@@ -1813,13 +2088,38 @@ def main():
         fast_window = max(1, round_half_up(args.segment_size * FAST_SPACING_MULTIPLIER))
 
     sorter = SORTERS[args.sort]
-    files = sorted(files, key=sorter)
+    input_mode, records = build_input_records(raw_files, args.input_mode, sorter)
+    if input_mode == "pair":
+        if args.score_backend == "ffmpeg":
+            print(
+                "[INFO] pair mode uses a circular fisheye mask; "
+                "switching score backend ffmpeg -> opencv"
+            )
+            args.score_backend = "opencv"
+        if not math.isclose(score_crop_ratio, 1.0):
+            print(
+                "[INFO] pair mode uses a circular center mask; overriding "
+                f"--score_crop_ratio {score_crop_ratio:.3f} -> 1.0"
+            )
+        score_crop_ratio = 1.0
+        if not math.isclose(flow_crop_ratio, 1.0):
+            print(
+                "[INFO] pair mode uses a circular center mask for motion; "
+                f"overriding FLOW_CROP_RATIO {flow_crop_ratio:.3f} -> 1.0"
+            )
+        flow_crop_ratio = 1.0
+    if args.score_backend == "ffmpeg" and scoring_needed:
+        ensure_ffmpeg_available()
+        if args.ignore_highlights:
+            print("[INFO] ffmpeg backend ignores --ignore-highlights; disabling.")
+            args.ignore_highlights = False
+        print("[INFO] score_backend=ffmpeg uses sobel+signalstats; --metric ignored.")
 
     blur_dir = os.path.join(args.in_dir, "blur")
     ensure_dir(blur_dir)
 
     # Score every file in parallel
-    n = len(files)
+    n = len(records)
     scores = [None] * n
     p0_arr = [0.0] * n
     p255_arr = [0.0] * n
@@ -1833,6 +2133,7 @@ def main():
     flow_mag_arr = [0.0] * n
 
     total = n
+    source_file_total = sum(len(record.get("file_paths", [])) for record in records)
 
     cancelled = cancel_event.is_set()
     selection_flags = [0] * n
@@ -1886,7 +2187,7 @@ def main():
         try:
             selection_flags = load_selection_from_csv(
                 apply_csv_path,
-                files,
+                records,
                 scores,
                 brightness_mean_arr,
                 group_score_arr,
@@ -1897,11 +2198,11 @@ def main():
             sys.exit(1)
         final_selected = {
             idx for idx, flag in enumerate(selection_flags)
-            if flag == 1 and os.path.isfile(files[idx])
+            if flag == 1 and record_exists(records[idx])
         }
         initial_selected = set(final_selected)
         existing_indices = [
-            idx for idx in range(total) if os.path.isfile(files[idx])
+            idx for idx in range(total) if record_exists(records[idx])
         ]
         cancelled = cancel_event.is_set()
     elif args.reselect_csv:
@@ -1914,7 +2215,7 @@ def main():
         try:
             selection_flags = load_selection_from_csv(
                 reselect_csv_path,
-                files,
+                records,
                 scores,
                 brightness_mean_arr,
                 group_score_arr,
@@ -1924,27 +2225,23 @@ def main():
             print(f"Failed to load metrics CSV: {exc}")
             sys.exit(1)
         existing_indices = [
-            idx for idx in range(total) if os.path.isfile(files[idx])
+            idx for idx in range(total) if record_exists(records[idx])
         ]
         cancelled = cancel_event.is_set()
     else:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            score_func = (
-                score_one_file_ffmpeg
-                if args.score_backend == "ffmpeg"
-                else score_one_file
-            )
             futs = {
                 _submit_with_limiter(
                     ex,
                     limiter,
-                    score_func,
-                    files[i],
+                    score_one_record,
+                    records[i],
                     args.metric,
                     score_crop_ratio,
                     MAX_LONG,
                     args.augment_motion,
                     args.ignore_highlights,
+                    args.score_backend,
                 ): i for i in range(n)
             }
             completed = 0
@@ -1989,7 +2286,7 @@ def main():
         and (args.prune_motion or args.augment_motion)
     ):
         flow_pairs_total = _compute_flow_magnitudes(
-            files,
+            records,
             flow_mag_arr,
             flow_crop_ratio,
             workers,
@@ -2047,7 +2344,11 @@ def main():
         csv_writer.writerow(
             [
                 "index",
+                "input_mode",
                 "filename",
+                "pair_base",
+                "x_filename",
+                "y_filename",
                 "score",
                 "brightness_mean",
                 "group_score",
@@ -2061,7 +2362,7 @@ def main():
             blur_percent = max(0.0, min(float(blur_percent), 100.0))
             blur_fraction = blur_percent / 100.0
             existing_indices = [
-                i for i in range(total) if os.path.isfile(files[i])
+                i for i in range(total) if record_exists(records[i])
             ]
             valid_indices = [
                 i
@@ -2117,7 +2418,7 @@ def main():
                 grp_end = info["end"]
                 group_range = range(grp_start, grp_end)
                 existing_indices = [
-                    i for i in group_range if os.path.isfile(files[i])
+                    i for i in group_range if record_exists(records[i])
                 ]
                 valid_indices = [
                     i for i in existing_indices if scores[i] is not None
@@ -2136,14 +2437,14 @@ def main():
                     initial_selected.add(chosen_idx)
 
             existing_indices = [
-                i for i in range(total) if os.path.isfile(files[i])
+                i for i in range(total) if record_exists(records[i])
             ]
             initial_selected &= set(existing_indices)
             if args.segment_boundary_reopt and len(group_infos) >= 2:
                 before_reopt = set(initial_selected)
                 initial_selected = refine_segment_selection_boundary_local(
                     group_infos,
-                    files,
+                    records,
                     scores,
                     initial_selected,
                     min_diff,
@@ -2246,7 +2547,7 @@ def main():
                         selection_flags[idx] = 0
                     final_selected = {
                         idx for idx in range(n)
-                        if selection_flags[idx] and os.path.isfile(files[idx])
+                        if selection_flags[idx] and record_exists(records[idx])
                     }
                     initial_selected = set(final_selected)
                 else:
@@ -2327,17 +2628,34 @@ def main():
         if cancel_event.is_set():
             cancelled = True
             break
+        record = records[i]
         s = scores[i]
         if args.apply_csv and s is None:
             s = 0.0
         processed += 1
-        file_exists = os.path.isfile(files[i])
+        file_exists = record_exists(record)
+        filename_value = record_filename_for_csv(record)
+        pair_base_value = record_pair_base_for_csv(record)
+        x_filename = (
+            os.path.basename(record["x_path"])
+            if record.get("x_path")
+            else ""
+        )
+        y_filename = (
+            os.path.basename(record["y_path"])
+            if record.get("y_path")
+            else ""
+        )
         if not file_exists or s is None:
             skipped += 1
             if csv_writer:
                 csv_writer.writerow([
                     i,
-                    os.path.basename(files[i]),
+                    record.get("input_mode", input_mode),
+                    filename_value,
+                    pair_base_value,
+                    x_filename,
+                    y_filename,
                     -1.0,
                     0.0,
                     group_score_arr[i],
@@ -2355,7 +2673,11 @@ def main():
             if csv_writer:
                 csv_writer.writerow([
                     i,
-                    os.path.basename(files[i]),
+                    record.get("input_mode", input_mode),
+                    filename_value,
+                    pair_base_value,
+                    x_filename,
+                    y_filename,
                     score_val,
                     mean_val,
                     group_score_arr[i],
@@ -2366,15 +2688,22 @@ def main():
             if args.dry_run:
                 moved += 1
             else:
-                dst = os.path.join(blur_dir, os.path.basename(files[i]))
-                if safe_move(files[i], dst) is None:
-                    skipped += 1
-                else:
+                move_failed = False
+                for src_path in record.get("file_paths", []):
+                    dst = os.path.join(blur_dir, os.path.basename(src_path))
+                    if safe_move(src_path, dst) is None:
+                        move_failed = True
+                        skipped += 1
+                if not move_failed:
                     moved += 1
             if csv_writer:
                 csv_writer.writerow([
                     i,
-                    os.path.basename(files[i]),
+                    record.get("input_mode", input_mode),
+                    filename_value,
+                    pair_base_value,
+                    x_filename,
+                    y_filename,
                     score_val,
                     mean_val,
                     group_score_arr[i],
@@ -2402,7 +2731,9 @@ def main():
         print(f"Motion augmentation added {motion_added_count} frame(s).")
 
     print(f"Done:")
-    print(f" Input {total}")
+    print(f" Input records {total}")
+    print(f" Input mode {input_mode}")
+    print(f" Source files {source_file_total}")
     print(f" Kept {kept}")
     print(f" Moved {moved} ")
     print(f" Skipped {skipped}")
