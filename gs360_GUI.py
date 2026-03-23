@@ -3,10 +3,12 @@
 """GUI preview and execution tool for gs360_360PerspCut."""
 
 import argparse
+import ctypes
 import csv
 import copy
 import importlib
 import itertools
+import json
 import math
 import pathlib
 import os
@@ -45,11 +47,13 @@ except ImportError as exc:  # pragma: no cover - environment guard
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CLI_TOOLS_DIR = SCRIPT_DIR / "cli_tools"
+GUI_SETTINGS_PATH = CLI_TOOLS_DIR / "gs360_gui_settings.json"
 if str(CLI_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_TOOLS_DIR))
 
 cutter = importlib.import_module("gs360_360PerspCut")
 pointcloud_optimizer = importlib.import_module("gs360_PlyOptimizer")
+camera_pose_scene = importlib.import_module("gs360_CameraPoseScene")
 
 COLOR_CYCLE = [
     "#ff6b6b",
@@ -67,7 +71,15 @@ COLOR_CYCLE = [
 PRESET_CHOICES = ["default", "fisheyelike", "full360coverage", "2views", "evenMinus30", "evenPlus30", "fisheyeXY"]
 
 HUMAN_MODE_CHOICES = ["mask", "alpha", "inpaint"]
-HUMAN_TARGET_CHOICES = ["person", "bicycle", "car", "animal"]
+HUMAN_TARGET_CHOICES = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "bus",
+    "truck",
+    "animal",
+]
 HUMAN_MASK_EXPAND_MODE_CHOICES = ["pixels", "percent"]
 HUMAN_PREVIEW_IMAGE_EXTS = {
     ".jpg",
@@ -109,16 +121,34 @@ MSXML_FORMAT_TO_CLI = {
 }
 
 DEFAULT_SELECTOR_CSV_NAME = "selected_image_list.csv"
+SELECTOR_INPUT_MODE_LABEL_TO_CLI = {
+    "Auto": "auto",
+    "Single 360 Image": "single",
+    "Dual Fisheye Image": "pair",
+}
+SELECTOR_INPUT_MODE_CLI_TO_LABEL = {
+    value: key for key, value in SELECTOR_INPUT_MODE_LABEL_TO_CLI.items()
+}
 
 PLY_VIEW_CANVAS_WIDTH = 840
 PLY_VIEW_CANVAS_HEIGHT = 840
 PLY_VIEW_MAX_POINTS = 500_000
 PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
+CAMERA_SCENE_INTERACTIVE_MAX_CAMERAS = 300
+CAMERA_SCENE_GRID_MAX_HALF_LINES = 60
 PLY_INTERACTION_SETTLE_DELAY_MS = 350
 PLY_VIEW_MAX_ZOOM = 640.0
+CAMERA_SCENE_SOURCE_CHOICES = (
+    "COLMAP text model",
+    "transforms.json + PLY",
+    "RealityScan CSV + PLY",
+    "RealityScan XMP",
+    "Metashape XML",
+)
 SELECTOR_OVERVIEW_LOG_SCALE = 99.0
 SELECTOR_OVERVIEW_X_ZOOM_MIN = 0.25
 SELECTOR_OVERVIEW_X_ZOOM_MAX = 150.0
+SELECTOR_OVERVIEW_BAR_WIDTH_MIN = 0.25
 SELECTOR_OVERVIEW_BAR_WIDTH_MAX = 1024.0
 SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_MAX = 50
 SELECTOR_OVERVIEW_PRESET_VISIBLE_BARS_HALF = 500
@@ -509,6 +539,92 @@ def ensure_explicit_flags(args: argparse.Namespace) -> None:
 class PreviewApp:
     """Interactive GUI to tweak gs360_360 cuts and visualise overlays."""
 
+    APP_BG = "#f4f3f1"
+    HEADER_BG = "#ebe9e6"
+    SURFACE_BG = "#f4f3f1"
+    TEXT_FG = "#0f172a"
+    MUTED_FG = "#6b7280"
+    NOTEBOOK_STYLE = "Gs360Workbench.TNotebook"
+    NOTEBOOK_TAB_STYLE = "Gs360Workbench.TNotebook.Tab"
+    NOTEBOOK_COLORS = {
+        "bar_bg": "#ece9e5",
+        "tab_idle_bg": "#ece9e5",
+        "tab_hover_bg": "#f6f4f1",
+        "tab_selected_bg": "#ffffff",
+        "tab_idle_fg": "#4f5358",
+        "tab_selected_fg": "#0f172a",
+        "tab_border": "#d1ccc5",
+        "tab_hover_border": "#c2bbb2",
+        "tab_selected_border": "#0078d4",
+    }
+    UI_THEMES = {
+        "Default": {
+            "app_bg": "#f4f3f1",
+            "header_bg": "#ebe9e6",
+            "surface_bg": "#f4f3f1",
+            "text_fg": "#0f172a",
+            "muted_fg": "#6b7280",
+            "notebook_colors": {
+                "bar_bg": "#ece9e5",
+                "tab_idle_bg": "#ece9e5",
+                "tab_hover_bg": "#f6f4f1",
+                "tab_selected_bg": "#ffffff",
+                "tab_idle_fg": "#4f5358",
+                "tab_selected_fg": "#0f172a",
+                "tab_border": "#d1ccc5",
+                "tab_hover_border": "#c2bbb2",
+                "tab_selected_border": "#0078d4",
+            },
+        },
+        "Dark Gray": {
+            "app_bg": "#1e1e1e",
+            "header_bg": "#252526",
+            "surface_bg": "#1e1e1e",
+            "text_fg": "#f3f4f6",
+            "muted_fg": "#c8c8c8",
+            "notebook_colors": {
+                "bar_bg": "#252526",
+                "tab_idle_bg": "#2d2d30",
+                "tab_hover_bg": "#37373d",
+                "tab_selected_bg": "#1e1e1e",
+                "tab_idle_fg": "#d4d4d4",
+                "tab_selected_fg": "#ffffff",
+                "tab_border": "#3f3f46",
+                "tab_hover_border": "#4c4c54",
+                "tab_selected_border": "#007acc",
+            },
+        },
+        "Light Gray": {
+            "app_bg": "#ececec",
+            "header_bg": "#e1e1e1",
+            "surface_bg": "#ececec",
+            "text_fg": "#111827",
+            "muted_fg": "#6b7280",
+            "notebook_colors": {
+                "bar_bg": "#e3e3e3",
+                "tab_idle_bg": "#e3e3e3",
+                "tab_hover_bg": "#f3f3f3",
+                "tab_selected_bg": "#fbfbfb",
+                "tab_idle_fg": "#4b5563",
+                "tab_selected_fg": "#111827",
+                "tab_border": "#c8c8c8",
+                "tab_hover_border": "#bababa",
+                "tab_selected_border": "#0078d4",
+            },
+        },
+    }
+    DARK_ENTRY_BG = "#252526"
+    DARK_BUTTON_BG = "#2d2d30"
+    DARK_BUTTON_ACTIVE_BG = "#3e3e42"
+    LIGHT_ENTRY_BG = "#ffffff"
+    LIGHT_BUTTON_BG = "#f3f2f1"
+    LIGHT_BUTTON_ACTIVE_BG = "#e8e6e3"
+    LIGHT_DISABLED_FG = "#8a8886"
+    DEFAULT_WINDOW_WIDTH_PX = 1360
+    DEFAULT_WINDOW_HEIGHT_PX = 980
+    DEFAULT_WINDOW_MIN_WIDTH_PX = 1120
+    DEFAULT_WINDOW_MIN_HEIGHT_PX = 760
+
     VIDEO_PERSIST_FIELDS = {"fps", "keep_rec709", "start", "end"}
     FIELD_DEFS = [
         {"name": "preset", "label": "Preset", "type": "choice", "choices": PRESET_CHOICES, "width": 14},
@@ -611,6 +727,16 @@ class PreviewApp:
             setattr(self.current_args, "show_seam_overlay", False)
         self.defaults = clone_namespace(self.current_args)
         ensure_explicit_flags(self.current_args)
+        self.gui_settings_path = GUI_SETTINGS_PATH
+        self._config_persist_suspend = True
+        self._persisted_gui_settings = self._load_gui_settings()
+        saved_ui_style = self._sanitize_ui_theme_name(self._persisted_gui_settings.get("ui_style"))
+        saved_ffmpeg_path = self._normalize_saved_ffmpeg_path(
+            self._persisted_gui_settings.get("ffmpeg_path"),
+            str(getattr(self.current_args, "ffmpeg", "ffmpeg")),
+        )
+        self._set_theme_palette(saved_ui_style)
+        self.current_args.ffmpeg = saved_ffmpeg_path
         self.form_snapshot: Dict[str, str] = {}
         self.field_vars: Dict[str, tk.Variable] = {}
         self.field_widgets: Dict[str, tk.Widget] = {}
@@ -643,8 +769,8 @@ class PreviewApp:
         self.pano_width = 0
         self.pano_height = 0
         self.scale = 1.0
-        self.display_width = 640
-        self.display_height = 360
+        self.display_width = 680
+        self.display_height = 300
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -657,6 +783,17 @@ class PreviewApp:
         self.view_max_width = max(1, min(self.max_width_limit, screen_w // 3))
         self.view_max_width = max(1, int(math.ceil(self.view_max_width * 1.1)))
         self.view_max_height = max(1, min(self.max_height_limit, screen_h // 3))
+        self._ui_theme_name_var = tk.StringVar(value=saved_ui_style)
+        self.root.option_add("*Frame.Background", self.APP_BG)
+        self.root.option_add("*Label.Background", self.APP_BG)
+        self.root.option_add("*LabelFrame.Background", self.APP_BG)
+        self.root.option_add("*Checkbutton.Background", self.APP_BG)
+        self.root.option_add("*Radiobutton.Background", self.APP_BG)
+        self.root.option_add("*Label.Foreground", self.TEXT_FG)
+        self.root.option_add("*Checkbutton.Foreground", self.TEXT_FG)
+        self.root.option_add("*Radiobutton.Foreground", self.TEXT_FG)
+        self.root.configure(bg=self.APP_BG)
+        self._configure_notebook_style()
 
         self.photo: Optional[ImageTk.PhotoImage] = None
         self.preview_frame: Optional[tk.LabelFrame] = None
@@ -670,7 +807,7 @@ class PreviewApp:
         self.output_path_var = tk.StringVar()
         self._out_dir_custom = False
         self._tooltips: List[ToolTip] = []
-        self.ffmpeg_path_var = tk.StringVar(value=str(getattr(self.current_args, "ffmpeg", "ffmpeg")))
+        self.ffmpeg_path_var = tk.StringVar(value=saved_ffmpeg_path)
         self.jobs_var = tk.StringVar(value=str(getattr(self.current_args, "jobs", "auto")))
         self.log_text: Optional[tk.Text] = None
         self.help_text: Optional[tk.Text] = None
@@ -764,11 +901,20 @@ class PreviewApp:
         self.human_preview_status_var = tk.StringVar(
             value="Preview will show the first image group in the selected folder."
         )
+        self.human_gpu_status_var = tk.StringVar(
+            value="GPU status: Select this tab to check."
+        )
+        self.human_gpu_fix_var = tk.StringVar(
+            value="Select SegmentationMaskTool tab to check GPU status."
+        )
         self.human_preview_slider_var = tk.DoubleVar(value=15.0)
         self.human_preview_size_var = tk.StringVar(
             value=HUMAN_PREVIEW_DEFAULT_SIZE
         )
         self._human_preview_photo: Optional[ImageTk.PhotoImage] = None
+        self._human_gpu_status_label: Optional[tk.Label] = None
+        self._human_gpu_fix_text: Optional[tk.Text] = None
+        self._human_gpu_fix_after_id: Optional[str] = None
         self._human_preview_busy = False
         self._human_segmentation_module: Optional[Any] = None
         self._human_segmentation_model: Optional[Any] = None
@@ -904,9 +1050,19 @@ class PreviewApp:
         self._ply_view_high_max_points_var = tk.StringVar(
             value=str(PLY_VIEW_MAX_POINTS)
         )
+        self._ply_point_size_var = tk.StringVar(value="2")
+        self._ply_grid_step_var = tk.StringVar(value="1.0")
+        self._ply_grid_span_var = tk.StringVar(value="auto")
+        self._ply_draw_points_var = tk.BooleanVar(value=True)
+        self._ply_show_world_axes_var = tk.BooleanVar(value=True)
+        self._ply_show_grid_var = tk.BooleanVar(value=True)
         self._ply_projection_combo: Optional[ttk.Combobox] = None
         self._ply_interactive_max_points_entry: Optional[tk.Entry] = None
         self._ply_high_max_points_entry: Optional[tk.Entry] = None
+        self._ply_initial_view_state: Optional[Dict[str, Any]] = None
+        self._ply_rendered_grid_span = 0.0
+        self._ply_render_sample_step = 1
+        self._ply_rendered_point_count = 0
         self._ply_sky_axis_var = tk.StringVar(value="+Z")
         self._ply_sky_scale_var = tk.StringVar(value="100")
         self._ply_sky_count_var = tk.StringVar(value="4000")
@@ -934,9 +1090,87 @@ class PreviewApp:
         self._ply_loaded_sample_step = 1
         self._ply_is_interacting = False
         self._ply_interaction_after_id: Optional[str] = None
+        self._ply_redraw_pending = False
         self._ply_high_max_points_auto = True
         self._ply_high_max_points_updating = False
         self._ply_last_auto_high_max_points = str(PLY_VIEW_MAX_POINTS)
+        self.camera_scene_vars: Dict[str, tk.Variable] = {}
+        self.camera_scene_load_button: Optional[tk.Button] = None
+        self.camera_scene_clear_button: Optional[tk.Button] = None
+        self._camera_scene_input_groups: Dict[str, tk.Widget] = {}
+        self._camera_scene_colmap_entry: Optional[tk.Entry] = None
+        self._camera_scene_transforms_entry: Optional[tk.Entry] = None
+        self._camera_scene_transforms_ply_entry: Optional[tk.Entry] = None
+        self._camera_scene_csv_entry: Optional[tk.Entry] = None
+        self._camera_scene_csv_ply_entry: Optional[tk.Entry] = None
+        self._camera_scene_projection_combo: Optional[ttk.Combobox] = None
+        self._camera_scene_canvas: Optional[tk.Canvas] = None
+        self._camera_scene_canvas_image_id: Optional[int] = None
+        self._camera_scene_canvas_photo: Optional[ImageTk.PhotoImage] = None
+        self._camera_scene_info_var = tk.StringVar(
+            value="Camera format viewer is idle"
+        )
+        self._camera_scene_points: Optional[np.ndarray] = None
+        self._camera_scene_points_centered: Optional[np.ndarray] = None
+        self._camera_scene_colors: Optional[np.ndarray] = None
+        self._camera_scene_camera_items: List[Dict[str, Any]] = []
+        self._camera_scene_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_view_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_origin_centered = np.zeros(3, dtype=np.float32)
+        self._camera_scene_total_points = 0
+        self._camera_scene_total_cameras = 0
+        self._camera_scene_sample_step = 1
+        self._camera_scene_camera_sample_step = 1
+        self._camera_scene_rendered_camera_count = 0
+        self._camera_scene_rendered_grid_span = 0.0
+        self._camera_scene_source_label = "CameraPoseScene"
+        self._camera_scene_quat = np.array(
+            [1.0, 0.0, 0.0, 0.0], dtype=np.float32
+        )
+        self._camera_scene_zoom = 1.0
+        self._camera_scene_pan: Tuple[float, float] = (0.0, 0.0)
+        self._camera_scene_drag_last: Optional[Tuple[int, int]] = None
+        self._camera_scene_pan_last: Optional[Tuple[int, int]] = None
+        self._camera_scene_depth_offset = 1.0
+        self._camera_scene_max_extent = 1.0
+        self._camera_scene_is_interacting = False
+        self._camera_scene_interaction_after_id: Optional[str] = None
+        self._camera_scene_redraw_pending = False
+        self._camera_scene_projection_mode = tk.StringVar(value="Orthographic")
+        self._camera_scene_point_cap_var = tk.StringVar(
+            value=str(PLY_VIEW_MAX_POINTS)
+        )
+        self._camera_scene_interactive_point_cap_var = tk.StringVar(
+            value=str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
+        )
+        self._camera_scene_point_size_var = tk.StringVar(value="2")
+        self._camera_scene_camera_scale_var = tk.StringVar(value="1")
+        self._camera_scene_camera_stride_var = tk.StringVar(value="1")
+        self._camera_scene_grid_step_var = tk.StringVar(value="1.0")
+        self._camera_scene_grid_span_var = tk.StringVar(value="auto")
+        self._camera_scene_show_labels_var = tk.BooleanVar(value=False)
+        self._camera_scene_show_camera_axes_var = tk.BooleanVar(value=False)
+        self._camera_scene_show_world_axes_var = tk.BooleanVar(value=True)
+        self._camera_scene_show_grid_var = tk.BooleanVar(value=True)
+        self._camera_scene_monochrome_points_var = tk.BooleanVar(value=False)
+        self._camera_scene_draw_points_var = tk.BooleanVar(value=True)
+        self._camera_scene_draw_cameras_var = tk.BooleanVar(value=True)
+        self._camera_scene_initial_view_state: Optional[Dict[str, Any]] = None
+        self._camera_scene_base_points = np.zeros((0, 3), dtype=np.float32)
+        self._camera_scene_base_colors = np.zeros((0, 3), dtype=np.uint8)
+        self._camera_scene_base_camera_items: List[Dict[str, Any]] = []
+        self._camera_scene_base_info_text = "Camera format viewer is idle"
+        self._camera_scene_base_source_label = "CameraPoseScene"
+        self._camera_scene_ground_y = 0.0
+        self.camera_converter_vars: Dict[str, tk.Variable] = {}
+        self.camera_converter_run_button: Optional[tk.Button] = None
+        self.camera_converter_stop_button: Optional[tk.Button] = None
+        self.camera_converter_log: Optional[tk.Text] = None
+        self.camera_scene_preview_apply_button: Optional[tk.Button] = None
+        self._camera_scene_point_transform_widgets: List[tk.Widget] = []
+        self._human_tab_widget: Optional[tk.Widget] = None
+        self._ply_tab_widget: Optional[tk.Widget] = None
+        self._camera_scene_tab_widget: Optional[tk.Widget] = None
 
         self.video_stop_button: Optional[tk.Button] = None
         self.selector_stop_button: Optional[tk.Button] = None
@@ -1001,6 +1235,8 @@ class PreviewApp:
         self._output_monitor_stop = threading.Event()
         self._output_monitor_thread: Optional[threading.Thread] = None
         self.build_ui()
+        self._apply_ui_theme(saved_ui_style)
+        self._config_persist_suspend = False
         self.set_form_values()
         self.root.update_idletasks()
 
@@ -1015,31 +1251,177 @@ class PreviewApp:
 
         self.root.deiconify()
 
+    def _sanitize_ui_theme_name(self, theme_name: Any) -> str:
+        raw = str(theme_name or "").strip()
+        if raw in self.UI_THEMES:
+            return raw
+        return "Default"
+
+    def _normalize_saved_ffmpeg_path(self, value: Any, fallback: str) -> str:
+        raw = str(value or "").strip()
+        if raw:
+            return raw
+        fallback_text = str(fallback or "").strip()
+        if fallback_text:
+            return fallback_text
+        return "ffmpeg"
+
+    def _set_theme_palette(self, theme_name: str) -> None:
+        theme = self.UI_THEMES.get(theme_name, self.UI_THEMES["Default"])
+        self._current_ui_theme_name = self._sanitize_ui_theme_name(theme_name)
+        self.APP_BG = str(theme["app_bg"])
+        self.HEADER_BG = str(theme["header_bg"])
+        self.SURFACE_BG = str(theme["surface_bg"])
+        self.TEXT_FG = str(theme["text_fg"])
+        self.MUTED_FG = str(theme["muted_fg"])
+        self.NOTEBOOK_COLORS = dict(theme["notebook_colors"])
+
+    def _load_gui_settings(self) -> Dict[str, str]:
+        if not self.gui_settings_path.exists():
+            return {}
+        try:
+            with self.gui_settings_path.open("r", encoding="utf-8-sig") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError) as exc:
+            print(f"[WARN] Failed to read GUI settings: {exc}", file=sys.stderr)
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        result: Dict[str, str] = {}
+        ui_style = data.get("ui_style")
+        ffmpeg_path = data.get("ffmpeg_path")
+        if isinstance(ui_style, str):
+            result["ui_style"] = ui_style
+        if isinstance(ffmpeg_path, str):
+            result["ffmpeg_path"] = ffmpeg_path
+        return result
+
+    def _collect_gui_settings(self) -> Dict[str, str]:
+        theme_name = self._sanitize_ui_theme_name(self._ui_theme_name_var.get().strip())
+        ffmpeg_path = self.ffmpeg_path_var.get().strip() or str(getattr(self.defaults, "ffmpeg", "ffmpeg"))
+        return {
+            "ui_style": theme_name,
+            "ffmpeg_path": ffmpeg_path,
+        }
+
+    def _save_gui_settings(self) -> None:
+        if self._config_persist_suspend:
+            return
+        payload = self._collect_gui_settings()
+        try:
+            self.gui_settings_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.gui_settings_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
+                handle.write("\n")
+        except OSError as exc:
+            print(f"[WARN] Failed to write GUI settings: {exc}", file=sys.stderr)
+
+    def _configure_notebook_style(self) -> None:
+        """Apply a higher-contrast tab style that remains readable with long labels."""
+        style = ttk.Style(self.root)
+        try:
+            if style.theme_use() != "clam":
+                # Native Windows themes often ignore custom tab colors.
+                style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        colors = self.NOTEBOOK_COLORS
+        style.configure(
+            self.NOTEBOOK_STYLE,
+            background=colors["bar_bg"],
+            borderwidth=0,
+            tabmargins=(10, 8, 10, 0),
+        )
+        style.configure(
+            self.NOTEBOOK_TAB_STYLE,
+            background=colors["tab_idle_bg"],
+            foreground=colors["tab_idle_fg"],
+            borderwidth=1,
+            relief="flat",
+            padding=(12, 8, 12, 7),
+            focuscolor=colors["bar_bg"],
+        )
+        style.map(
+            self.NOTEBOOK_TAB_STYLE,
+            background=[
+                ("selected", colors["tab_selected_bg"]),
+                ("active", colors["tab_hover_bg"]),
+                ("!disabled", colors["tab_idle_bg"]),
+            ],
+            foreground=[
+                ("selected", colors["tab_selected_fg"]),
+                ("active", colors["tab_selected_fg"]),
+                ("!disabled", colors["tab_idle_fg"]),
+            ],
+            bordercolor=[
+                ("selected", colors["tab_selected_border"]),
+                ("active", colors["tab_hover_border"]),
+                ("!disabled", colors["tab_border"]),
+            ],
+            lightcolor=[
+                ("selected", colors["tab_selected_border"]),
+                ("active", colors["tab_hover_border"]),
+                ("!disabled", colors["tab_border"]),
+            ],
+            darkcolor=[
+                ("selected", colors["tab_selected_border"]),
+                ("active", colors["tab_hover_border"]),
+                ("!disabled", colors["tab_border"]),
+            ],
+        )
+
+    def _get_window_scale_factor(self) -> float:
+        if self.root is None:
+            return 1.0
+        try:
+            pixels_per_inch = float(self.root.winfo_fpixels("1i"))
+        except Exception:
+            return 1.0
+        if pixels_per_inch <= 0.0:
+            return 1.0
+        return max(1.0, pixels_per_inch / 96.0)
+
+    def _physical_px_to_logical(self, width_px: int, height_px: int) -> Tuple[int, int]:
+        scale = self._get_window_scale_factor()
+        logical_w = max(1, int(round(float(width_px) / scale)))
+        logical_h = max(1, int(round(float(height_px) / scale)))
+        return logical_w, logical_h
 
 
     def build_ui(self) -> None:
-        self.notebook = ttk.Notebook(self.root)
+        self.notebook = ttk.Notebook(self.root, style=self.NOTEBOOK_STYLE)
         self.notebook.pack(fill="both", expand=True)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed, add="+")
         ttk.Separator(self.root, orient="horizontal").pack(fill="x")
 
-        video_tab = tk.Frame(self.notebook)
-        selector_tab = tk.Frame(self.notebook)
-        preview_tab = tk.Frame(self.notebook)
-        human_tab = tk.Frame(self.notebook)
-        ply_tab = tk.Frame(self.notebook)
-        msxml_tab = tk.Frame(self.notebook)
-        dualfisheye_tab = tk.Frame(self.notebook)
-        config_tab = tk.Frame(self.notebook)
+        tab_bg = self.APP_BG
+        video_tab = tk.Frame(self.notebook, bg=tab_bg)
+        selector_tab = tk.Frame(self.notebook, bg=tab_bg)
+        preview_tab = tk.Frame(self.notebook, bg=tab_bg)
+        human_tab = tk.Frame(self.notebook, bg=tab_bg)
+        ply_tab = tk.Frame(self.notebook, bg=tab_bg)
+        msxml_tab = tk.Frame(self.notebook, bg=tab_bg)
+        dualfisheye_tab = tk.Frame(self.notebook, bg=tab_bg)
+        camera_scene_tab = tk.Frame(self.notebook, bg=tab_bg)
+        config_tab = tk.Frame(self.notebook, bg=tab_bg)
+        self._human_tab_widget = human_tab
+        self._ply_tab_widget = ply_tab
+        self._camera_scene_tab_widget = camera_scene_tab
 
         self.notebook.add(video_tab, text="Video2Frames")
         self.notebook.add(selector_tab, text="FrameSelector")
         self.notebook.add(preview_tab, text="360PerspCut")
         self.notebook.add(human_tab, text="SegmentationMaskTool")
         self.notebook.add(ply_tab, text="PointCloudOptimizer")
-        self.notebook.add(msxml_tab, text="MS360xmlToPersCams")
+        self.notebook.add(msxml_tab, text="MS360xmlToPerspCams")
         self.notebook.add(
             dualfisheye_tab,
             text="DualFisheyePipeline (Experimental)",
+        )
+        self.notebook.add(
+            camera_scene_tab,
+            text="Camera Optimization (Experimental)",
         )
         self.notebook.add(config_tab, text="Config")
 
@@ -1050,13 +1432,307 @@ class PreviewApp:
         self._build_ply_tab(ply_tab)
         self._build_msxml_tab(msxml_tab)
         self._build_dualfisheye_tab(dualfisheye_tab)
+        self._build_camera_scene_tab(camera_scene_tab)
         self._build_config_tab(config_tab)
 
         self.notebook.select(preview_tab)
+        self.root.after_idle(self._refresh_tab_activity_state)
+
+    def _is_notebook_tab_selected(self, tab_widget: Optional[tk.Widget]) -> bool:
+        """Return True when the given notebook tab is currently selected."""
+        if self.notebook is None or tab_widget is None:
+            return False
+        try:
+            selected = self.notebook.select()
+            if not selected:
+                return False
+            return str(self.notebook.nametowidget(selected)) == str(tab_widget)
+        except Exception:
+            return False
+
+    def _on_notebook_tab_changed(self, _event=None) -> None:
+        """Update background activity when the visible tab changes."""
+        self._refresh_tab_activity_state()
+
+    def _refresh_tab_activity_state(self) -> None:
+        """Enable background refresh only for currently visible tabs."""
+        if self._is_notebook_tab_selected(self._human_tab_widget):
+            self._update_human_gpu_status_ui()
+        else:
+            self._cancel_human_gpu_status_refresh()
+
+        if self._is_notebook_tab_selected(self._ply_tab_widget):
+            if self._ply_redraw_pending:
+                self._redraw_ply_canvas(force=True)
+        else:
+            self._ply_redraw_pending = True
+
+        if self._is_notebook_tab_selected(self._camera_scene_tab_widget):
+            if self._camera_scene_redraw_pending:
+                self._redraw_camera_scene_canvas(force=True)
+        else:
+            self._camera_scene_redraw_pending = True
+
+    def _cancel_human_gpu_status_refresh(self) -> None:
+        """Stop any pending GPU status refresh timer."""
+        if self._human_gpu_fix_after_id is not None:
+            try:
+                self.root.after_cancel(self._human_gpu_fix_after_id)
+            except Exception:
+                pass
+            self._human_gpu_fix_after_id = None
+
+    def _is_human_tab_active(self) -> bool:
+        """Return True while SegmentationMaskTool tab is selected."""
+        return self._is_notebook_tab_selected(self._human_tab_widget)
+
+    def _is_ply_tab_active(self) -> bool:
+        """Return True while PointCloudOptimizer tab is selected."""
+        return self._is_notebook_tab_selected(self._ply_tab_widget)
+
+    def _is_camera_scene_tab_active(self) -> bool:
+        """Return True while CameraFormatConverter tab is selected."""
+        return self._is_notebook_tab_selected(self._camera_scene_tab_widget)
+
+    def _create_tab_shell(
+        self,
+        parent: tk.Widget,
+        title: str,
+        subtitle: str,
+    ) -> tk.Frame:
+        container = tk.Frame(parent, bg=self.APP_BG)
+        container.pack(fill="both", expand=True)
+        header = tk.Frame(container, bg=self.HEADER_BG, bd=1, relief=tk.FLAT)
+        header.pack(fill="x", padx=6, pady=(6, 6))
+        tk.Label(
+            header,
+            text=title,
+            bg=self.HEADER_BG,
+            fg=self.TEXT_FG,
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(side=tk.LEFT, padx=(8, 10), pady=8)
+        tk.Label(
+            header,
+            text=subtitle,
+            bg=self.HEADER_BG,
+            fg=self.MUTED_FG,
+        ).pack(side=tk.LEFT, padx=(0, 10), pady=8)
+        content = tk.Frame(container, bg=self.APP_BG)
+        content.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        return content
+
+    def _apply_standard_tab_palette(self) -> None:
+        if self.root is None:
+            return
+        legacy_surface_colors = {
+            "#eef3f8",
+            "#f8fafc",
+            "#edf2f7",
+            "#e2e8f0",
+            "#d9e3ee",
+        }
+        app_bg_colors = set(legacy_surface_colors)
+        header_bg_colors = set()
+        text_fg_colors = {"#0f172a", "#111827"}
+        muted_fg_colors = {"#6b7280", "#475569", "#64748b", "#666666"}
+        for theme in self.UI_THEMES.values():
+            app_bg_colors.add(str(theme["app_bg"]).lower())
+            app_bg_colors.add(str(theme["surface_bg"]).lower())
+            header_bg_colors.add(str(theme["header_bg"]).lower())
+            text_fg_colors.add(str(theme["text_fg"]).lower())
+            muted_fg_colors.add(str(theme["muted_fg"]).lower())
+        preserve_colors = {
+            "#101010",
+            "#202020",
+            "#ffffff",
+            "white",
+        }
+        default_like = {
+            "systembuttonface",
+            "systemwindow",
+            "systemwindowframe",
+            "system3dface",
+        }
+        is_dark_theme = getattr(self, "_current_ui_theme_name", "Default") == "Dark Gray"
+
+        def _normalize_color(value: Any) -> str:
+            try:
+                return str(value).strip().lower()
+            except Exception:
+                return ""
+
+        def _walk(widget: tk.Widget, inherited_bg: str) -> None:
+            try:
+                widget_class = widget.winfo_class()
+            except Exception:
+                return
+            current_bg = ""
+            can_set_bg = False
+            try:
+                current_bg = _normalize_color(widget.cget("bg"))
+                can_set_bg = True
+            except Exception:
+                pass
+            if current_bg in header_bg_colors:
+                target_bg = self.HEADER_BG
+            elif widget_class in {"Frame", "Labelframe", "LabelFrame", "Panedwindow"}:
+                target_bg = self.APP_BG
+            elif widget_class in {"Label", "Checkbutton", "Radiobutton"}:
+                target_bg = inherited_bg
+            else:
+                target_bg = inherited_bg
+            if can_set_bg and current_bg not in preserve_colors:
+                if current_bg in default_like or current_bg.startswith("sys") or current_bg == "":
+                    try:
+                        widget.configure(bg=target_bg)
+                    except Exception:
+                        pass
+                elif current_bg in app_bg_colors or current_bg in header_bg_colors:
+                    try:
+                        widget.configure(bg=target_bg)
+                    except Exception:
+                        pass
+                elif widget_class in {"Label", "Checkbutton", "Radiobutton"} and (
+                    current_bg in app_bg_colors or current_bg in header_bg_colors
+                ):
+                    try:
+                        widget.configure(bg=target_bg)
+                    except Exception:
+                        pass
+            if widget_class in {"Labelframe", "LabelFrame"}:
+                try:
+                    widget.configure(fg=self.TEXT_FG)
+                except Exception:
+                    pass
+            try:
+                current_fg = _normalize_color(widget.cget("fg"))
+            except Exception:
+                current_fg = ""
+            if current_fg in text_fg_colors:
+                try:
+                    widget.configure(fg=self.TEXT_FG)
+                except Exception:
+                    pass
+            elif current_fg in muted_fg_colors:
+                try:
+                    widget.configure(fg=self.MUTED_FG)
+                except Exception:
+                    pass
+            if is_dark_theme:
+                if widget_class == "Button":
+                    try:
+                        widget.configure(
+                            bg=self.DARK_BUTTON_BG,
+                            fg=self.TEXT_FG,
+                            activebackground=self.DARK_BUTTON_ACTIVE_BG,
+                            activeforeground=self.TEXT_FG,
+                            disabledforeground=self.MUTED_FG,
+                            highlightbackground=self.APP_BG,
+                        )
+                    except Exception:
+                        pass
+                elif widget_class == "Entry":
+                    try:
+                        widget.configure(
+                            bg=self.DARK_ENTRY_BG,
+                            fg=self.TEXT_FG,
+                            insertbackground=self.TEXT_FG,
+                            disabledforeground=self.MUTED_FG,
+                            disabledbackground=self.DARK_ENTRY_BG,
+                            readonlybackground=self.DARK_ENTRY_BG,
+                        )
+                    except Exception:
+                        pass
+                elif widget_class == "Text":
+                    try:
+                        widget.configure(
+                            bg=self.DARK_ENTRY_BG,
+                            fg=self.TEXT_FG,
+                            insertbackground=self.TEXT_FG,
+                        )
+                    except Exception:
+                        pass
+            else:
+                if widget_class == "Button":
+                    try:
+                        widget.configure(
+                            bg=self.LIGHT_BUTTON_BG,
+                            fg=self.TEXT_FG,
+                            activebackground=self.LIGHT_BUTTON_ACTIVE_BG,
+                            activeforeground=self.TEXT_FG,
+                            disabledforeground=self.LIGHT_DISABLED_FG,
+                            highlightbackground=self.APP_BG,
+                        )
+                    except Exception:
+                        pass
+                elif widget_class == "Entry":
+                    try:
+                        widget.configure(
+                            bg=self.LIGHT_ENTRY_BG,
+                            fg=self.TEXT_FG,
+                            insertbackground=self.TEXT_FG,
+                            disabledforeground=self.MUTED_FG,
+                            disabledbackground=self.LIGHT_ENTRY_BG,
+                            readonlybackground=self.LIGHT_ENTRY_BG,
+                        )
+                    except Exception:
+                        pass
+                elif widget_class == "Text":
+                    try:
+                        widget.configure(
+                            bg=self.LIGHT_ENTRY_BG,
+                            fg=self.TEXT_FG,
+                            insertbackground=self.TEXT_FG,
+                        )
+                    except Exception:
+                        pass
+            child_bg = target_bg
+            try:
+                child_bg = str(widget.cget("bg"))
+            except Exception:
+                pass
+            for child in widget.winfo_children():
+                _walk(child, child_bg)
+
+        _walk(self.root, self.APP_BG)
+
+    def _apply_ui_theme(self, theme_name: str) -> None:
+        theme_name = self._sanitize_ui_theme_name(theme_name)
+        self._set_theme_palette(theme_name)
+        if hasattr(self, "_ui_theme_name_var"):
+            self._ui_theme_name_var.set(theme_name)
+        if self.root is None:
+            return
+        self.root.option_add("*Frame.Background", self.APP_BG)
+        self.root.option_add("*Label.Background", self.APP_BG)
+        self.root.option_add("*LabelFrame.Background", self.APP_BG)
+        self.root.option_add("*Checkbutton.Background", self.APP_BG)
+        self.root.option_add("*Radiobutton.Background", self.APP_BG)
+        self.root.option_add("*Label.Foreground", self.TEXT_FG)
+        self.root.option_add("*Checkbutton.Foreground", self.TEXT_FG)
+        self.root.option_add("*Radiobutton.Foreground", self.TEXT_FG)
+        self.root.configure(bg=self.APP_BG)
+        self._configure_notebook_style()
+        self._apply_standard_tab_palette()
+
+    def _on_ui_theme_selected(self, *_args: Any) -> None:
+        self._apply_ui_theme(self._ui_theme_name_var.get().strip() or "Default")
+
+    def _save_config_settings(self) -> None:
+        value = self.ffmpeg_path_var.get().strip()
+        self.current_args.ffmpeg = value or str(getattr(self.defaults, "ffmpeg", "ffmpeg"))
+        self._save_gui_settings()
+        messagebox.showinfo(
+            "Config Saved",
+            f"Saved Config settings to:\n{self.gui_settings_path}",
+        )
 
     def _build_video_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "Video2Frames",
+            "Extract frames from video clips with ffmpeg controls and output presets.",
+        )
 
         params = tk.LabelFrame(container, text="Parameters")
         params.pack(fill="x", padx=8, pady=8)
@@ -2250,14 +2926,20 @@ class PreviewApp:
 
 
     def _build_frame_selector_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "FrameSelector",
+            "Score image sequences and select representative frames for downstream processing.",
+        )
 
         params = tk.LabelFrame(container, text="Parameters")
         params.pack(fill="x", padx=8, pady=8)
 
         self.selector_vars = {
             "in_dir": tk.StringVar(),
+            "input_mode": tk.StringVar(
+                value=SELECTOR_INPUT_MODE_CLI_TO_LABEL["auto"]
+            ),
             "segment_size": tk.StringVar(value="10"),
             "dry_run": tk.BooleanVar(value=True),
             "workers": tk.StringVar(value="auto"),
@@ -2295,6 +2977,15 @@ class PreviewApp:
         row += 1
         segment_frame = tk.Frame(params)
         segment_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
+        tk.Label(segment_frame, text="Input mode").pack(side=tk.LEFT, padx=(0, 4))
+        selector_input_mode_combo = ttk.Combobox(
+            segment_frame,
+            textvariable=self.selector_vars["input_mode"],
+            values=tuple(SELECTOR_INPUT_MODE_LABEL_TO_CLI.keys()),
+            state="readonly",
+            width=16,
+        )
+        selector_input_mode_combo.pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(segment_frame, text="Segment size").pack(side=tk.LEFT, padx=(0, 4))
         tk.Entry(segment_frame, textvariable=self.selector_vars["segment_size"], width=10).pack(side=tk.LEFT, padx=(0, 12))
         tk.Label(segment_frame, text="Workers").pack(side=tk.LEFT, padx=(0, 4))
@@ -2382,7 +3073,7 @@ class PreviewApp:
         row += 1
         final_frame = tk.Frame(params)
         final_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Label(final_frame, text="Score crop ratio (crop top/bottom of 360deg pano)").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(final_frame, text="Score crop ratio (single pano only; pair mode uses circular center mask)").pack(side=tk.LEFT, padx=(0, 4))
         tk.Entry(final_frame, textvariable=self.selector_vars["crop_ratio"], width=10).pack(side=tk.LEFT, padx=(0, 12))
         tk.Checkbutton(
             final_frame,
@@ -2514,11 +3205,16 @@ class PreviewApp:
         self._on_selector_csv_mode_changed()
 
     def _build_human_mask_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "SegmentationMaskTool",
+            "Generate and refine human or object masks with GPU-aware segmentation options.",
+        )
 
         params = tk.LabelFrame(container, text="Parameters")
         params.pack(fill="x", padx=8, pady=8)
+
+        default_cpu_workers = str(max(1, os.cpu_count() or 1))
 
         self.human_vars = {
             "input": tk.StringVar(),
@@ -2530,11 +3226,16 @@ class PreviewApp:
             "edge_fuse_enabled": tk.BooleanVar(value=True),
             "edge_fuse_pixels": tk.StringVar(value="25"),
             "cpu": tk.BooleanVar(value=False),
+            "cpu_workers": tk.StringVar(value=default_cpu_workers),
             "include_shadow": tk.BooleanVar(value=False),
             "target_person": tk.BooleanVar(value=True),
             "target_bicycle": tk.BooleanVar(value=False),
             "target_car": tk.BooleanVar(value=False),
+            "target_motorcycle": tk.BooleanVar(value=False),
+            "target_bus": tk.BooleanVar(value=False),
+            "target_truck": tk.BooleanVar(value=False),
             "target_animal": tk.BooleanVar(value=False),
+            "custom_targets": tk.StringVar(),
         }
         self.human_vars["input"].trace_add("write", self._on_human_input_changed)
         self.human_vars["output"].trace_add("write", self._on_human_output_changed)
@@ -2552,6 +3253,9 @@ class PreviewApp:
         )
         self.human_vars["edge_fuse_enabled"].trace_add(
             "write", self._on_human_expand_value_changed
+        )
+        self.human_vars["cpu"].trace_add(
+            "write", lambda *_args: self._update_human_gpu_status_ui()
         )
 
         row = 0
@@ -2627,6 +3331,11 @@ class PreviewApp:
         )
         self.human_edge_fuse_entry.pack(side=tk.LEFT, padx=(0, 4))
         tk.Label(mode_frame, text="Pixels").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Checkbutton(
+            mode_frame,
+            text="Include shadow",
+            variable=self.human_vars["include_shadow"],
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
         row += 1
         target_frame = tk.Frame(params)
@@ -2649,22 +3358,77 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(0, 8))
         tk.Checkbutton(
             target_frame,
+            text="Motorcycle",
+            variable=self.human_vars["target_motorcycle"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Bus",
+            variable=self.human_vars["target_bus"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
+            text="Truck",
+            variable=self.human_vars["target_truck"],
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(
+            target_frame,
             text="Animal (Bird/Cat/Dog)",
             variable=self.human_vars["target_animal"],
         ).pack(side=tk.LEFT, padx=(0, 8))
 
         row += 1
+        custom_target_frame = tk.Frame(params)
+        custom_target_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
+        tk.Label(custom_target_frame, text="Custom Targets(comma separated)").pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        tk.Entry(
+            custom_target_frame,
+            textvariable=self.human_vars["custom_targets"],
+            width=72,
+        ).pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 4))
+
+        row += 1
         flags_frame = tk.Frame(params)
         flags_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
         tk.Checkbutton(flags_frame, text="Force CPU", variable=self.human_vars["cpu"]).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Checkbutton(
+        tk.Label(flags_frame, text="CPU workers (all modes)").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
             flags_frame,
-            text="Include shadow",
-            variable=self.human_vars["include_shadow"],
-        ).pack(side=tk.LEFT, padx=(0, 12))
+            textvariable=self.human_vars["cpu_workers"],
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(flags_frame, text="GPU status").pack(side=tk.LEFT, padx=(12, 4))
+        self._human_gpu_status_label = tk.Label(
+            flags_frame,
+            textvariable=self.human_gpu_status_var,
+            anchor="w",
+            justify="left",
+        )
+        self._human_gpu_status_label.pack(side=tk.LEFT, padx=(0, 4))
+
+        row += 1
+        gpu_fix_frame = tk.Frame(params)
+        gpu_fix_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        tk.Label(gpu_fix_frame, text="How to fix").pack(
+            side=tk.LEFT,
+            padx=(0, 8),
+        )
+        self._human_gpu_fix_text = tk.Text(
+            gpu_fix_frame,
+            width=118,
+            height=1,
+            wrap="none",
+        )
+        self._human_gpu_fix_text.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 4))
+        self._human_gpu_fix_text.bind("<Key>", lambda _event: "break")
+        self._human_gpu_fix_text.bind("<Control-a>", self._select_all_human_gpu_fix_text)
 
         for col in range(3):
             params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
+
+        self._update_human_gpu_status_ui()
 
         actions = tk.Frame(container)
         actions.pack(fill="x", padx=8, pady=(0, 8))
@@ -3163,11 +3927,38 @@ class PreviewApp:
             key = "target_{}".format(target_name)
             if bool(self.human_vars[key].get()):
                 selected_targets.append(target_name)
-        if not selected_targets:
+        custom_targets_text = self.human_vars["custom_targets"].get().strip()
+        raw_targets = list(selected_targets)
+        if custom_targets_text:
+            raw_targets.append(custom_targets_text)
+        if not raw_targets:
             if show_errors:
                 messagebox.showerror(
                     "gs360_SegmentationMaskTool",
-                    "Select at least one target (Person, Bicycle, Car, Animal).",
+                    (
+                        "Select at least one target or enter a custom target "
+                        "name."
+                    ),
+                )
+            return None
+        try:
+            module = importlib.import_module("gs360_SegmentationMaskTool")
+            resolved_targets, invalid_targets = module.resolve_target_names(
+                raw_targets
+            )
+            available_targets = module.list_available_target_names()
+        except Exception:
+            resolved_targets = raw_targets
+            invalid_targets = []
+            available_targets = []
+        if invalid_targets:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "Unsupported target name(s): {}\n\nAvailable targets:\n{}".format(
+                        ", ".join(invalid_targets),
+                        ", ".join(available_targets),
+                    ),
                 )
             return None
 
@@ -3240,12 +4031,31 @@ class PreviewApp:
         if not edge_fuse_enabled:
             edge_fuse_pixels = 0
 
+        cpu_workers_text = self.human_vars["cpu_workers"].get().strip()
+        try:
+            cpu_workers = int(cpu_workers_text)
+        except ValueError:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "CPU workers (all modes) must be an integer.",
+                )
+            return None
+        if cpu_workers <= 0:
+            if show_errors:
+                messagebox.showerror(
+                    "gs360_SegmentationMaskTool",
+                    "CPU workers (all modes) must be 1 or greater.",
+                )
+            return None
+
         return {
             "input_path": input_path,
             "output_dir": self.human_vars["output"].get().strip(),
             "mode": mode_value,
-            "targets": selected_targets,
+            "targets": resolved_targets,
             "cpu": bool(self.human_vars["cpu"].get()),
+            "cpu_workers": cpu_workers,
             "include_shadow": bool(self.human_vars["include_shadow"].get()),
             "expand_mode": expand_mode,
             "expand_pixels": expand_pixels,
@@ -3328,6 +4138,159 @@ class PreviewApp:
             return "off"
         return "{} px".format(settings["edge_fuse_pixels"])
 
+    @staticmethod
+    def _format_human_vram_text(
+        free_bytes: Optional[int],
+        total_bytes: Optional[int],
+    ) -> str:
+        """Format used/total VRAM in decimal GB."""
+        if free_bytes is None or total_bytes is None or total_bytes <= 0:
+            return ""
+        used_gb = float(max(0, int(total_bytes) - int(free_bytes))) / 1e9
+        total_gb = float(total_bytes) / 1e9
+        return " | VRAM used/total: {:.1f}/{:.1f} GB".format(
+            used_gb,
+            total_gb,
+        )
+
+    @staticmethod
+    def _build_human_gpu_fix_command(
+        torch_version: str,
+        torchvision_version: str,
+    ) -> str:
+        """Build a copyable pip install command for the current environment."""
+        torch_pkg = "torch=={}".format(torch_version)
+        tv_pkg = "torchvision=={}".format(torchvision_version)
+        return (
+            "pip install {} {} -f "
+            "https://download.pytorch.org/whl/torch_stable.html"
+        ).format(torch_pkg, tv_pkg)
+
+    def _get_human_gpu_status_info(self) -> Dict[str, str]:
+        """Build a short GPU availability message for tool users."""
+        force_cpu = False
+        if self.human_vars:
+            try:
+                force_cpu = bool(self.human_vars["cpu"].get())
+            except Exception:
+                force_cpu = False
+
+        try:
+            module = importlib.import_module("gs360_SegmentationMaskTool")
+        except Exception:
+            return {
+                "status": "GPU status: Unavailable",
+                "fix": "Open this GUI in a CUDA-enabled PyTorch environment.",
+                "color": "#b00020",
+            }
+
+        torch_version = str(getattr(module.torch, "__version__", "torch"))
+        try:
+            torchvision_module = importlib.import_module("torchvision")
+            torchvision_version = str(
+                getattr(torchvision_module, "__version__", "torchvision")
+            )
+        except Exception:
+            torchvision_version = "torchvision"
+        fix_command = self._build_human_gpu_fix_command(
+            torch_version,
+            torchvision_version,
+        )
+
+        try:
+            cuda_available = bool(module.torch.cuda.is_available())
+        except Exception:
+            cuda_available = False
+
+        gpu_name = ""
+        free_bytes = None
+        total_bytes = None
+        if cuda_available:
+            try:
+                gpu_name = str(module.torch.cuda.get_device_name(0))
+            except Exception:
+                gpu_name = "CUDA GPU"
+            try:
+                free_bytes, total_bytes = module.torch.cuda.mem_get_info()
+            except Exception:
+                try:
+                    props = module.torch.cuda.get_device_properties(0)
+                    total_bytes = int(getattr(props, "total_memory", 0))
+                except Exception:
+                    total_bytes = None
+                free_bytes = None
+        vram_text = self._format_human_vram_text(free_bytes, total_bytes)
+
+        if cuda_available and force_cpu:
+            return {
+                "status": "GPU status: Available ({}){}".format(
+                    gpu_name,
+                    vram_text,
+                ) + " | Force CPU enabled",
+                "fix": "Turn off Force CPU to use GPU.",
+                "color": "#9a6700",
+            }
+        if cuda_available:
+            return {
+                "status": "GPU status: Available ({}){}".format(
+                    gpu_name,
+                    vram_text,
+                ),
+                "fix": "GPU can be used. No fix needed.",
+                "color": "#0b6e4f",
+            }
+        return {
+            "status": "GPU status: Unavailable",
+            "fix": fix_command,
+            "color": "#b00020",
+        }
+
+    def _update_human_gpu_status_ui(self) -> None:
+        """Refresh the user-facing GPU availability text."""
+        if not self._is_human_tab_active():
+            self._cancel_human_gpu_status_refresh()
+            return
+        info = self._get_human_gpu_status_info()
+        self.human_gpu_status_var.set(info["status"])
+        self.human_gpu_fix_var.set(info["fix"])
+        label = self._human_gpu_status_label
+        if label is not None:
+            try:
+                label.configure(fg=info.get("color", "#202020"))
+            except tk.TclError:
+                pass
+        text_widget = self._human_gpu_fix_text
+        if text_widget is not None:
+            try:
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert("1.0", info["fix"])
+            except tk.TclError:
+                pass
+        self._schedule_human_gpu_status_refresh()
+
+    def _schedule_human_gpu_status_refresh(self) -> None:
+        """Refresh GPU status periodically without updating too frequently."""
+        self._cancel_human_gpu_status_refresh()
+        if not self._is_human_tab_active():
+            return
+        self._human_gpu_fix_after_id = self.root.after(
+            5000,
+            self._update_human_gpu_status_ui,
+        )
+
+    def _select_all_human_gpu_fix_text(self, _event=None) -> str:
+        """Select all text in the How to fix text box."""
+        text_widget = self._human_gpu_fix_text
+        if text_widget is None:
+            return "break"
+        try:
+            text_widget.tag_add("sel", "1.0", "end-1c")
+            text_widget.mark_set("insert", "1.0")
+            text_widget.see("insert")
+        except tk.TclError:
+            pass
+        return "break"
+
     def _load_human_segmentation_runtime(
         self, force_cpu: bool
     ) -> Tuple[Any, Any, Any]:
@@ -3383,17 +4346,8 @@ class PreviewApp:
         image: Image.Image,
         settings: Dict[str, Any],
     ) -> Optional[np.ndarray]:
-        tensor = module.transforms.ToTensor()(image).to(device)
-        with module.torch.no_grad():
-            if (
-                device.type == "cuda"
-                and module.USE_FP16
-                and getattr(module, "autocast", None) is not None
-            ):
-                with module.autocast():
-                    pred = model([tensor])[0]
-            else:
-                pred = model([tensor])[0]
+        image_rgb = np.array(image.convert("RGB"))
+        pred = module.run_inference(model, device, image_rgb)
 
         image_shape = (image.size[1], image.size[0])
         mask = module.target_mask_from_prediction(
@@ -3412,7 +4366,7 @@ class PreviewApp:
         )
         if settings["include_shadow"]:
             shadow = module.estimate_shadow_mask(
-                np.array(image),
+                image_rgb,
                 mask,
                 t=module.SHADOW_T,
                 sigma=module.SHADOW_SIGMA,
@@ -4816,8 +5770,11 @@ class PreviewApp:
         )
 
     def _build_msxml_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "MS360xmlToPerspCams",
+            "Convert Metashape 360 camera XML data into perspective camera exports and related assets.",
+        )
 
         params = tk.LabelFrame(container, text="Parameters")
         params.pack(fill="x", padx=8, pady=8)
@@ -4828,9 +5785,6 @@ class PreviewApp:
             "preset": tk.StringVar(value="full360coverage"),
             "format": tk.StringVar(value="Metashape XML"),
             "ext": tk.StringVar(value="jpg"),
-            "scale": tk.StringVar(value="1.0"),
-            "world_axis": tk.StringVar(value="0 1 0"),
-            "world_deg": tk.StringVar(value="0"),
             "cut": tk.BooleanVar(value=False),
             "cut_input": tk.StringVar(),
             "cut_out": tk.StringVar(),
@@ -4928,31 +5882,6 @@ class PreviewApp:
             width=8,
         )
         ext_combo.pack(side=tk.LEFT)
-
-        row += 1
-        tk.Label(params, text="Scale factor / World").grid(
-            row=row, column=0, sticky="e", padx=4, pady=4
-        )
-        world_frame = tk.Frame(params)
-        world_frame.grid(row=row, column=1, sticky="w", padx=4, pady=4)
-        tk.Label(world_frame, text="Scale factor").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(
-            world_frame,
-            textvariable=self.msxml_vars["scale"],
-            width=8,
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(world_frame, text="Axis").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(
-            world_frame,
-            textvariable=self.msxml_vars["world_axis"],
-            width=12,
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        tk.Label(world_frame, text="Deg").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(
-            world_frame,
-            textvariable=self.msxml_vars["world_deg"],
-            width=6,
-        ).pack(side=tk.LEFT)
 
         row += 1
         persp_frame = tk.LabelFrame(params, text="PerspCut")
@@ -5113,8 +6042,11 @@ class PreviewApp:
         self._update_msxml_format_state()
 
     def _build_dualfisheye_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "DualFisheyePipeline (Experimental)",
+            "Inspect and process dual-fisheye captures into calibrated perspective outputs.",
+        )
 
         scroll_wrap = tk.Frame(container)
         scroll_wrap.pack(fill="both", expand=True)
@@ -5713,20 +6645,38 @@ class PreviewApp:
         self._update_dualfisheye_output_controls_state()
 
     def _build_ply_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
+        container = tk.Frame(parent, bg=self.APP_BG)
         container.pack(fill="both", expand=True)
+
+        header = tk.Frame(container, bg=self.HEADER_BG, bd=1, relief=tk.FLAT)
+        header.pack(fill="x", padx=6, pady=(6, 6))
+        tk.Label(
+            header,
+            text="PointCloudOptimizer",
+            bg=self.HEADER_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(side=tk.LEFT, padx=(8, 10), pady=8)
+        tk.Label(
+            header,
+            text="Optimize and preview point clouds with the same viewer workflow used for camera scenes.",
+            bg=self.HEADER_BG,
+            fg="#6b7280",
+        ).pack(side=tk.LEFT, padx=(0, 10), pady=8)
 
         body_pane = tk.PanedWindow(
             container,
             orient=tk.HORIZONTAL,
             sashrelief=tk.RAISED,
             sashwidth=6,
+            bd=0,
+            opaqueresize=True,
         )
-        body_pane.pack(fill="both", expand=True, padx=8, pady=8)
-        left_panel = tk.Frame(body_pane)
-        right_panel = tk.Frame(body_pane)
-        body_pane.add(left_panel, minsize=700, stretch="always")
-        body_pane.add(right_panel, minsize=260, stretch="never")
+        body_pane.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        left_panel = tk.Frame(body_pane, bg=self.APP_BG, width=620)
+        right_panel = tk.Frame(body_pane, bg=self.APP_BG)
+        body_pane.add(left_panel, minsize=560, stretch="never")
+        body_pane.add(right_panel, minsize=700, stretch="always")
 
         params = tk.LabelFrame(left_panel, text="Parameters")
         params.pack(fill="x", padx=0, pady=(0, 8))
@@ -5750,6 +6700,15 @@ class PreviewApp:
         self._ply_view_high_max_points_var.trace_add(
             "write", self._on_ply_high_max_points_var_changed
         )
+        for redraw_var in (
+            self._ply_point_size_var,
+            self._ply_grid_step_var,
+            self._ply_grid_span_var,
+        ):
+            redraw_var.trace_add(
+                "write",
+                lambda *_args: self._redraw_ply_canvas(),
+            )
         self._ply_target_var_map = {
             "points": self.ply_vars["target_points"],
             "percent": self.ply_vars["target_percent"],
@@ -5798,45 +6757,62 @@ class PreviewApp:
 
         row += 1
         downsample_frame = tk.Frame(params)
-        downsample_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=4)
-        tk.Label(downsample_frame, text="Target mode").pack(side=tk.LEFT, padx=(0, 4))
+        downsample_frame.grid(row=row, column=0, columnspan=4, sticky="we", pady=4)
+        downsample_frame.grid_columnconfigure(1, weight=1)
+        downsample_frame.grid_columnconfigure(3, weight=1)
+        downsample_frame.grid_columnconfigure(5, weight=1)
+        tk.Label(downsample_frame, text="Target mode").grid(
+            row=0, column=0, sticky="w", padx=(0, 4), pady=(0, 4)
+        )
         mode_labels = tuple(self._ply_mode_key_map.keys())
         mode_combo = ttk.Combobox(
             downsample_frame,
             textvariable=self.ply_target_mode_var,
             values=mode_labels,
             state="readonly",
-            width=18,
+            width=16,
         )
-        mode_combo.pack(side=tk.LEFT, padx=(0, 12))
+        mode_combo.grid(row=0, column=1, sticky="we", padx=(0, 12), pady=(0, 4))
         mode_combo.bind("<<ComboboxSelected>>", self._on_ply_target_mode_changed)
         self._ply_target_value_label = tk.Label(downsample_frame, text="Points")
-        self._ply_target_value_label.pack(side=tk.LEFT, padx=(0, 4))
+        self._ply_target_value_label.grid(
+            row=0, column=2, sticky="w", padx=(0, 4), pady=(0, 4)
+        )
         current_mode_key = self._ply_mode_key_map.get(self.ply_target_mode_var.get(), "points")
         current_var = self._ply_target_var_map.get(current_mode_key, self.ply_vars["target_points"])
         self._ply_target_value_entry = tk.Entry(
             downsample_frame,
             textvariable=current_var,
-            width=12,
+            width=10,
         )
-        self._ply_target_value_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(downsample_frame, text="Downsample").pack(side=tk.LEFT, padx=(0, 4))
+        self._ply_target_value_entry.grid(
+            row=0, column=3, sticky="we", padx=(0, 12), pady=(0, 4)
+        )
+        tk.Label(downsample_frame, text="Downsample").grid(
+            row=1, column=0, sticky="w", padx=(0, 4)
+        )
         method_labels = tuple(self._ply_downsample_method_key_map.keys())
         ttk.Combobox(
             downsample_frame,
             textvariable=self.ply_downsample_method_var,
             values=method_labels,
             state="readonly",
-            width=22,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(downsample_frame, text="Weight").pack(side=tk.LEFT, padx=(0, 4))
+            width=18,
+        ).grid(row=1, column=1, sticky="we", padx=(0, 12))
+        tk.Label(downsample_frame, text="Weight").grid(
+            row=1, column=2, sticky="w", padx=(0, 4)
+        )
         self.ply_adaptive_weight_entry = tk.Entry(
             downsample_frame,
             textvariable=self.ply_vars["adaptive_weight"],
             width=8,
         )
-        self.ply_adaptive_weight_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(downsample_frame, text="Keep strategy").pack(side=tk.LEFT, padx=(0, 4))
+        self.ply_adaptive_weight_entry.grid(
+            row=1, column=3, sticky="w", padx=(0, 12)
+        )
+        tk.Label(downsample_frame, text="Keep strategy").grid(
+            row=1, column=4, sticky="w", padx=(0, 4)
+        )
         self.ply_keep_menu = ttk.Combobox(
             downsample_frame,
             textvariable=self.ply_vars["keep_strategy"],
@@ -5844,12 +6820,12 @@ class PreviewApp:
             state="readonly",
             width=12,
         )
-        self.ply_keep_menu.pack(side=tk.LEFT, padx=(0, 4))
+        self.ply_keep_menu.grid(row=1, column=5, sticky="we", padx=(0, 4))
         self._update_ply_target_value_widgets()
 
         row += 1
         params_actions = tk.Frame(params)
-        params_actions.grid(row=row, column=0, columnspan=3, sticky="we", pady=(4, 4))
+        params_actions.grid(row=row, column=0, columnspan=4, sticky="e", pady=(4, 4))
         self.ply_stop_button = tk.Button(
             params_actions,
             text="Stop",
@@ -5866,12 +6842,31 @@ class PreviewApp:
 
         params.grid_columnconfigure(1, weight=1)
 
-        viewer_frame = tk.LabelFrame(left_panel, text="Point Cloud Viewer")
+        viewer_tools_frame = tk.LabelFrame(left_panel, text="Viewer Tools")
+        viewer_tools_frame.pack(fill="x", padx=0, pady=(0, 8))
+
+        viewer_frame = tk.Frame(right_panel, bg=self.APP_BG, bd=1, relief=tk.GROOVE)
         viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
         self._ply_viewer_root = viewer_frame
 
-        viewer_actions = tk.Frame(viewer_frame)
-        viewer_actions.pack(fill="x", padx=12, pady=(8, 0))
+        viewer_header = tk.Frame(viewer_frame, bg=self.HEADER_BG)
+        viewer_header.pack(fill="x", padx=0, pady=0)
+        tk.Label(
+            viewer_header,
+            text="Viewer",
+            bg=self.HEADER_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(side=tk.LEFT, padx=(12, 10), pady=10)
+        tk.Label(
+            viewer_header,
+            text="Left drag = orbit, Right drag = pan, Wheel = zoom",
+            bg=self.HEADER_BG,
+            fg="#6b7280",
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=10)
+
+        viewer_actions = tk.Frame(viewer_frame, bg=self.APP_BG)
+        viewer_actions.pack(fill="x", padx=12, pady=(8, 2))
         self.ply_input_view_button = tk.Button(
             viewer_actions,
             text="Show Input",
@@ -5889,30 +6884,28 @@ class PreviewApp:
             text="Clear",
             command=self._on_clear_ply_view,
         )
-        self.ply_clear_view_button.pack(side=tk.LEFT, padx=(4, 0), pady=0)
-        tk.Checkbutton(
-            viewer_actions,
-            text="Monochrome",
-            variable=self._ply_monochrome_var,
-            command=self._redraw_ply_canvas,
-        ).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Label(viewer_actions, text="Projection").pack(side=tk.LEFT, padx=(12, 4))
+        self.ply_clear_view_button.pack(side=tk.LEFT, padx=(4, 8), pady=0)
+        tk.Label(viewer_actions, text="Projection", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
         self._ply_projection_combo = ttk.Combobox(
             viewer_actions,
             textvariable=self._ply_projection_mode,
             values=("Orthographic", "Perspective"),
             state="readonly",
-            width=14,
+            width=12,
         )
         self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
-        tk.Label(viewer_actions, text="Interactive Render Points").pack(
-            side=tk.LEFT, padx=(12, 4)
+        tk.Label(viewer_actions, text="Interactive Points", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
         )
-        interactive_max_points_entry = tk.Entry(
+        interactive_max_points_entry = ttk.Combobox(
             viewer_actions,
             textvariable=self._ply_view_interactive_max_points_var,
-            width=9,
+            values=("10000", "100000", "1000000"),
+            state="normal",
+            width=8,
         )
         interactive_max_points_entry.pack(side=tk.LEFT)
         interactive_max_points_entry.bind(
@@ -5922,13 +6915,15 @@ class PreviewApp:
             "<FocusOut>", self._on_ply_interactive_max_points_commit
         )
         self._ply_interactive_max_points_entry = interactive_max_points_entry
-        tk.Label(viewer_actions, text="Final Render Points").pack(
-            side=tk.LEFT, padx=(12, 4)
+        tk.Label(viewer_actions, text="Final Points", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
         )
-        high_max_points_entry = tk.Entry(
+        high_max_points_entry = ttk.Combobox(
             viewer_actions,
             textvariable=self._ply_view_high_max_points_var,
-            width=9,
+            values=("50000", "500000", "5000000"),
+            state="normal",
+            width=8,
         )
         high_max_points_entry.pack(side=tk.LEFT)
         high_max_points_entry.bind(
@@ -5939,24 +6934,110 @@ class PreviewApp:
         )
         self._ply_high_max_points_entry = high_max_points_entry
 
-        color_label_width = 18
-        pick_color_button_width = 17
-        remove_color_controls = tk.Frame(viewer_frame)
-        remove_color_controls.pack(fill="x", padx=12, pady=(4, 0))
+        viewer_controls_middle = tk.Frame(viewer_frame, bg=self.APP_BG)
+        viewer_controls_middle.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Label(viewer_controls_middle, text="Point size", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._ply_point_size_var,
+            values=("1", "2", "3", "5"),
+            state="normal",
+            width=5,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Grid step", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._ply_grid_step_var,
+            values=("0.01", "1", "10", "100"),
+            state="normal",
+            width=7,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Grid span", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._ply_grid_span_var,
+            values=("auto", "5", "10", "20", "50", "100", "200", "500"),
+            state="normal",
+            width=7,
+        ).pack(side=tk.LEFT)
+
+        viewer_controls_bottom = tk.Frame(viewer_frame, bg=self.APP_BG)
+        viewer_controls_bottom.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Draw PointCloud",
+            variable=self._ply_draw_points_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Monochrome points",
+            variable=self._ply_monochrome_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Ground grid",
+            variable=self._ply_show_grid_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="World XYZ axes",
+            variable=self._ply_show_world_axes_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
+        viewer_controls_actions = tk.Frame(viewer_frame, bg=self.APP_BG)
+        viewer_controls_actions.pack(fill="x", padx=12, pady=(0, 4))
+        tk.Button(
+            viewer_controls_actions,
+            text="Reset View",
+            command=self._reset_ply_view,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        status_band = tk.Frame(viewer_frame, bg=self.APP_BG)
+        status_band.pack(fill="x")
+        tk.Label(
+            status_band,
+            textvariable=self._ply_view_info_var,
+            anchor="w",
+            bg=self.APP_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 10, "bold"),
+        ).pack(fill="x", padx=12, pady=(0, 6))
+
+        color_label_width = 16
+        pick_color_button_width = 15
+        remove_color_controls = tk.LabelFrame(viewer_tools_frame, text="Remove")
+        remove_color_controls.pack(fill="x", padx=12, pady=(6, 0))
+        remove_color_controls.grid_columnconfigure(1, weight=1)
+        remove_color_controls.grid_columnconfigure(3, weight=1)
         tk.Label(
             remove_color_controls,
             text="Remove color",
             width=color_label_width,
             anchor="w",
-        ).pack(
-            side=tk.LEFT, padx=(0, 4)
-        )
+        ).grid(row=0, column=0, sticky="w", padx=(8, 4), pady=(6, 4))
         remove_color_display = tk.Label(
             remove_color_controls,
             textvariable=self._ply_remove_color_rgb_var,
             fg="#87cefa",
+            anchor="w",
         )
-        remove_color_display.pack(side=tk.LEFT, padx=(4, 4))
+        remove_color_display.grid(
+            row=0, column=1, sticky="w", padx=(4, 8), pady=(6, 4)
+        )
         self._ply_remove_color_label = remove_color_display
         self._update_remove_color_display(
             (135, 206, 250),
@@ -5967,40 +7048,43 @@ class PreviewApp:
             text="Pick Remove Color",
             width=pick_color_button_width,
             command=self._on_pick_remove_color,
-        ).pack(side=tk.LEFT, padx=(4, 4))
-        tk.Label(remove_color_controls, text="Tol (RGB)").pack(
-            side=tk.LEFT, padx=(12, 4)
+        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(6, 4))
+        tk.Label(remove_color_controls, text="Tol (RGB)").grid(
+            row=1, column=0, sticky="w", padx=(8, 4), pady=(0, 6)
         )
         tk.Entry(
             remove_color_controls,
             textvariable=self._ply_remove_color_tol_var,
             width=6,
-        ).pack(side=tk.LEFT)
+        ).grid(row=1, column=1, sticky="w", padx=(4, 8), pady=(0, 6))
         tk.Button(
             remove_color_controls,
             text="Remove Color Points",
             command=self._on_remove_color_points,
-        ).pack(side=tk.LEFT, padx=(8, 4))
+        ).grid(row=1, column=2, sticky="w", padx=(0, 8), pady=(0, 6))
         tk.Button(
             remove_color_controls,
             text="Reset",
             command=self._on_reset_ply_view_state,
-        ).pack(side=tk.LEFT, padx=(4, 0))
+        ).grid(row=1, column=3, sticky="w", pady=(0, 6))
 
-        sky_controls = tk.Frame(viewer_frame)
-        sky_controls.pack(fill="x", padx=12, pady=(4, 0))
+        sky_controls = tk.LabelFrame(viewer_tools_frame, text="Add Sky")
+        sky_controls.pack(fill="x", padx=12, pady=(6, 0))
+        sky_controls.grid_columnconfigure(1, weight=1)
+        sky_controls.grid_columnconfigure(3, weight=1)
         tk.Label(
             sky_controls,
             text="Sky point cloud color",
             width=color_label_width,
             anchor="w",
-        ).pack(side=tk.LEFT, padx=(0, 4))
+        ).grid(row=0, column=0, sticky="w", padx=(8, 4), pady=(6, 4))
         sky_color_display = tk.Label(
             sky_controls,
             textvariable=self._ply_sky_color_rgb_var,
             fg="#87cefa",
+            anchor="w",
         )
-        sky_color_display.pack(side=tk.LEFT, padx=(4, 4))
+        sky_color_display.grid(row=0, column=1, sticky="w", padx=(4, 8), pady=(6, 4))
         self._ply_sky_color_label = sky_color_display
         self._update_sky_color_display((135, 206, 250), self._ply_sky_color_var.get())
         tk.Button(
@@ -6008,120 +7092,126 @@ class PreviewApp:
             text="Pick Sky Color",
             width=pick_color_button_width,
             command=self._on_pick_sky_color,
-        ).pack(side=tk.LEFT, padx=(4, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(6, 4))
         tk.Button(
             sky_controls,
             text="Auto Pick Sky Color",
             command=self._on_auto_pick_sky_color,
-        ).pack(side=tk.LEFT, padx=(4, 0))
+        ).grid(row=0, column=3, sticky="w", pady=(6, 4))
 
-        sky_action_controls = tk.Frame(viewer_frame)
-        sky_action_controls.pack(fill="x", padx=12, pady=(4, 0))
         axis_options = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
-        button_row = tk.Frame(sky_action_controls)
-        button_row.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(button_row, text="Sky axis").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(sky_controls, text="Sky axis").grid(
+            row=1, column=0, sticky="w", padx=(8, 4), pady=(0, 4)
+        )
         axis_combo = ttk.Combobox(
-            button_row,
+            sky_controls,
             textvariable=self._ply_sky_axis_var,
             values=axis_options,
             state="readonly",
             width=6,
         )
-        axis_combo.pack(side=tk.LEFT)
-        tk.Label(button_row, text="Sky scale").pack(side=tk.LEFT, padx=(12, 4))
+        axis_combo.grid(row=1, column=1, sticky="w", padx=(0, 12), pady=(0, 4))
+        tk.Label(sky_controls, text="Sky scale").grid(
+            row=1, column=2, sticky="w", padx=(0, 4), pady=(0, 4)
+        )
         sky_scale_entry = tk.Entry(
-            button_row,
+            sky_controls,
             textvariable=self._ply_sky_scale_var,
             width=8,
         )
-        sky_scale_entry.pack(side=tk.LEFT)
-        tk.Label(button_row, text="Sky points").pack(side=tk.LEFT, padx=(12, 4))
+        sky_scale_entry.grid(row=1, column=3, sticky="w", padx=(0, 12), pady=(0, 4))
+        tk.Label(sky_controls, text="Sky points").grid(
+            row=2, column=0, sticky="w", padx=(8, 4), pady=(0, 6)
+        )
         sky_count_entry = tk.Entry(
-            button_row,
+            sky_controls,
             textvariable=self._ply_sky_count_var,
             width=10,
         )
-        sky_count_entry.pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(button_row, text="Sky sphere %").pack(
-            side=tk.LEFT, padx=(0, 4)
+        sky_count_entry.grid(row=2, column=1, sticky="w", padx=(0, 12), pady=(0, 6))
+        tk.Label(sky_controls, text="Sky sphere %").grid(
+            row=2, column=2, sticky="w", padx=(0, 4), pady=(0, 6)
         )
         sky_percent_entry = tk.Entry(
-            button_row,
+            sky_controls,
             textvariable=self._ply_sky_percent_var,
             width=6,
         )
-        sky_percent_entry.pack(side=tk.LEFT, padx=(0, 12))
+        sky_percent_entry.grid(row=2, column=3, sticky="w", padx=(0, 12), pady=(0, 6))
         tk.Button(
-            button_row,
+            sky_controls,
             text="Add Sky PointClouds (Preview)",
             command=self._on_add_sky_points,
-        ).pack(side=tk.LEFT, padx=(0, 12))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 6))
         tk.Button(
-            button_row,
+            sky_controls,
             text="Clear Sky",
             command=self._on_clear_sky_points,
-        ).pack(side=tk.LEFT)
+        ).grid(row=3, column=2, sticky="w", pady=(0, 6))
 
-        append_controls = tk.Frame(viewer_frame)
-        append_controls.pack(fill="x", padx=12, pady=(4, 0))
-        action_button_width = 18
+        append_controls = tk.Frame(viewer_tools_frame)
+        append_controls.pack(fill="x", padx=12, pady=(6, 0))
+        append_controls.grid_columnconfigure(1, weight=1)
+        action_button_width = 11
         browse_button_width = 10
-        tk.Label(append_controls, text="Append PLY files").pack(
-            side=tk.LEFT, padx=(0, 4)
+        tk.Label(append_controls, text="Append PLY").grid(
+            row=0, column=0, sticky="w", padx=(0, 4)
         )
         append_entry = tk.Entry(
             append_controls,
             textvariable=self.ply_vars["append_ply"],
-            width=52,
+            width=44,
         )
-        append_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        append_entry.grid(row=0, column=1, sticky="we", padx=(0, 4))
         self.ply_append_entry = append_entry
         tk.Button(
             append_controls,
             text="Browse...",
             width=browse_button_width,
             command=self._browse_ply_append_files,
-        ).pack(side=tk.LEFT, padx=(4, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 4))
         tk.Button(
             append_controls,
-            text="Append to Viewer",
+            text="Append PLY",
             width=action_button_width,
             command=self._append_ply_files_to_viewer,
-        ).pack(side=tk.LEFT, padx=(0, 0))
+        ).grid(row=0, column=3, sticky="w", padx=(0, 4))
 
-        save_top_controls = tk.Frame(viewer_frame)
-        save_top_controls.pack(fill="x", padx=12, pady=(4, 0))
-        tk.Label(save_top_controls, text="Save Viewed Point Cloud").pack(
-            side=tk.LEFT, padx=(0, 4)
+        save_top_controls = tk.Frame(viewer_tools_frame)
+        save_top_controls.pack(fill="x", padx=12, pady=(6, 8))
+        save_top_controls.grid_columnconfigure(1, weight=1)
+        tk.Label(save_top_controls, text="Save Viewed PLY").grid(
+            row=0, column=0, sticky="w", padx=(0, 4)
         )
         sky_save_entry = tk.Entry(
             save_top_controls,
             textvariable=self._ply_sky_save_path_var,
-            width=56,
+            width=44,
         )
-        sky_save_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        sky_save_entry.grid(row=0, column=1, sticky="we", padx=(0, 4))
         tk.Button(
             save_top_controls,
             text="Browse...",
             width=browse_button_width,
             command=self._on_browse_sky_save_path,
-        ).pack(side=tk.LEFT, padx=(4, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 4))
         tk.Button(
             save_top_controls,
-            text="Save Viewed Point Cloud",
+            text="Save PLY",
             width=action_button_width,
             command=self._on_save_sky_points,
-        ).pack(side=tk.LEFT)
+        ).grid(row=0, column=3, sticky="w", padx=(0, 4))
 
+        canvas_wrap = tk.Frame(viewer_frame, bg="#0f172a")
+        canvas_wrap.pack(fill="both", expand=True, padx=12, pady=12)
         canvas = tk.Canvas(
-            viewer_frame,
+            canvas_wrap,
             width=PLY_VIEW_CANVAS_WIDTH,
-            height=PLY_VIEW_CANVAS_HEIGHT,
+            height=400,
             bg="#101010",
             highlightthickness=0,
         )
-        canvas.pack(fill="both", expand=True, padx=12, pady=12)
+        canvas.pack(fill="both", expand=True)
         self._ply_canvas_image_id = canvas.create_image(0, 0, anchor="nw")
         self._ply_view_canvas = canvas
         canvas.bind("<Configure>", self._on_ply_canvas_configure)
@@ -6136,9 +7226,9 @@ class PreviewApp:
         canvas.bind("<Button-4>", self._on_ply_zoom)
         canvas.bind("<Button-5>", self._on_ply_zoom)
 
-        log_frame = tk.LabelFrame(right_panel, text="Log")
+        log_frame = tk.LabelFrame(left_panel, text="Log")
         log_frame.pack(fill="both", expand=True, padx=0, pady=0)
-        self.ply_log = tk.Text(log_frame, wrap="word", height=28, cursor="arrow")
+        self.ply_log = tk.Text(log_frame, wrap="word", height=8, cursor="arrow")
         self.ply_log.pack(fill="both", expand=True, padx=6, pady=4)
         self.ply_log.bind("<Key>", self._block_text_edit)
         self.ply_log.bind("<Button-1>", lambda event: self.ply_log.focus_set())
@@ -6147,7 +7237,7 @@ class PreviewApp:
         def _init_ply_sash() -> None:
             try:
                 w = max(640, body_pane.winfo_width())
-                body_pane.sash_place(0, int(w * 0.74), 1)
+                body_pane.sash_place(0, int(w * 0.39), 1)
             except Exception:
                 pass
 
@@ -6155,9 +7245,830 @@ class PreviewApp:
         self._redraw_ply_canvas()
         self._update_ply_adaptive_state()
 
+    def _build_camera_scene_tab(self, parent: tk.Widget) -> None:
+        container = tk.Frame(parent, bg=self.APP_BG)
+        container.pack(fill="both", expand=True)
+
+        header = tk.Frame(container, bg=self.HEADER_BG, bd=1, relief=tk.FLAT)
+        header.pack(fill="x", padx=6, pady=(6, 6))
+        tk.Label(
+            header,
+            text="Camera Optimization (Experimental)",
+            bg=self.HEADER_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(side=tk.LEFT, padx=(8, 10), pady=8)
+        tk.Label(
+            header,
+            text="Preview camera poses and point clouds while exporting to other formats.",
+            bg=self.HEADER_BG,
+            fg="#6b7280",
+        ).pack(side=tk.LEFT, padx=(0, 10), pady=8)
+
+        workspace = tk.PanedWindow(
+            container,
+            orient=tk.HORIZONTAL,
+            sashrelief=tk.RAISED,
+            sashwidth=8,
+            bd=0,
+            opaqueresize=True,
+        )
+        workspace.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+        left_panel = tk.Frame(workspace, bg=self.APP_BG, width=620)
+        right_panel = tk.Frame(workspace, bg=self.APP_BG)
+        workspace.add(left_panel, minsize=520)
+        workspace.add(right_panel, minsize=720)
+
+        params = tk.LabelFrame(left_panel, text="Scene Input", bg="#f8fafc")
+        params.pack(fill="x", padx=0, pady=(0, 8))
+
+        self.camera_scene_vars = {
+            "source_type": tk.StringVar(value=CAMERA_SCENE_SOURCE_CHOICES[0]),
+            "colmap_dir": tk.StringVar(),
+            "transforms_json": tk.StringVar(),
+            "transforms_ply": tk.StringVar(),
+            "csv_path": tk.StringVar(),
+            "csv_ply": tk.StringVar(),
+            "xmp_dir": tk.StringVar(),
+            "xmp_ply": tk.StringVar(),
+            "metashape_xml": tk.StringVar(),
+            "metashape_ply": tk.StringVar(),
+        }
+        self.camera_converter_vars = {
+            "output_dir": tk.StringVar(),
+            "width": tk.StringVar(),
+            "height": tk.StringVar(),
+            "export_colmap": tk.BooleanVar(value=False),
+            "export_csv": tk.BooleanVar(value=False),
+            "export_ply": tk.BooleanVar(value=False),
+            "export_transforms": tk.BooleanVar(value=False),
+            "export_transforms_ply": tk.BooleanVar(value=False),
+            "export_xmp": tk.BooleanVar(value=False),
+            "export_metashape_xml": tk.BooleanVar(value=False),
+            "camera_rot_x_deg": tk.StringVar(value="0"),
+            "camera_rot_y_deg": tk.StringVar(value="0"),
+            "camera_rot_z_deg": tk.StringVar(value="0"),
+            "camera_scale": tk.StringVar(value="1.0"),
+            "pointcloud_rot_x_deg": tk.StringVar(value="0"),
+            "pointcloud_rot_y_deg": tk.StringVar(value="0"),
+            "pointcloud_rot_z_deg": tk.StringVar(value="0"),
+            "pointcloud_scale": tk.StringVar(value="1.0"),
+            "link_transform": tk.BooleanVar(value=True),
+        }
+        self.camera_scene_vars["source_type"].trace_add(
+            "write",
+            lambda *_args: self._update_camera_scene_input_state(),
+        )
+        self.camera_converter_vars["link_transform"].trace_add(
+            "write",
+            self._on_camera_scene_link_transform_changed,
+        )
+        for trace_key in (
+            "camera_rot_x_deg",
+            "camera_rot_y_deg",
+            "camera_rot_z_deg",
+            "camera_scale",
+        ):
+            self.camera_converter_vars[trace_key].trace_add(
+                "write",
+                self._sync_camera_scene_linked_transform_vars,
+            )
+        for redraw_var in (
+            self._camera_scene_point_size_var,
+            self._camera_scene_camera_scale_var,
+            self._camera_scene_camera_stride_var,
+            self._camera_scene_grid_step_var,
+            self._camera_scene_grid_span_var,
+        ):
+            redraw_var.trace_add(
+                "write",
+                lambda *_args: self._redraw_camera_scene_canvas(),
+            )
+
+        top_row = tk.Frame(params, bg="#f8fafc")
+        top_row.pack(fill="x", padx=4, pady=4)
+        tk.Label(top_row, text="Input type").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(
+            top_row,
+            textvariable=self.camera_scene_vars["source_type"],
+            values=CAMERA_SCENE_SOURCE_CHOICES,
+            state="readonly",
+            width=24,
+        ).pack(side=tk.LEFT)
+
+        group_holder = tk.Frame(params, bg="#f8fafc")
+        group_holder.pack(fill="x", padx=4, pady=(0, 4))
+        self._camera_scene_input_groups = {}
+
+        colmap_group = tk.Frame(group_holder, bg="#f8fafc")
+        colmap_group.columnconfigure(1, weight=1)
+        self._camera_scene_input_groups["colmap"] = colmap_group
+        tk.Label(colmap_group, text="COLMAP folder", bg="#f8fafc").grid(
+            row=0, column=0, sticky="e", padx=4, pady=4
+        )
+        colmap_entry = tk.Entry(
+            colmap_group,
+            textvariable=self.camera_scene_vars["colmap_dir"],
+            width=62,
+        )
+        colmap_entry.grid(row=0, column=1, sticky="we", padx=4, pady=4)
+        self._camera_scene_colmap_entry = colmap_entry
+        tk.Button(
+            colmap_group,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.camera_scene_vars["colmap_dir"],
+                title="Select COLMAP text-model folder",
+            ),
+        ).grid(row=0, column=2, padx=4, pady=4)
+
+        transforms_group = tk.Frame(group_holder, bg="#f8fafc")
+        transforms_group.columnconfigure(0, weight=1, uniform="camera_scene_input_pair")
+        transforms_group.columnconfigure(1, weight=1, uniform="camera_scene_input_pair")
+        self._camera_scene_input_groups["transforms"] = transforms_group
+        transforms_json_block = tk.Frame(transforms_group, bg="#f8fafc")
+        transforms_json_block.grid(row=0, column=0, sticky="we", padx=(0, 6), pady=0)
+        transforms_json_block.columnconfigure(0, weight=1)
+        tk.Label(
+            transforms_json_block,
+            text="transforms.json",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        transforms_json_row = tk.Frame(transforms_json_block, bg="#f8fafc")
+        transforms_json_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        transforms_json_row.columnconfigure(0, weight=1)
+        transforms_entry = tk.Entry(
+            transforms_json_row,
+            textvariable=self.camera_scene_vars["transforms_json"],
+            width=32,
+        )
+        transforms_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_transforms_entry = transforms_entry
+        tk.Button(
+            transforms_json_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["transforms_json"],
+                title="Select transforms.json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        transforms_ply_block = tk.Frame(transforms_group, bg="#f8fafc")
+        transforms_ply_block.grid(row=0, column=1, sticky="we", padx=(6, 0), pady=0)
+        transforms_ply_block.columnconfigure(0, weight=1)
+        tk.Label(
+            transforms_ply_block,
+            text="transforms PLY",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        transforms_ply_row = tk.Frame(transforms_ply_block, bg="#f8fafc")
+        transforms_ply_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        transforms_ply_row.columnconfigure(0, weight=1)
+        transforms_ply_entry = tk.Entry(
+            transforms_ply_row,
+            textvariable=self.camera_scene_vars["transforms_ply"],
+            width=32,
+        )
+        transforms_ply_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_transforms_ply_entry = transforms_ply_entry
+        tk.Button(
+            transforms_ply_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["transforms_ply"],
+                title="Select transforms PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        realityscan_group = tk.Frame(group_holder, bg="#f8fafc")
+        realityscan_group.columnconfigure(0, weight=1, uniform="camera_scene_input_pair")
+        realityscan_group.columnconfigure(1, weight=1, uniform="camera_scene_input_pair")
+        self._camera_scene_input_groups["realityscan"] = realityscan_group
+        realityscan_csv_block = tk.Frame(realityscan_group, bg="#f8fafc")
+        realityscan_csv_block.grid(row=0, column=0, sticky="we", padx=(0, 6), pady=0)
+        realityscan_csv_block.columnconfigure(0, weight=1)
+        tk.Label(
+            realityscan_csv_block,
+            text="RealityScan CSV",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        realityscan_csv_row = tk.Frame(realityscan_csv_block, bg="#f8fafc")
+        realityscan_csv_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        realityscan_csv_row.columnconfigure(0, weight=1)
+        csv_entry = tk.Entry(
+            realityscan_csv_row,
+            textvariable=self.camera_scene_vars["csv_path"],
+            width=32,
+        )
+        csv_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_csv_entry = csv_entry
+        tk.Button(
+            realityscan_csv_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["csv_path"],
+                title="Select RealityScan CSV",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        realityscan_ply_block = tk.Frame(realityscan_group, bg="#f8fafc")
+        realityscan_ply_block.grid(row=0, column=1, sticky="we", padx=(6, 0), pady=0)
+        realityscan_ply_block.columnconfigure(0, weight=1)
+        tk.Label(
+            realityscan_ply_block,
+            text="RealityScan PLY",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        realityscan_ply_row = tk.Frame(realityscan_ply_block, bg="#f8fafc")
+        realityscan_ply_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        realityscan_ply_row.columnconfigure(0, weight=1)
+        csv_ply_entry = tk.Entry(
+            realityscan_ply_row,
+            textvariable=self.camera_scene_vars["csv_ply"],
+            width=32,
+        )
+        csv_ply_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_csv_ply_entry = csv_ply_entry
+        tk.Button(
+            realityscan_ply_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["csv_ply"],
+                title="Select RealityScan PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        xmp_group = tk.Frame(group_holder, bg="#f8fafc")
+        xmp_group.columnconfigure(0, weight=1, uniform="camera_scene_input_pair")
+        xmp_group.columnconfigure(1, weight=1, uniform="camera_scene_input_pair")
+        self._camera_scene_input_groups["xmp"] = xmp_group
+        xmp_dir_block = tk.Frame(xmp_group, bg="#f8fafc")
+        xmp_dir_block.grid(row=0, column=0, sticky="we", padx=(0, 6), pady=0)
+        xmp_dir_block.columnconfigure(0, weight=1)
+        tk.Label(
+            xmp_dir_block,
+            text="RealityScan XMP dir",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        xmp_dir_row = tk.Frame(xmp_dir_block, bg="#f8fafc")
+        xmp_dir_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        xmp_dir_row.columnconfigure(0, weight=1)
+        xmp_entry = tk.Entry(
+            xmp_dir_row,
+            textvariable=self.camera_scene_vars["xmp_dir"],
+            width=32,
+        )
+        xmp_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_xmp_entry = xmp_entry
+        tk.Button(
+            xmp_dir_row,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.camera_scene_vars["xmp_dir"],
+                title="Select RealityScan XMP directory",
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        xmp_ply_block = tk.Frame(xmp_group, bg="#f8fafc")
+        xmp_ply_block.grid(row=0, column=1, sticky="we", padx=(6, 0), pady=0)
+        xmp_ply_block.columnconfigure(0, weight=1)
+        tk.Label(
+            xmp_ply_block,
+            text="Optional PLY",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        xmp_ply_row = tk.Frame(xmp_ply_block, bg="#f8fafc")
+        xmp_ply_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        xmp_ply_row.columnconfigure(0, weight=1)
+        xmp_ply_entry = tk.Entry(
+            xmp_ply_row,
+            textvariable=self.camera_scene_vars["xmp_ply"],
+            width=32,
+        )
+        xmp_ply_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_xmp_ply_entry = xmp_ply_entry
+        tk.Button(
+            xmp_ply_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["xmp_ply"],
+                title="Select optional PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        metashape_group = tk.Frame(group_holder, bg="#f8fafc")
+        metashape_group.columnconfigure(0, weight=1, uniform="camera_scene_input_pair")
+        metashape_group.columnconfigure(1, weight=1, uniform="camera_scene_input_pair")
+        self._camera_scene_input_groups["metashape"] = metashape_group
+        metashape_xml_block = tk.Frame(metashape_group, bg="#f8fafc")
+        metashape_xml_block.grid(row=0, column=0, sticky="we", padx=(0, 6), pady=0)
+        metashape_xml_block.columnconfigure(0, weight=1)
+        tk.Label(
+            metashape_xml_block,
+            text="Metashape XML",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        metashape_xml_row = tk.Frame(metashape_xml_block, bg="#f8fafc")
+        metashape_xml_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        metashape_xml_row.columnconfigure(0, weight=1)
+        metashape_xml_entry = tk.Entry(
+            metashape_xml_row,
+            textvariable=self.camera_scene_vars["metashape_xml"],
+            width=32,
+        )
+        metashape_xml_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_metashape_xml_entry = metashape_xml_entry
+        tk.Button(
+            metashape_xml_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["metashape_xml"],
+                title="Select Metashape XML",
+                filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        metashape_ply_block = tk.Frame(metashape_group, bg="#f8fafc")
+        metashape_ply_block.grid(row=0, column=1, sticky="we", padx=(6, 0), pady=0)
+        metashape_ply_block.columnconfigure(0, weight=1)
+        tk.Label(
+            metashape_ply_block,
+            text="Optional PLY",
+            bg="#f8fafc",
+        ).grid(row=0, column=0, sticky="w", padx=4, pady=(2, 2))
+        metashape_ply_row = tk.Frame(metashape_ply_block, bg="#f8fafc")
+        metashape_ply_row.grid(row=1, column=0, sticky="we", padx=4, pady=(0, 4))
+        metashape_ply_row.columnconfigure(0, weight=1)
+        metashape_ply_entry = tk.Entry(
+            metashape_ply_row,
+            textvariable=self.camera_scene_vars["metashape_ply"],
+            width=32,
+        )
+        metashape_ply_entry.grid(row=0, column=0, sticky="we")
+        self._camera_scene_metashape_ply_entry = metashape_ply_entry
+        tk.Button(
+            metashape_ply_row,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.camera_scene_vars["metashape_ply"],
+                title="Select optional PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        ).grid(row=0, column=1, padx=(6, 0), pady=0)
+
+        actions = tk.Frame(params, bg="#f8fafc")
+        actions.pack(fill="x", padx=4, pady=(6, 0))
+        self.camera_scene_load_button = tk.Button(
+            actions,
+            text="Load Camera View",
+            command=self._load_camera_scene,
+        )
+        self.camera_scene_load_button.pack(side=tk.RIGHT, padx=4, pady=4)
+        self.camera_scene_clear_button = tk.Button(
+            actions,
+            text="Clear",
+            command=self._clear_camera_scene,
+        )
+        self.camera_scene_clear_button.pack(side=tk.RIGHT, padx=4, pady=4)
+
+        converter_frame = tk.LabelFrame(left_panel, text="Converter", bg=self.APP_BG)
+        converter_frame.pack(fill="x", padx=0, pady=(0, 8))
+        converter_frame.columnconfigure(1, weight=1)
+
+        c_row = 0
+        tk.Label(converter_frame, text="Output root").grid(
+            row=c_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            converter_frame,
+            textvariable=self.camera_converter_vars["output_dir"],
+            width=64,
+        ).grid(row=c_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            converter_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.camera_converter_vars["output_dir"],
+                title="Select converter output directory",
+            ),
+        ).grid(row=c_row, column=2, padx=4, pady=4)
+
+        c_row += 1
+        size_row = tk.Frame(converter_frame, bg="#f8fafc")
+        size_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        tk.Label(size_row, text="Width", bg="#f8fafc").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            size_row,
+            textvariable=self.camera_converter_vars["width"],
+            width=8,
+        ).pack(side=tk.LEFT)
+        tk.Label(size_row, text="Height", bg="#f8fafc").pack(side=tk.LEFT, padx=(12, 4))
+        tk.Entry(
+            size_row,
+            textvariable=self.camera_converter_vars["height"],
+            width=8,
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            size_row,
+            text="Used by RS CSV / XMP when needed",
+            bg="#f8fafc",
+            fg="#666666",
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
+        c_row += 1
+        export_row = tk.Frame(converter_frame, bg="#f8fafc")
+        export_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        export_row.columnconfigure(1, weight=1)
+        tk.Label(export_row, text="Exports", bg="#f8fafc").grid(
+            row=0, column=0, sticky="nw", padx=(0, 12), pady=(2, 0)
+        )
+        export_grid = tk.Frame(export_row, bg="#f8fafc")
+        export_grid.grid(row=0, column=1, sticky="we")
+        export_grid.columnconfigure(0, weight=1)
+        export_grid.columnconfigure(1, weight=1)
+        export_rows = (
+            (("export_colmap", "COLMAP"),),
+            (("export_csv", "RealityScan CSV"), ("export_ply", "RealityScan PLY")),
+            (
+                ("export_transforms", "transforms.json"),
+                ("export_transforms_ply", "transforms PLY"),
+            ),
+            (
+                ("export_metashape_xml", "Metashape XML"),
+                ("export_xmp", "RealityScan XMP"),
+            ),
+        )
+        for export_row_index, export_items in enumerate(export_rows):
+            for export_col_index in range(2):
+                export_grid.columnconfigure(export_col_index, weight=1)
+            for export_col_index, (export_key, export_label) in enumerate(export_items):
+                tk.Checkbutton(
+                    export_grid,
+                    text=export_label,
+                    variable=self.camera_converter_vars[export_key],
+                    bg="#f8fafc",
+                    anchor="w",
+                ).grid(
+                    row=export_row_index,
+                    column=export_col_index,
+                    sticky="w",
+                    padx=(0, 18),
+                    pady=1,
+                )
+
+        c_row += 1
+        link_row = tk.Frame(converter_frame, bg="#f8fafc")
+        link_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=(2, 4))
+        tk.Checkbutton(
+            link_row,
+            text="Link camera / pointcloud transform",
+            variable=self.camera_converter_vars["link_transform"],
+            bg="#f8fafc",
+            anchor="w",
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            link_row,
+            text="Default workflow: move both together",
+            bg="#f8fafc",
+            fg="#64748b",
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        c_row += 1
+        camera_rot_row = tk.Frame(converter_frame, bg="#f8fafc")
+        camera_rot_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        tk.Label(camera_rot_row, text="Camera rot XYZ deg", bg="#f8fafc").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Entry(
+            camera_rot_row,
+            textvariable=self.camera_converter_vars["camera_rot_x_deg"],
+            width=7,
+        ).pack(side=tk.LEFT)
+        tk.Entry(
+            camera_rot_row,
+            textvariable=self.camera_converter_vars["camera_rot_y_deg"],
+            width=7,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        tk.Entry(
+            camera_rot_row,
+            textvariable=self.camera_converter_vars["camera_rot_z_deg"],
+            width=7,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        c_row += 1
+        camera_scale_row = tk.Frame(converter_frame, bg="#f8fafc")
+        camera_scale_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        tk.Label(camera_scale_row, text="Camera scale", bg="#f8fafc").pack(side=tk.LEFT, padx=(0, 8))
+        tk.Entry(
+            camera_scale_row,
+            textvariable=self.camera_converter_vars["camera_scale"],
+            width=10,
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            camera_scale_row,
+            text="1.0 keeps original world scale",
+            bg="#f8fafc",
+            fg="#64748b",
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        c_row += 1
+        point_rot_row = tk.Frame(converter_frame, bg="#f8fafc")
+        point_rot_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        tk.Label(point_rot_row, text="PointCloud rot XYZ deg", bg="#f8fafc").pack(side=tk.LEFT, padx=(0, 8))
+        point_rot_x_entry = tk.Entry(
+            point_rot_row,
+            textvariable=self.camera_converter_vars["pointcloud_rot_x_deg"],
+            width=7,
+        )
+        point_rot_x_entry.pack(side=tk.LEFT)
+        point_rot_y_entry = tk.Entry(
+            point_rot_row,
+            textvariable=self.camera_converter_vars["pointcloud_rot_y_deg"],
+            width=7,
+        )
+        point_rot_y_entry.pack(side=tk.LEFT, padx=(4, 0))
+        point_rot_z_entry = tk.Entry(
+            point_rot_row,
+            textvariable=self.camera_converter_vars["pointcloud_rot_z_deg"],
+            width=7,
+        )
+        point_rot_z_entry.pack(side=tk.LEFT, padx=(4, 0))
+        self._camera_scene_point_transform_widgets.extend(
+            [point_rot_x_entry, point_rot_y_entry, point_rot_z_entry]
+        )
+
+        c_row += 1
+        point_scale_row = tk.Frame(converter_frame, bg="#f8fafc")
+        point_scale_row.grid(row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=4)
+        tk.Label(point_scale_row, text="PointCloud scale", bg="#f8fafc").pack(side=tk.LEFT, padx=(0, 8))
+        point_scale_entry = tk.Entry(
+            point_scale_row,
+            textvariable=self.camera_converter_vars["pointcloud_scale"],
+            width=10,
+        )
+        point_scale_entry.pack(side=tk.LEFT)
+        self._camera_scene_point_transform_widgets.append(point_scale_entry)
+
+        c_row += 1
+        converter_actions = tk.Frame(converter_frame, bg="#f8fafc")
+        converter_actions.grid(
+            row=c_row, column=0, columnspan=3, sticky="we", padx=4, pady=(4, 6)
+        )
+        self.camera_scene_preview_apply_button = tk.Button(
+            converter_actions,
+            text="Apply To Preview",
+            command=self._apply_camera_scene_preview_transform,
+        )
+        self.camera_scene_preview_apply_button.pack(side=tk.LEFT, padx=4, pady=4)
+        self.camera_converter_stop_button = tk.Button(
+            converter_actions,
+            text="Stop",
+            command=lambda: self._stop_cli_process("camera_converter"),
+        )
+        self.camera_converter_stop_button.pack(side=tk.RIGHT, padx=4, pady=4)
+        self.camera_converter_stop_button.configure(state="disabled")
+        self.camera_converter_run_button = tk.Button(
+            converter_actions,
+            text="Run CameraFormatConverter",
+            command=self._run_camera_format_converter,
+        )
+        self.camera_converter_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
+        self._sync_camera_scene_transform_link_state()
+
+        log_frame = tk.LabelFrame(left_panel, text="Converter Log", bg="#f8fafc")
+        log_frame.pack(fill="both", expand=True, padx=0, pady=(0, 8))
+        self.camera_converter_log = tk.Text(
+            log_frame,
+            wrap="word",
+            height=10,
+            cursor="arrow",
+        )
+        self.camera_converter_log.pack(fill="both", expand=True, padx=6, pady=4)
+        self.camera_converter_log.bind("<Key>", self._block_text_edit)
+        self.camera_converter_log.bind(
+            "<Button-1>",
+            lambda event: self.camera_converter_log.focus_set(),
+        )
+        self._set_text_widget(self.camera_converter_log, "")
+
+        viewer_frame = tk.Frame(right_panel, bg=self.APP_BG)
+        viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
+
+        viewer_header = tk.Frame(viewer_frame, bg=self.HEADER_BG, bd=1, relief=tk.FLAT)
+        viewer_header.pack(fill="x")
+        tk.Label(
+            viewer_header,
+            text="Viewer",
+            bg=self.HEADER_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(side=tk.LEFT, padx=(12, 10), pady=8)
+        tk.Label(
+            viewer_header,
+            text="Left drag = orbit, Right drag = pan, Wheel = zoom",
+            bg=self.HEADER_BG,
+            fg="#6b7280",
+        ).pack(side=tk.LEFT, pady=8)
+
+        viewer_controls_shell = tk.Frame(viewer_frame, bg=self.APP_BG, bd=1, relief=tk.FLAT)
+        viewer_controls_shell.pack(fill="x")
+
+        viewer_controls_top = tk.Frame(viewer_controls_shell, bg=self.APP_BG)
+        viewer_controls_top.pack(fill="x", padx=12, pady=(8, 2))
+        tk.Label(viewer_controls_top, text="Projection", bg=self.APP_BG).pack(side=tk.LEFT, padx=(0, 4))
+        projection_combo = ttk.Combobox(
+            viewer_controls_top,
+            textvariable=self._camera_scene_projection_mode,
+            values=("Orthographic", "Perspective"),
+            state="readonly",
+            width=14,
+        )
+        projection_combo.pack(side=tk.LEFT, padx=(0, 8))
+        projection_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._redraw_camera_scene_canvas(),
+        )
+        self._camera_scene_projection_combo = projection_combo
+        tk.Label(viewer_controls_top, text="Interactive Points", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_top,
+            textvariable=self._camera_scene_interactive_point_cap_var,
+            values=("10000", "100000", "1000000"),
+            state="normal",
+            width=9,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_top, text="Final Points", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_top,
+            textvariable=self._camera_scene_point_cap_var,
+            values=("50000", "500000", "5000000"),
+            state="normal",
+            width=9,
+        ).pack(side=tk.LEFT)
+
+        viewer_controls_middle = tk.Frame(viewer_controls_shell, bg=self.APP_BG)
+        viewer_controls_middle.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Label(viewer_controls_middle, text="Point size", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._camera_scene_point_size_var,
+            values=("1", "2", "3", "5"),
+            state="normal",
+            width=5,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Camera scale", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._camera_scene_camera_scale_var,
+            values=("0.01", "0.1", "1", "10", "100"),
+            state="normal",
+            width=8,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Camera stride", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._camera_scene_camera_stride_var,
+            values=("1", "10", "50"),
+            state="normal",
+            width=6,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Grid step", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._camera_scene_grid_step_var,
+            values=("0.01", "1", "10", "100"),
+            state="normal",
+            width=7,
+        ).pack(side=tk.LEFT)
+        tk.Label(viewer_controls_middle, text="Grid span", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
+        )
+        ttk.Combobox(
+            viewer_controls_middle,
+            textvariable=self._camera_scene_grid_span_var,
+            values=("auto", "5", "10", "20", "50", "100", "200", "500"),
+            state="normal",
+            width=7,
+        ).pack(side=tk.LEFT)
+        viewer_controls_bottom = tk.Frame(viewer_controls_shell, bg=self.APP_BG)
+        viewer_controls_bottom.pack(fill="x", padx=12, pady=(0, 2))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Draw PointCloud",
+            variable=self._camera_scene_draw_points_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Monochrome points",
+            variable=self._camera_scene_monochrome_points_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Draw cameras",
+            variable=self._camera_scene_draw_cameras_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Ground grid",
+            variable=self._camera_scene_show_grid_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_bottom,
+            text="World XYZ axes",
+            variable=self._camera_scene_show_world_axes_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        viewer_controls_actions = tk.Frame(viewer_controls_shell, bg=self.APP_BG)
+        viewer_controls_actions.pack(fill="x", padx=12, pady=(0, 4))
+        tk.Button(
+            viewer_controls_actions,
+            text="Reset View",
+            command=self._reset_camera_scene_view,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        status_band = tk.Frame(viewer_frame, bg=self.APP_BG)
+        status_band.pack(fill="x")
+        status_label = tk.Label(
+            status_band,
+            textvariable=self._camera_scene_info_var,
+            anchor="w",
+            bg=self.APP_BG,
+            fg="#0f172a",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        status_label.pack(fill="x", padx=12, pady=(0, 4))
+
+        canvas_wrap = tk.Frame(viewer_frame, bg="#0f172a")
+        canvas_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        canvas = tk.Canvas(
+            canvas_wrap,
+            width=max(PLY_VIEW_CANVAS_WIDTH, 1180),
+            height=520,
+            bg="#101010",
+            highlightthickness=0,
+        )
+        canvas.pack(fill="both", expand=True)
+        self._camera_scene_canvas_image_id = canvas.create_image(
+            0, 0, anchor="nw"
+        )
+        self._camera_scene_canvas = canvas
+        canvas.bind("<Configure>", self._on_camera_scene_canvas_configure)
+        canvas.bind("<ButtonPress-1>", self._on_camera_scene_drag_start)
+        canvas.bind("<Double-Button-1>", self._on_camera_scene_double_click)
+        canvas.bind("<B1-Motion>", self._on_camera_scene_drag_move)
+        canvas.bind("<ButtonRelease-1>", self._on_camera_scene_drag_end)
+        canvas.bind("<ButtonPress-3>", self._on_camera_scene_pan_start)
+        canvas.bind("<B3-Motion>", self._on_camera_scene_pan_move)
+        canvas.bind("<ButtonRelease-3>", self._on_camera_scene_pan_end)
+        canvas.bind("<Leave>", self._on_camera_scene_drag_end)
+        canvas.bind("<MouseWheel>", self._on_camera_scene_zoom)
+        canvas.bind("<Button-4>", self._on_camera_scene_zoom)
+        canvas.bind("<Button-5>", self._on_camera_scene_zoom)
+
+        def _init_camera_format_workspace() -> None:
+            try:
+                total_w = max(workspace.winfo_width(), 1280)
+                sash_x = max(540, min(total_w - 760, 620))
+                workspace.sash_place(0, sash_x, 1)
+            except Exception:
+                pass
+
+        self.root.after_idle(_init_camera_format_workspace)
+
+        self._update_camera_scene_input_state()
+        self._redraw_camera_scene_canvas()
+
     def _build_preview_tab(self, parent: tk.Widget) -> None:
-        main = tk.Frame(parent)
-        main.pack(fill="both", expand=True)
+        main = self._create_tab_shell(
+            parent,
+            "360PerspCut",
+            "Preview and adjust panorama cut layouts before generating perspective camera outputs.",
+        )
 
         work_frame = tk.Frame(main)
         work_frame.pack(fill="both", expand=True, padx=8, pady=(8, 4))
@@ -6166,10 +8077,10 @@ class PreviewApp:
         left_right_wrapper.pack(fill="both", expand=True)
 
         self.preview_frame = tk.LabelFrame(left_right_wrapper, text="Preview")
-        self.preview_frame.pack(side=tk.LEFT, padx=(0, 6), pady=0, fill="y", expand=False, anchor="n")
+        self.preview_frame.pack(side=tk.LEFT, padx=(0, 4), pady=0, fill="y", expand=False, anchor="n")
         self.preview_frame.pack_propagate(False)
         self.preview_frame.configure(
-            width=self.display_width + 16,
+            width=self.display_width + 10,
             height=self.display_height + 16,
         )
 
@@ -6193,8 +8104,8 @@ class PreviewApp:
             tags=("placeholder",),
         )
 
-        self.controls_frame = tk.LabelFrame(left_right_wrapper, text="Controls", width=520)
-        self.controls_frame.pack(side=tk.LEFT, fill="y", expand=False, padx=(6, 0), pady=0)
+        self.controls_frame = tk.LabelFrame(left_right_wrapper, text="Controls", width=500)
+        self.controls_frame.pack(side=tk.LEFT, fill="y", expand=False, padx=(4, 0), pady=0)
         self.controls_frame.pack_propagate(False)
         self.right_inner = tk.Frame(self.controls_frame)
         self.right_inner.pack(fill="both", expand=True)
@@ -6395,10 +8306,10 @@ class PreviewApp:
         self.preview_inspect_button.grid(row=0, column=2, padx=4, pady=2, sticky="e")
 
         buttons_frame = tk.LabelFrame(self.right_inner, text="Actions")
-        buttons_frame.pack(fill="x", pady=(8, 12), ipady=6)
+        buttons_frame.pack(side=tk.BOTTOM, fill="x", pady=(8, 0), ipady=2)
 
         buttons_inner = tk.Frame(buttons_frame)
-        buttons_inner.pack(fill="both", expand=True, padx=14, pady=(10, 12))
+        buttons_inner.pack(fill="both", expand=True, padx=10, pady=(8, 8))
         buttons_inner.columnconfigure(0, weight=1)
         buttons_inner.columnconfigure(1, weight=1)
         buttons_inner.columnconfigure(2, weight=0)
@@ -6436,8 +8347,33 @@ class PreviewApp:
         self._sync_panel_heights()
 
     def _build_config_tab(self, parent: tk.Widget) -> None:
-        container = tk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        container = self._create_tab_shell(
+            parent,
+            "Config",
+            "Configure shared application paths and defaults used across the tool suite.",
+        )
+
+        appearance = tk.LabelFrame(container, text="Appearance")
+        appearance.pack(fill="x", padx=8, pady=(8, 0))
+        appearance.columnconfigure(1, weight=1)
+
+        tk.Label(appearance, text="UI style").grid(
+            row=0, column=0, padx=4, pady=4, sticky="e"
+        )
+        theme_combo = ttk.Combobox(
+            appearance,
+            textvariable=self._ui_theme_name_var,
+            values=tuple(self.UI_THEMES.keys()),
+            state="readonly",
+            width=20,
+        )
+        theme_combo.grid(row=0, column=1, padx=4, pady=4, sticky="w")
+        theme_combo.bind("<<ComboboxSelected>>", self._on_ui_theme_selected)
+        tk.Label(
+            appearance,
+            text="Theme changes apply immediately. Use Save Config to keep the current style and ffmpeg path.",
+            fg=self.MUTED_FG,
+        ).grid(row=0, column=2, padx=(8, 4), pady=4, sticky="w")
 
         params = tk.LabelFrame(container, text="ffmpeg")
         params.pack(fill="x", padx=8, pady=8)
@@ -6455,6 +8391,11 @@ class PreviewApp:
         reset_btn = tk.Button(params, text="Reset", command=self.reset_ffmpeg_path)
         reset_btn.grid(row=0, column=3, padx=(4, 4), pady=4)
         self._bind_help(reset_btn, "ffmpeg")
+
+        actions = tk.Frame(container, bg=self.APP_BG)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        save_btn = tk.Button(actions, text="Save Config", command=self._save_config_settings, width=16)
+        save_btn.pack(side=tk.LEFT)
 
     def _set_text_widget(self, widget: Optional[tk.Text], text: str) -> None:
         if widget is None:
@@ -6720,10 +8661,14 @@ class PreviewApp:
 
         cmd.extend(["--mode", settings["mode"]])
         for target_name in settings["targets"]:
-            cmd.extend(["--target", target_name])
+            if target_name in HUMAN_TARGET_CHOICES:
+                cmd.extend(["--target", target_name])
+            else:
+                cmd.extend(["--target-name", target_name])
 
         if settings["cpu"]:
             cmd.append("--cpu")
+        cmd.extend(["--cpu-workers", str(settings["cpu_workers"])])
         if settings["include_shadow"]:
             cmd.append("--include_shadow")
         if manual_override_dir is not None:
@@ -6801,47 +8746,6 @@ class PreviewApp:
         if ext_value:
             cmd.extend(["--ext", ext_value])
 
-        scale_text = self.msxml_vars["scale"].get().strip()
-        if scale_text:
-            try:
-                float(scale_text)
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_MS360xmlToPersCams", "Scale factor must be numeric."
-                )
-                return
-            cmd.extend(["--scale", scale_text])
-
-        axis_text = self.msxml_vars["world_axis"].get().strip()
-        if axis_text:
-            parts = axis_text.replace(",", " ").split()
-            if len(parts) != 3:
-                messagebox.showerror(
-                    "gs360_MS360xmlToPersCams",
-                    "World axis must have 3 values (x y z).",
-                )
-                return
-            try:
-                [float(p) for p in parts]
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_MS360xmlToPersCams",
-                    "World axis must be numeric.",
-                )
-                return
-            cmd.extend(["--world-rot-axis", axis_text])
-
-        world_deg = self.msxml_vars["world_deg"].get().strip()
-        if world_deg:
-            try:
-                float(world_deg)
-            except ValueError:
-                messagebox.showerror(
-                    "gs360_MS360xmlToPersCams", "World deg must be numeric."
-                )
-                return
-            cmd.extend(["--world-rot-deg", world_deg])
-
         if bool(self.msxml_vars["cut"].get()):
             cmd.append("--persp-cut")
             cut_input = self.msxml_vars["cut_input"].get().strip()
@@ -6892,6 +8796,246 @@ class PreviewApp:
             self.msxml_run_button,
             process_key="msxml",
             stop_button=self.msxml_stop_button,
+            cwd=self.cli_tools_dir,
+        )
+
+    def _run_camera_format_converter(self) -> None:
+        if not self.camera_scene_vars or not self.camera_converter_vars:
+            return
+        transform_values = self._collect_camera_scene_transform_values(
+            show_error=True,
+        )
+        if transform_values is None:
+            return
+
+        source_type = self.camera_scene_vars["source_type"].get().strip()
+        output_dir = self.camera_converter_vars["output_dir"].get().strip()
+        if not output_dir:
+            messagebox.showerror(
+                "CameraFormatConverter",
+                "Output root is required.",
+            )
+            return
+
+        cmd: List[str] = [
+            sys.executable,
+            str(self.cli_tools_dir / "gs360_CameraFormatConverter.py"),
+        ]
+        try:
+            width_value, height_value = self._get_camera_scene_optional_width_height()
+        except Exception as exc:
+            messagebox.showerror(
+                "CameraFormatConverter",
+                str(exc),
+            )
+            return
+
+        if source_type == CAMERA_SCENE_SOURCE_CHOICES[0]:
+            colmap_dir = self.camera_scene_vars["colmap_dir"].get().strip()
+            if not colmap_dir:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "COLMAP folder is required.",
+                )
+                return
+            if not Path(colmap_dir).expanduser().exists():
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    f"COLMAP folder not found:\n{colmap_dir}",
+                )
+                return
+            cmd.extend(["colmap", colmap_dir, "-o", output_dir])
+        elif source_type == CAMERA_SCENE_SOURCE_CHOICES[1]:
+            transforms_json = self.camera_scene_vars["transforms_json"].get().strip()
+            transforms_ply = self.camera_scene_vars["transforms_ply"].get().strip()
+            if not transforms_json:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "transforms.json is required.",
+                )
+                return
+            if not Path(transforms_json).expanduser().exists():
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    f"transforms.json not found:\n{transforms_json}",
+                )
+                return
+            cmd.extend(
+                [
+                    "transforms-json",
+                    "-o",
+                    output_dir,
+                    "--transforms-json",
+                    transforms_json,
+                ]
+            )
+            if transforms_ply:
+                if not Path(transforms_ply).expanduser().exists():
+                    messagebox.showerror(
+                        "CameraFormatConverter",
+                        f"transforms PLY not found:\n{transforms_ply}",
+                    )
+                    return
+                cmd.extend(["--transforms-ply", transforms_ply])
+        elif source_type == CAMERA_SCENE_SOURCE_CHOICES[2]:
+            csv_path = self.camera_scene_vars["csv_path"].get().strip()
+            csv_ply = self.camera_scene_vars["csv_ply"].get().strip()
+            if not csv_path:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "RealityScan CSV is required.",
+                )
+                return
+            if not Path(csv_path).expanduser().exists():
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    f"RealityScan CSV not found:\n{csv_path}",
+                )
+                return
+            if width_value is None or height_value is None:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "Width and Height must be positive integers for RealityScan CSV input.",
+                )
+                return
+            cmd.extend(
+                [
+                    "realityscan-csv",
+                    "-o",
+                    output_dir,
+                    "--csv",
+                    csv_path,
+                    "--width",
+                    str(width_value),
+                    "--height",
+                    str(height_value),
+                ]
+            )
+            if csv_ply:
+                if not Path(csv_ply).expanduser().exists():
+                    messagebox.showerror(
+                        "CameraFormatConverter",
+                        f"RealityScan PLY not found:\n{csv_ply}",
+                    )
+                    return
+                cmd.extend(["--realityscan-ply", csv_ply])
+        elif source_type == CAMERA_SCENE_SOURCE_CHOICES[3]:
+            xmp_dir = self.camera_scene_vars["xmp_dir"].get().strip()
+            xmp_ply = self.camera_scene_vars["xmp_ply"].get().strip()
+            if not xmp_dir:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "RealityScan XMP directory is required.",
+                )
+                return
+            if not Path(xmp_dir).expanduser().exists():
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    f"RealityScan XMP directory not found:\n{xmp_dir}",
+                )
+                return
+            if width_value is None or height_value is None:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "Width and Height are required for RealityScan XMP input.",
+                )
+                return
+            cmd.extend(
+                [
+                    "realityscan-xmp",
+                    "-o",
+                    output_dir,
+                    "--realityscan-xmp-dir",
+                    xmp_dir,
+                    "--width",
+                    str(width_value),
+                    "--height",
+                    str(height_value),
+                ]
+            )
+            if xmp_ply:
+                if not Path(xmp_ply).expanduser().exists():
+                    messagebox.showerror(
+                        "CameraFormatConverter",
+                        f"RealityScan PLY not found:\n{xmp_ply}",
+                    )
+                    return
+                cmd.extend(["--realityscan-ply", xmp_ply])
+        else:
+            metashape_xml = self.camera_scene_vars["metashape_xml"].get().strip()
+            metashape_ply = self.camera_scene_vars["metashape_ply"].get().strip()
+            if not metashape_xml:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "Metashape XML is required.",
+                )
+                return
+            if not Path(metashape_xml).expanduser().exists():
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    f"Metashape XML not found:\n{metashape_xml}",
+                )
+                return
+            cmd.extend(
+                [
+                    "metashape-xml",
+                    "-o",
+                    output_dir,
+                    "--metashape-xml",
+                    metashape_xml,
+                ]
+            )
+            if width_value is not None and height_value is not None:
+                cmd.extend(["--width", str(width_value), "--height", str(height_value)])
+            if metashape_ply:
+                if not Path(metashape_ply).expanduser().exists():
+                    messagebox.showerror(
+                        "CameraFormatConverter",
+                        f"RealityScan PLY not found:\n{metashape_ply}",
+                    )
+                    return
+                cmd.extend(["--realityscan-ply", metashape_ply])
+
+        export_flag_map = (
+            ("export_colmap", "--export-colmap"),
+            ("export_csv", "--export-realityscan-csv"),
+            ("export_ply", "--export-realityscan-ply"),
+            ("export_transforms", "--export-transforms-json"),
+            ("export_transforms_ply", "--export-transforms-ply"),
+            ("export_xmp", "--export-realityscan-xmp"),
+            ("export_metashape_xml", "--export-metashape-xml"),
+        )
+        for var_name, flag in export_flag_map:
+            if bool(self.camera_converter_vars[var_name].get()):
+                cmd.append(flag)
+
+        rotation_flag_map = (
+            ("camera_rot_x_deg", "--camera-rot-x-deg"),
+            ("camera_rot_y_deg", "--camera-rot-y-deg"),
+            ("camera_rot_z_deg", "--camera-rot-z-deg"),
+            ("pointcloud_rot_x_deg", "--pointcloud-rot-x-deg"),
+            ("pointcloud_rot_y_deg", "--pointcloud-rot-y-deg"),
+            ("pointcloud_rot_z_deg", "--pointcloud-rot-z-deg"),
+        )
+        for var_name, flag in rotation_flag_map:
+            value = float(transform_values[var_name])
+            if abs(value) > 1e-9:
+                cmd.extend([flag, str(value)])
+        scale_flag_map = (
+            ("camera_scale", "--camera-scale"),
+            ("pointcloud_scale", "--pointcloud-scale"),
+        )
+        for var_name, flag in scale_flag_map:
+            value = float(transform_values[var_name])
+            if abs(value - 1.0) > 1e-9:
+                cmd.extend([flag, str(value)])
+
+        self._run_cli_command(
+            cmd,
+            self.camera_converter_log,
+            self.camera_converter_run_button,
+            process_key="camera_converter",
+            stop_button=self.camera_converter_stop_button,
             cwd=self.cli_tools_dir,
         )
 
@@ -7396,6 +9540,14 @@ class PreviewApp:
         sort_choice = self.selector_vars["sort"].get().strip()
         if sort_choice:
             cmd.extend(["-s", sort_choice])
+
+        input_mode_label = self.selector_vars["input_mode"].get().strip()
+        input_mode = SELECTOR_INPUT_MODE_LABEL_TO_CLI.get(
+            input_mode_label,
+            input_mode_label.lower(),
+        )
+        if input_mode:
+            cmd.extend(["--input_mode", input_mode])
 
         score_backend = self.selector_vars["score_backend"].get().strip()
         if score_backend:
@@ -8070,6 +10222,10 @@ class PreviewApp:
         self._ply_colmap_model = None
         self._ply_sky_save_path_var.set("")
         self._ply_view_rgb_mean = None
+        self._ply_initial_view_state = None
+        self._ply_rendered_grid_span = 0.0
+        self._ply_render_sample_step = 1
+        self._ply_rendered_point_count = 0
         remove_color = self._parse_color_to_rgb(self._ply_sky_color_var.get())
         if remove_color is not None:
             sky_hex = self._ply_sky_color_var.get()
@@ -8430,16 +10586,17 @@ class PreviewApp:
         )
         self._ply_loaded_total_points = original_count
         self._ply_loaded_sample_step = max(1, sample_step)
+        self._reset_ply_view_defaults()
         self._reset_ply_view_transform()
+        self._capture_ply_initial_view_state()
         label = self._ply_view_source_label or "PLY"
-        if self._ply_view_sample_step > 1 and original_count > 0:
-            info = (
-                f"{label}: {path.name}  "
-                f"({point_count:,} / {original_count:,} pts, step {self._ply_view_sample_step})"
+        self._ply_view_info_var.set(
+            self._build_ply_info_text(
+                point_count,
+                original_count,
+                self._ply_view_sample_step,
             )
-        else:
-            info = f"{label}: {path.name}  ({point_count:,} pts)"
-        self._ply_view_info_var.set(info)
+        )
         self._update_sky_save_default(path)
         default_sky_count = max(1, int(round(original_count * 0.05)))
         self._ply_sky_count_var.set(str(default_sky_count))
@@ -8448,9 +10605,7 @@ class PreviewApp:
             sky_hex = self._ply_sky_color_var.get()
             self._ply_remove_color_var.set(sky_hex)
             self._update_remove_color_display(remove_color, sky_hex)
-        canvas = self._ensure_ply_viewer_window()
-        if canvas is not None:
-            self._render_ply_points(canvas)
+        self._redraw_ply_canvas()
 
     def _on_ply_load_error(self, token: object, exc: Exception) -> None:
         if token is not self._ply_view_load_token:
@@ -8471,6 +10626,65 @@ class PreviewApp:
             f"Failed to load the point cloud.\n{exc}",
         )
 
+    def _compute_fit_zoom_pan(
+        self,
+        points: np.ndarray,
+        quat: np.ndarray,
+        max_extent: float,
+        width: int,
+        height: int,
+        fill_ratio: float = 0.82,
+    ) -> Tuple[float, Tuple[float, float]]:
+        if points.size == 0:
+            return 1.0, (0.0, 0.0)
+        safe_extent = max(float(max_extent), 1e-6)
+        safe_width = max(1, int(width))
+        safe_height = max(1, int(height))
+        usable_w = max(32.0, float(safe_width) * float(fill_ratio))
+        usable_h = max(32.0, float(safe_height) * float(fill_ratio))
+        rotation = self._quat_to_matrix(quat)
+        rotated = points @ rotation.T
+        x_coords = rotated[:, 0]
+        y_coords = rotated[:, 1]
+        abs_x = np.abs(x_coords)
+        abs_y = np.abs(y_coords)
+        half_span_x = max(float(np.quantile(abs_x, 0.90)), 1e-6)
+        half_span_y = max(float(np.quantile(abs_y, 0.90)), 1e-6)
+        base_scale = max(min(safe_width, safe_height) * 0.45 / safe_extent, 1e-6)
+        zoom_x = usable_w / ((half_span_x * 2.0) * base_scale)
+        zoom_y = usable_h / ((half_span_y * 2.0) * base_scale)
+        zoom = max(0.1, min(PLY_VIEW_MAX_ZOOM, min(zoom_x, zoom_y)))
+        return zoom, (0.0, 0.0)
+
+    def _get_ply_viewport_size(self) -> Tuple[int, int]:
+        canvas = self._ply_view_canvas
+        width = 0
+        height = 0
+        if canvas is not None and canvas.winfo_exists():
+            try:
+                canvas.update_idletasks()
+            except Exception:
+                pass
+            width = int(canvas.winfo_width())
+            height = int(canvas.winfo_height())
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = max(460, int(PLY_VIEW_CANVAS_HEIGHT * 0.55))
+        return width, height
+
+    def _compute_ply_initial_view(self) -> Tuple[float, Tuple[float, float]]:
+        if self._ply_view_points_centered is None or self._ply_view_points_centered.size == 0:
+            return 1.0, (0.0, 0.0)
+        width, height = self._get_ply_viewport_size()
+        return self._compute_fit_zoom_pan(
+            self._ply_view_points_centered,
+            self._ply_view_quat,
+            self._ply_view_max_extent,
+            width,
+            height,
+            fill_ratio=0.84,
+        )
+
     def _reset_ply_view_transform(self) -> None:
         yaw = math.radians(35.0)
         pitch = math.radians(25.0)
@@ -8479,15 +10693,119 @@ class PreviewApp:
         self._ply_view_quat = self._quat_normalize(
             self._quat_multiply(q_pitch, q_yaw)
         )
-        self._ply_view_zoom = 1.0
+        self._ply_view_zoom, self._ply_view_pan = self._compute_ply_initial_view()
         self._ply_drag_last = None
         self._ply_pan_last = None
-        self._ply_view_pan = (0.0, 0.0)
 
-    def _redraw_ply_canvas(self) -> None:
+    def _capture_ply_initial_view_state(self) -> None:
+        self._ply_initial_view_state = {
+            "quat": np.asarray(self._ply_view_quat, dtype=np.float32).copy(),
+            "zoom": float(self._ply_view_zoom),
+            "pan": (
+                float(self._ply_view_pan[0]),
+                float(self._ply_view_pan[1]),
+            ),
+            "projection_mode": self._ply_projection_mode.get(),
+            "interactive_point_cap": self._ply_view_interactive_max_points_var.get(),
+            "point_cap": self._ply_view_high_max_points_var.get(),
+            "point_size": self._ply_point_size_var.get(),
+            "grid_step": self._ply_grid_step_var.get(),
+            "grid_span": self._ply_grid_span_var.get(),
+            "draw_points": bool(self._ply_draw_points_var.get()),
+            "monochrome": bool(self._ply_monochrome_var.get()),
+            "show_world_axes": bool(self._ply_show_world_axes_var.get()),
+            "show_grid": bool(self._ply_show_grid_var.get()),
+        }
+
+    def _reset_ply_view_defaults(self) -> None:
+        self._ply_projection_mode.set("Orthographic")
+        self._ply_view_interactive_max_points_var.set(
+            str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
+        )
+        self._ply_view_high_max_points_var.set(str(PLY_VIEW_MAX_POINTS))
+        self._ply_point_size_var.set("2")
+        self._ply_grid_step_var.set("1.0")
+        self._ply_grid_span_var.set("auto")
+        self._ply_draw_points_var.set(True)
+        self._ply_monochrome_var.set(False)
+        self._ply_show_world_axes_var.set(True)
+        self._ply_show_grid_var.set(True)
+
+    def _reset_ply_view(self) -> None:
+        state = self._ply_initial_view_state
+        if state is None:
+            self._reset_ply_view_transform()
+            self._redraw_ply_canvas()
+            return
+        self._ply_view_quat = np.asarray(state["quat"], dtype=np.float32).copy()
+        self._ply_view_zoom = float(state["zoom"])
+        self._ply_view_pan = (
+            float(state["pan"][0]),
+            float(state["pan"][1]),
+        )
+        self._ply_drag_last = None
+        self._ply_pan_last = None
+        self._ply_projection_mode.set(str(state["projection_mode"]))
+        self._ply_view_interactive_max_points_var.set(
+            str(state["interactive_point_cap"])
+        )
+        self._ply_view_high_max_points_var.set(str(state["point_cap"]))
+        self._ply_point_size_var.set(str(state["point_size"]))
+        self._ply_grid_step_var.set(str(state["grid_step"]))
+        self._ply_grid_span_var.set(str(state["grid_span"]))
+        self._ply_draw_points_var.set(bool(state["draw_points"]))
+        self._ply_monochrome_var.set(bool(state["monochrome"]))
+        self._ply_show_world_axes_var.set(bool(state["show_world_axes"]))
+        self._ply_show_grid_var.set(bool(state["show_grid"]))
+        self._redraw_ply_canvas(force=True)
+
+    def _get_ply_grid_step(self) -> float:
+        text = self._ply_grid_step_var.get().strip()
+        if not text:
+            return 1.0
+        try:
+            value = float(text)
+        except Exception:
+            return 1.0
+        if value <= 0.0:
+            return 1.0
+        return value
+
+    def _get_ply_grid_span(self) -> Optional[float]:
+        text = self._ply_grid_span_var.get().strip()
+        if not text or text.lower() == "auto":
+            return None
+        try:
+            value = float(text)
+        except Exception:
+            return None
+        if value <= 0.0:
+            return None
+        return value
+
+    def _get_ply_point_size(self) -> int:
+        text = self._ply_point_size_var.get().strip()
+        if not text:
+            return 1
+        try:
+            value = int(round(float(text)))
+        except Exception:
+            return 1
+        if value < 1:
+            return 1
+        return min(value, 9)
+
+    def _get_ply_axis_length(self) -> float:
+        return max(self._ply_view_max_extent * 0.2, 1e-3)
+
+    def _redraw_ply_canvas(self, force: bool = False) -> None:
         canvas = self._ply_view_canvas
         if canvas is None or not canvas.winfo_exists():
             return
+        if not force and not self._is_ply_tab_active():
+            self._ply_redraw_pending = True
+            return
+        self._ply_redraw_pending = False
         self._render_ply_points(canvas)
 
     def _on_ply_canvas_configure(self, _event=None) -> None:
@@ -8838,11 +11156,6 @@ class PreviewApp:
         self, point_count: int, original_count: int, sample_step: int
     ) -> str:
         label = self._ply_view_source_label or "PLY"
-        name = (
-            self._ply_current_file_path.name
-            if self._ply_current_file_path is not None
-            else "PLY"
-        )
         base_count = max(0, int(point_count))
         src_count = max(0, int(original_count))
         sky_count = 0
@@ -8859,7 +11172,7 @@ class PreviewApp:
             suffix = f"{base_count:,} pts"
         if sky_count > 0:
             suffix = f"{suffix} + sky {sky_count:,} = {total_count:,}"
-        return f"{label}: {name}  ({suffix})"
+        return f"{label} ({suffix})"
 
     @staticmethod
     def _rotation_matrix_from_vectors(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -9453,6 +11766,8 @@ class PreviewApp:
                 low_quality_max = PLY_VIEW_INTERACTIVE_MAX_POINTS
             render_max = min(render_max, low_quality_max)
         sample_step = self._compute_sample_step(points.shape[0], render_max)
+        self._ply_render_sample_step = max(1, sample_step)
+        self._ply_rendered_point_count = 0
         if sample_step > 1:
             points = points[::sample_step]
             colors = colors[::sample_step]
@@ -9478,44 +11793,57 @@ class PreviewApp:
             scale[valid] = proj_scale / depth[valid]
             sx = width / 2.0 + x1 * scale + pan_x
             sy = height / 2.0 - y1 * scale + pan_y
+        buf = np.full((height, width, 3), 0x11, dtype=np.uint8)
+        if bool(self._ply_show_grid_var.get()):
+            image_bg = Image.fromarray(buf, mode="RGB")
+            draw_bg = ImageDraw.Draw(image_bg)
+            self._draw_ply_ground_grid(
+                draw_bg,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+            buf = np.asarray(image_bg, dtype=np.uint8).copy()
+        else:
+            self._ply_rendered_grid_span = 0.0
+        depth_buf = np.full((height, width), np.inf, dtype=np.float32)
         ix = np.rint(sx).astype(np.int32)
         iy = np.rint(sy).astype(np.int32)
         valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
-        if not np.any(valid):
-            messagebox.showinfo(
-                "Show Point Cloud",
-                "No visible points remained after projection.",
+        if bool(self._ply_draw_points_var.get()) and np.any(valid):
+            self._draw_projected_point_layer(
+                buf,
+                depth_buf,
+                width,
+                height,
+                ix[valid],
+                iy[valid],
+                depth[valid],
+                colors[valid],
+                monochrome=bool(self._ply_monochrome_var.get()),
+                point_size=self._get_ply_point_size(),
             )
-            self._render_ply_idle_canvas(canvas)
-            return
-        depth_valid = depth[valid]
-        ix_valid = ix[valid]
-        iy_valid = iy[valid]
-        colors_valid = colors[valid]
-        if bool(self._ply_monochrome_var.get()):
-            colors_valid = np.full((colors_valid.shape[0], 3), 255, dtype=np.uint8)
-        pixel_index = (iy_valid * width + ix_valid).astype(np.int64, copy=False)
-        order = np.argsort(depth_valid)[::-1]
-        pixel_order = pixel_index[order]
-        color_order = colors_valid[order]
-        pixel_count = width * height
-        buf = np.full((pixel_count, 3), 0x11, dtype=np.uint8)
-        buf[pixel_order, :] = color_order
-        image_array = buf.reshape((height, width, 3))
-        image = Image.fromarray(image_array, mode="RGB")
-        self._draw_axes_overlay(
-            image,
-            width,
-            height,
-            rotation,
-            depth_offset,
-            proj_scale,
-            ortho_scale,
-            is_orthographic,
-            pan_x,
-            pan_y,
-        )
-        self._draw_ply_stats_overlay(image)
+            self._ply_rendered_point_count = int(np.count_nonzero(valid))
+        image = Image.fromarray(buf, mode="RGB")
+        draw = ImageDraw.Draw(image)
+        if bool(self._ply_show_world_axes_var.get()):
+            self._draw_ply_world_axes(
+                draw,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+        self._draw_ply_info_overlay(draw, image)
         photo = ImageTk.PhotoImage(image=image)
         self._ply_canvas_photo = photo
         if self._ply_canvas_image_id is None:
@@ -9532,7 +11860,17 @@ class PreviewApp:
             width = PLY_VIEW_CANVAS_WIDTH
             height = PLY_VIEW_CANVAS_HEIGHT
         image = Image.new("RGB", (width, height), (0x11, 0x11, 0x11))
-        self._draw_ply_stats_overlay(image)
+        self._ply_rendered_grid_span = 0.0
+        self._ply_render_sample_step = 1
+        self._ply_rendered_point_count = 0
+        draw = ImageDraw.Draw(image)
+        info = self._ply_view_info_var.get().strip() or "Point cloud viewer is idle"
+        bbox = draw.textbbox((0, 0), info)
+        text_w = max(0, int(bbox[2] - bbox[0]))
+        text_h = max(0, int(bbox[3] - bbox[1]))
+        x = max(12, (width - text_w) // 2)
+        y = max(12, (height - text_h) // 2)
+        draw.text((x, y), info, fill=(220, 220, 220))
         photo = ImageTk.PhotoImage(image=image)
         self._ply_canvas_photo = photo
         if self._ply_canvas_image_id is None:
@@ -9550,116 +11888,145 @@ class PreviewApp:
             self._ply_view_zoom * (min(width, height) * 0.45 / max_extent),
         )
 
-    def _draw_axes_overlay(
+    def _draw_ply_ground_grid(
         self,
-        image: Image.Image,
+        draw: ImageDraw.ImageDraw,
         width: int,
         height: int,
         rotation: np.ndarray,
-        depth_offset: float,
         proj_scale: float,
         ortho_scale: float,
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
     ) -> None:
-        axis_len = max(self._ply_view_max_extent * 0.25, 1e-3)
+        step = self._get_ply_grid_step()
+        span = self._get_ply_grid_span()
+        if span is None:
+            half_span = max(self._ply_view_max_extent * 0.75, step * 2.0, 1.0)
+        else:
+            half_span = max(float(span) * 0.5, step * 2.0)
+        line_count = max(2, int(math.ceil(half_span / step)))
+        line_count = min(line_count, CAMERA_SCENE_GRID_MAX_HALF_LINES)
+        grid_limit = line_count * step
+        self._ply_rendered_grid_span = float(grid_limit * 2.0)
+        minor_color = (48, 56, 68)
+        major_color = (74, 86, 102)
+        axis_color = (105, 123, 146)
+        for index in range(-line_count, line_count + 1):
+            coord = index * step
+            line_color = major_color if index % 5 == 0 else minor_color
+            if index == 0:
+                line_color = axis_color
+            for start, end in (
+                ((-grid_limit, 0.0, coord), (grid_limit, 0.0, coord)),
+                ((coord, 0.0, -grid_limit), (coord, 0.0, grid_limit)),
+            ):
+                start_pt = self._project_point_to_screen(
+                    start,
+                    width,
+                    height,
+                    rotation,
+                    self._ply_view_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                )
+                end_pt = self._project_point_to_screen(
+                    end,
+                    width,
+                    height,
+                    rotation,
+                    self._ply_view_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                )
+                if start_pt is None or end_pt is None:
+                    continue
+                draw.line([start_pt, end_pt], fill=line_color, width=1)
+
+    def _draw_ply_world_axes(
+        self,
+        draw: ImageDraw.ImageDraw,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> None:
+        axis_len = self._get_ply_axis_length()
         origin = (0.0, 0.0, 0.0)
-        axes = {
-            "X": (axis_len, 0.0, 0.0),
-            "Y": (0.0, axis_len, 0.0),
-            "Z": (0.0, 0.0, axis_len),
-        }
-        screen_origin = self._project_point_to_screen(
+        origin_pt = self._project_point_to_screen(
             origin,
             width,
             height,
             rotation,
-            depth_offset,
+            self._ply_view_depth_offset,
             proj_scale,
             ortho_scale,
             is_orthographic,
             pan_x,
             pan_y,
         )
-        if screen_origin is None:
+        if origin_pt is None:
             return
-        draw = ImageDraw.Draw(image)
-        colors = {
-            "X": (255, 80, 80),
-            "Y": (80, 255, 120),
-            "Z": (80, 160, 255),
-        }
-        for label, endpoint in axes.items():
-            screen_point = self._project_point_to_screen(
+        for label, endpoint, color in (
+            ("X", (axis_len, 0.0, 0.0), (255, 80, 80)),
+            ("Y", (0.0, axis_len, 0.0), (80, 255, 120)),
+            ("Z", (0.0, 0.0, axis_len), (80, 160, 255)),
+        ):
+            screen_pt = self._project_point_to_screen(
                 endpoint,
                 width,
                 height,
                 rotation,
-                depth_offset,
+                self._ply_view_depth_offset,
                 proj_scale,
                 ortho_scale,
                 is_orthographic,
                 pan_x,
                 pan_y,
             )
-            if screen_point is None:
+            if screen_pt is None:
                 continue
-            color = colors.get(label, (255, 255, 255))
-            draw.line(
-                [screen_origin, screen_point],
-                fill=color,
-                width=2,
-            )
-            draw.text(
-                (screen_point[0] + 4, screen_point[1] - 12),
-                label,
-                fill=color,
-            )
-        r = 4
+            draw.line([origin_pt, screen_pt], fill=color, width=2)
+            draw.text((screen_pt[0] + 4, screen_pt[1] - 12), label, fill=color)
+        radius = 4
         draw.ellipse(
             [
-                (screen_origin[0] - r, screen_origin[1] - r),
-                (screen_origin[0] + r, screen_origin[1] + r),
+                (origin_pt[0] - radius, origin_pt[1] - radius),
+                (origin_pt[0] + radius, origin_pt[1] + radius),
             ],
             fill=(255, 255, 255),
         )
-        axis_text = f"Axis scale: {axis_len:.2f}"
-        draw.text(
-            (12, height - 24),
-            axis_text,
-            fill=(255, 255, 255),
-        )
 
-    def _draw_ply_stats_overlay(self, image: Image.Image) -> None:
-        draw = ImageDraw.Draw(image)
-        mean_rgb = self._ply_view_rgb_mean
-        if mean_rgb is not None:
-            mean_text = "Mean RGB: {:.1f}, {:.1f}, {:.1f}".format(
-                mean_rgb[0],
-                mean_rgb[1],
-                mean_rgb[2],
-            )
-            x0, y0 = 8, 8
-            bbox = draw.textbbox((0, 0), mean_text)
-            text_w = max(0, int(bbox[2] - bbox[0]))
-            text_h = max(0, int(bbox[3] - bbox[1]))
-            x1 = min(image.width - 8, x0 + text_w + 8)
-            y1 = y0 + text_h + 8
-            draw.rectangle([(x0, y0), (x1, y1)], fill=(0, 0, 0))
-            draw.text((x0 + 4, y0 + 4), mean_text, fill=(255, 255, 255))
-        info_text = self._ply_view_info_var.get().strip()
-        if not info_text:
-            return
-        bbox = draw.textbbox((0, 0), info_text)
-        text_w = max(0, int(bbox[2] - bbox[0]))
-        text_h = max(0, int(bbox[3] - bbox[1]))
-        x1 = image.width - 8
-        y0 = 8
-        x0 = max(8, x1 - text_w - 8)
-        y1 = y0 + text_h + 8
-        draw.rectangle([(x0, y0), (x1, y1)], fill=(0, 0, 0))
-        draw.text((x0 + 4, y0 + 4), info_text, fill=(255, 255, 255))
+    def _draw_ply_info_overlay(
+        self,
+        draw: ImageDraw.ImageDraw,
+        image: Image.Image,
+    ) -> None:
+        info_text = self._ply_view_info_var.get().strip() or "Point cloud viewer"
+        render_count = (
+            self._ply_rendered_point_count
+            if bool(self._ply_draw_points_var.get())
+            else 0
+        )
+        lines = [
+            info_text,
+            "render: {} pts (step {})".format(
+                render_count,
+                self._ply_render_sample_step,
+            ),
+        ]
+        self._draw_overlay_lines(draw, image, lines)
 
     @staticmethod
     def _project_point_to_screen(
@@ -9690,6 +12057,1503 @@ class PreviewApp:
         sx = width / 2.0 + x1 * scale + pan_x
         sy = height / 2.0 - y1 * scale + pan_y
         return sx, sy
+
+    def _update_camera_scene_input_state(self) -> None:
+        source_var = self.camera_scene_vars.get("source_type")
+        mode = source_var.get().strip() if source_var is not None else ""
+        visible_group = {
+            CAMERA_SCENE_SOURCE_CHOICES[0]: "colmap",
+            CAMERA_SCENE_SOURCE_CHOICES[1]: "transforms",
+            CAMERA_SCENE_SOURCE_CHOICES[2]: "realityscan",
+            CAMERA_SCENE_SOURCE_CHOICES[3]: "xmp",
+            CAMERA_SCENE_SOURCE_CHOICES[4]: "metashape",
+        }.get(mode, "colmap")
+        for group_name, frame in self._camera_scene_input_groups.items():
+            if frame is None:
+                continue
+            if group_name == visible_group:
+                frame.pack(fill="x", pady=0)
+            else:
+                frame.pack_forget()
+        title_map = {
+            "colmap": "Load COLMAP View",
+            "transforms": "Load transforms View",
+            "realityscan": "Load RealityScan View",
+            "xmp": "Load RealityScan XMP View",
+            "metashape": "Load Metashape XML View",
+        }
+        if self.camera_scene_load_button is not None:
+            self.camera_scene_load_button.configure(
+                text=title_map.get(visible_group, "Load Camera View")
+            )
+
+    def _get_camera_scene_optional_width_height(
+        self,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        width_text = self.camera_converter_vars.get("width", tk.StringVar()).get().strip()
+        height_text = self.camera_converter_vars.get("height", tk.StringVar()).get().strip()
+        width_value: Optional[int]
+        height_value: Optional[int]
+        if width_text:
+            width_value = int(width_text)
+            if width_value <= 0:
+                raise ValueError("Width must be a positive integer.")
+        else:
+            width_value = None
+        if height_text:
+            height_value = int(height_text)
+            if height_value <= 0:
+                raise ValueError("Height must be a positive integer.")
+        else:
+            height_value = None
+        return width_value, height_value
+
+    def _load_camera_scene(self) -> None:
+        if not self.camera_scene_vars:
+            return
+        source_type = self.camera_scene_vars["source_type"].get().strip()
+        try:
+            width_value, height_value = self._get_camera_scene_optional_width_height()
+            if source_type == CAMERA_SCENE_SOURCE_CHOICES[0]:
+                source_dir = self.camera_scene_vars["colmap_dir"].get().strip()
+                if not source_dir:
+                    raise ValueError("COLMAP folder is required.")
+                scene = camera_pose_scene.load_scene_from_colmap_dir(Path(source_dir))
+            elif source_type == CAMERA_SCENE_SOURCE_CHOICES[1]:
+                transforms_json = self.camera_scene_vars["transforms_json"].get().strip()
+                transforms_ply = self.camera_scene_vars["transforms_ply"].get().strip()
+                if not transforms_json or not transforms_ply:
+                    raise ValueError("transforms.json and transforms PLY are required.")
+                scene = camera_pose_scene.load_scene_from_transforms_set(
+                    Path(transforms_json),
+                    Path(transforms_ply),
+                )
+            elif source_type == CAMERA_SCENE_SOURCE_CHOICES[2]:
+                csv_path = self.camera_scene_vars["csv_path"].get().strip()
+                csv_ply = self.camera_scene_vars["csv_ply"].get().strip()
+                if not csv_path or not csv_ply:
+                    raise ValueError("RealityScan CSV and RealityScan PLY are required.")
+                scene = camera_pose_scene.load_scene_from_realityscan_csv_set(
+                    Path(csv_path),
+                    Path(csv_ply),
+                )
+            elif source_type == CAMERA_SCENE_SOURCE_CHOICES[3]:
+                xmp_dir = self.camera_scene_vars["xmp_dir"].get().strip()
+                xmp_ply = self.camera_scene_vars["xmp_ply"].get().strip()
+                if not xmp_dir:
+                    raise ValueError("RealityScan XMP directory is required.")
+                if width_value is None or height_value is None:
+                    raise ValueError(
+                        "Width and Height are required for RealityScan XMP preview."
+                    )
+                scene = camera_pose_scene.load_scene_from_realityscan_xmp_set(
+                    Path(xmp_dir),
+                    Path(xmp_ply) if xmp_ply else None,
+                    width=width_value,
+                    height=height_value,
+                )
+            else:
+                metashape_xml = self.camera_scene_vars["metashape_xml"].get().strip()
+                metashape_ply = self.camera_scene_vars["metashape_ply"].get().strip()
+                if not metashape_xml:
+                    raise ValueError("Metashape XML is required.")
+                scene = camera_pose_scene.load_scene_from_metashape_xml_set(
+                    Path(metashape_xml),
+                    Path(metashape_ply) if metashape_ply else None,
+                    width=width_value,
+                    height=height_value,
+                )
+        except Exception as exc:
+            messagebox.showerror(
+                "CameraFormatConverter",
+                f"Failed to load camera scene.\n{exc}",
+            )
+            return
+        self._set_camera_scene(scene)
+
+    def _clear_camera_scene(self) -> None:
+        self._camera_scene_initial_view_state = None
+        self._camera_scene_base_points = np.zeros((0, 3), dtype=np.float32)
+        self._camera_scene_base_colors = np.zeros((0, 3), dtype=np.uint8)
+        self._camera_scene_base_camera_items = []
+        self._camera_scene_base_info_text = "Camera format viewer is idle"
+        self._camera_scene_base_source_label = "CameraPoseScene"
+        self._camera_scene_points = None
+        self._camera_scene_points_centered = None
+        self._camera_scene_colors = None
+        self._camera_scene_camera_items = []
+        self._camera_scene_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_view_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_origin_centered = np.zeros(3, dtype=np.float32)
+        self._camera_scene_ground_y = 0.0
+        self._camera_scene_total_points = 0
+        self._camera_scene_total_cameras = 0
+        self._camera_scene_sample_step = 1
+        self._camera_scene_camera_sample_step = 1
+        self._camera_scene_rendered_camera_count = 0
+        self._camera_scene_rendered_grid_span = 0.0
+        self._camera_scene_source_label = "CameraPoseScene"
+        self._camera_scene_info_var.set("Camera format viewer is idle")
+        self._reset_camera_scene_transform()
+        self._redraw_camera_scene_canvas()
+
+    def _log_camera_scene_normalization(self, scene: Any) -> None:
+        lines = list(getattr(scene, "normalization_log", []) or [])
+        if not lines:
+            return
+        self._append_text_widget(self.camera_converter_log, "[preview] --------")
+        for line in lines:
+            self._append_text_widget(self.camera_converter_log, str(line))
+        self._append_text_widget(
+            self.camera_converter_log,
+            "[preview] Additional preview transform defaults: "
+            "camera rot=(0,0,0), pointcloud rot=(0,0,0), "
+            "camera scale=1.0, pointcloud scale=1.0, link=ON",
+        )
+
+    def _clone_camera_scene_camera_items(
+        self,
+        camera_items: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        cloned: List[Dict[str, Any]] = []
+        for item in camera_items:
+            cloned.append(
+                {
+                    "name": str(item["name"]),
+                    "center": np.asarray(item["center"], dtype=np.float32).copy(),
+                    "rotation_cw": np.asarray(
+                        item["rotation_cw"],
+                        dtype=np.float32,
+                    ).copy(),
+                    "frustum_half_w": float(item["frustum_half_w"]),
+                    "frustum_half_h": float(item["frustum_half_h"]),
+                }
+            )
+        return cloned
+
+    def _set_camera_scene(self, scene: Any) -> None:
+        self._camera_scene_base_points = np.asarray(
+            scene.points_xyz,
+            dtype=np.float32,
+        ).copy()
+        self._camera_scene_base_colors = np.asarray(
+            scene.points_rgb,
+            dtype=np.uint8,
+        ).copy()
+        self._camera_scene_base_camera_items = [
+            {
+                "name": str(cam.name),
+                "center": np.asarray(cam.center, dtype=np.float32).copy(),
+                "rotation_cw": np.asarray(
+                    cam.rotation_cw,
+                    dtype=np.float32,
+                ).copy(),
+                "frustum_half_w": float(cam.frustum_half_w),
+                "frustum_half_h": float(cam.frustum_half_h),
+            }
+            for cam in scene.cameras
+        ]
+        self._camera_scene_base_source_label = str(scene.source_kind)
+        self._camera_scene_base_info_text = str(scene.info_text)
+        self._log_camera_scene_normalization(scene)
+        self._reset_camera_scene_load_defaults()
+        self._apply_camera_scene_preview_transform()
+
+    def _set_camera_scene_view_data(
+        self,
+        points: np.ndarray,
+        colors: np.ndarray,
+        camera_items: Sequence[Dict[str, Any]],
+        source_label: str,
+        info_text: str,
+    ) -> None:
+        points = np.asarray(points, dtype=np.float32)
+        colors = np.asarray(colors, dtype=np.uint8)
+        camera_items_local = self._clone_camera_scene_camera_items(camera_items)
+        camera_centers = [
+            np.asarray(item["center"], dtype=np.float32)
+            for item in camera_items_local
+        ]
+        bounds_parts: List[np.ndarray] = []
+        if points.size:
+            bounds_parts.append(points)
+        if camera_centers:
+            bounds_parts.append(np.vstack(camera_centers).astype(np.float32))
+        if bounds_parts:
+            all_xyz = np.vstack(bounds_parts)
+            xyz_min = all_xyz.min(axis=0)
+            xyz_max = all_xyz.max(axis=0)
+            extent = np.maximum(xyz_max - xyz_min, 1e-6)
+            max_extent = float(np.max(extent))
+        else:
+            max_extent = 1.0
+        self._camera_scene_points = points
+        self._camera_scene_points_centered = (
+            points.astype(np.float32, copy=False)
+            if points.size
+            else np.zeros((0, 3), dtype=np.float32)
+        )
+        self._camera_scene_colors = colors
+        self._camera_scene_camera_items = []
+        for item in camera_items_local:
+            center_abs = np.asarray(item["center"], dtype=np.float32)
+            self._camera_scene_camera_items.append(
+                {
+                    "name": str(item["name"]),
+                    "center": center_abs,
+                    "center_centered": center_abs.astype(np.float32, copy=False),
+                    "rotation_cw": np.asarray(
+                        item["rotation_cw"],
+                        dtype=np.float32,
+                    ),
+                    "frustum_half_w": float(item["frustum_half_w"]),
+                    "frustum_half_h": float(item["frustum_half_h"]),
+                }
+            )
+        self._camera_scene_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_view_center = np.zeros(3, dtype=np.float32)
+        self._camera_scene_origin_centered = np.zeros(3, dtype=np.float32)
+        self._camera_scene_ground_y = 0.0
+        self._camera_scene_total_points = int(points.shape[0]) if points.ndim == 2 else 0
+        self._camera_scene_total_cameras = len(camera_items_local)
+        self._camera_scene_camera_sample_step = 1
+        self._camera_scene_rendered_camera_count = self._camera_scene_total_cameras
+        self._camera_scene_source_label = str(source_label)
+        self._camera_scene_max_extent = max(max_extent, 1e-3)
+        self._camera_scene_depth_offset = self._camera_scene_max_extent * 2.5
+        self._camera_scene_info_var.set(str(info_text))
+        self._set_camera_scene_view_center(
+            np.zeros(3, dtype=np.float32),
+            reset_view_transform=True,
+            capture_initial=True,
+            redraw=True,
+        )
+
+    def _sync_camera_scene_linked_transform_vars(self, *_args) -> None:
+        if not self.camera_converter_vars:
+            return
+        link_var = self.camera_converter_vars.get("link_transform")
+        if link_var is None or not bool(link_var.get()):
+            return
+        for src_key, dst_key in (
+            ("camera_rot_x_deg", "pointcloud_rot_x_deg"),
+            ("camera_rot_y_deg", "pointcloud_rot_y_deg"),
+            ("camera_rot_z_deg", "pointcloud_rot_z_deg"),
+            ("camera_scale", "pointcloud_scale"),
+        ):
+            src_var = self.camera_converter_vars.get(src_key)
+            dst_var = self.camera_converter_vars.get(dst_key)
+            if src_var is None or dst_var is None:
+                continue
+            src_value = src_var.get()
+            if dst_var.get() != src_value:
+                dst_var.set(src_value)
+
+    def _sync_camera_scene_transform_link_state(self) -> None:
+        link_var = self.camera_converter_vars.get("link_transform")
+        linked = bool(link_var.get()) if link_var is not None else True
+        if linked:
+            self._sync_camera_scene_linked_transform_vars()
+        state = "disabled" if linked else "normal"
+        for widget in self._camera_scene_point_transform_widgets:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+    def _on_camera_scene_link_transform_changed(self, *_args) -> None:
+        self._sync_camera_scene_transform_link_state()
+
+    def _collect_camera_scene_transform_values(
+        self,
+        show_error: bool = True,
+    ) -> Optional[Dict[str, float]]:
+        if not self.camera_converter_vars:
+            return None
+        self._sync_camera_scene_linked_transform_vars()
+        value_map: Dict[str, float] = {}
+        defaults = {
+            "camera_rot_x_deg": 0.0,
+            "camera_rot_y_deg": 0.0,
+            "camera_rot_z_deg": 0.0,
+            "pointcloud_rot_x_deg": 0.0,
+            "pointcloud_rot_y_deg": 0.0,
+            "pointcloud_rot_z_deg": 0.0,
+            "camera_scale": 1.0,
+            "pointcloud_scale": 1.0,
+        }
+        for key, default_value in defaults.items():
+            var = self.camera_converter_vars.get(key)
+            text = var.get().strip() if var is not None else ""
+            if not text:
+                value = default_value
+            else:
+                try:
+                    value = float(text)
+                except Exception:
+                    if show_error:
+                        messagebox.showerror(
+                            "CameraFormatConverter",
+                            f"{key} must be numeric.",
+                        )
+                    return None
+            if key.endswith("_scale") and value <= 0.0:
+                if show_error:
+                    messagebox.showerror(
+                        "CameraFormatConverter",
+                        f"{key} must be greater than 0.",
+                    )
+                return None
+            value_map[key] = value
+        return value_map
+
+    def _apply_camera_scene_preview_transform(self) -> None:
+        transform_values = self._collect_camera_scene_transform_values(
+            show_error=True,
+        )
+        if transform_values is None:
+            return
+        if (
+            self._camera_scene_base_points.size == 0
+            and not self._camera_scene_base_camera_items
+        ):
+            self._redraw_camera_scene_canvas()
+            return
+        camera_rot = np.asarray(
+            camera_pose_scene.camera_converter.build_world_rotation_xyz_deg(
+                transform_values["camera_rot_x_deg"],
+                transform_values["camera_rot_y_deg"],
+                transform_values["camera_rot_z_deg"],
+            ),
+            dtype=np.float32,
+        )
+        point_rot = np.asarray(
+            camera_pose_scene.camera_converter.build_world_rotation_xyz_deg(
+                transform_values["pointcloud_rot_x_deg"],
+                transform_values["pointcloud_rot_y_deg"],
+                transform_values["pointcloud_rot_z_deg"],
+            ),
+            dtype=np.float32,
+        )
+        points = np.asarray(
+            self._camera_scene_base_points,
+            dtype=np.float32,
+        ).copy()
+        if points.size:
+            points = (points @ point_rot.T).astype(np.float32, copy=False)
+            points *= float(transform_values["pointcloud_scale"])
+        colors = np.asarray(
+            self._camera_scene_base_colors,
+            dtype=np.uint8,
+        ).copy()
+        camera_items = self._clone_camera_scene_camera_items(
+            self._camera_scene_base_camera_items
+        )
+        for item in camera_items:
+            center = np.asarray(item["center"], dtype=np.float32)
+            center = (center @ camera_rot.T).astype(np.float32, copy=False)
+            center *= float(transform_values["camera_scale"])
+            item["center"] = center
+            item["rotation_cw"] = (
+                camera_rot @ np.asarray(item["rotation_cw"], dtype=np.float32)
+            ).astype(np.float32, copy=False)
+        info_text = str(self._camera_scene_base_info_text)
+        if any(
+            abs(transform_values[key] - default) > 1e-9
+            for key, default in (
+                ("camera_rot_x_deg", 0.0),
+                ("camera_rot_y_deg", 0.0),
+                ("camera_rot_z_deg", 0.0),
+                ("pointcloud_rot_x_deg", 0.0),
+                ("pointcloud_rot_y_deg", 0.0),
+                ("pointcloud_rot_z_deg", 0.0),
+                ("camera_scale", 1.0),
+                ("pointcloud_scale", 1.0),
+            )
+        ):
+            info_text = (
+                f"{info_text}  |  preview transform applied"
+            )
+        self._set_camera_scene_view_data(
+            points,
+            colors,
+            camera_items,
+            self._camera_scene_base_source_label,
+            info_text,
+        )
+
+    def _reset_camera_scene_transform(self) -> None:
+        yaw = math.radians(35.0)
+        pitch = math.radians(25.0)
+        q_yaw = self._quat_from_axis_angle((0.0, 1.0, 0.0), yaw)
+        q_pitch = self._quat_from_axis_angle((1.0, 0.0, 0.0), pitch)
+        self._camera_scene_quat = self._quat_normalize(
+            self._quat_multiply(q_pitch, q_yaw)
+        )
+        self._camera_scene_zoom, self._camera_scene_pan = self._compute_camera_scene_initial_view()
+        self._camera_scene_drag_last = None
+        self._camera_scene_pan_last = None
+
+    def _get_camera_scene_viewport_size(self) -> Tuple[int, int]:
+        canvas = self._camera_scene_canvas
+        width = 0
+        height = 0
+        if canvas is not None and canvas.winfo_exists():
+            try:
+                canvas.update_idletasks()
+            except Exception:
+                pass
+            width = int(canvas.winfo_width())
+            height = int(canvas.winfo_height())
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = 520
+        return width, height
+
+    def _compute_camera_scene_initial_view(self) -> Tuple[float, Tuple[float, float]]:
+        points_parts: List[np.ndarray] = []
+        if (
+            self._camera_scene_points_centered is not None
+            and self._camera_scene_points_centered.size > 0
+        ):
+            points_parts.append(self._camera_scene_points_centered)
+        if self._camera_scene_camera_items:
+            camera_points = np.vstack(
+                [
+                    np.asarray(item["center_centered"], dtype=np.float32)
+                    for item in self._camera_scene_camera_items
+                ]
+            ).astype(np.float32, copy=False)
+            if camera_points.size > 0:
+                points_parts.append(camera_points)
+        if not points_parts:
+            return 2.0, (0.0, 0.0)
+        fit_points = np.vstack(points_parts).astype(np.float32, copy=False)
+        width, height = self._get_camera_scene_viewport_size()
+        return self._compute_fit_zoom_pan(
+            fit_points,
+            self._camera_scene_quat,
+            self._camera_scene_max_extent,
+            width,
+            height,
+            fill_ratio=0.82,
+        )
+
+    def _capture_camera_scene_initial_view_state(self) -> None:
+        self._camera_scene_initial_view_state = {
+            "quat": np.asarray(self._camera_scene_quat, dtype=np.float32).copy(),
+            "zoom": float(self._camera_scene_zoom),
+            "pan": (
+                float(self._camera_scene_pan[0]),
+                float(self._camera_scene_pan[1]),
+            ),
+            "view_center": np.asarray(
+                self._camera_scene_view_center,
+                dtype=np.float32,
+            ).copy(),
+            "projection_mode": self._camera_scene_projection_mode.get(),
+            "point_cap": self._camera_scene_point_cap_var.get(),
+            "interactive_point_cap": self._camera_scene_interactive_point_cap_var.get(),
+            "point_size": self._camera_scene_point_size_var.get(),
+            "camera_scale": self._camera_scene_camera_scale_var.get(),
+            "camera_stride": self._camera_scene_camera_stride_var.get(),
+            "grid_step": self._camera_scene_grid_step_var.get(),
+            "grid_span": self._camera_scene_grid_span_var.get(),
+            "draw_points": bool(self._camera_scene_draw_points_var.get()),
+            "draw_cameras": bool(self._camera_scene_draw_cameras_var.get()),
+            "monochrome_points": bool(
+                self._camera_scene_monochrome_points_var.get()
+            ),
+            "show_world_axes": bool(self._camera_scene_show_world_axes_var.get()),
+            "show_camera_axes": bool(self._camera_scene_show_camera_axes_var.get()),
+            "show_labels": bool(self._camera_scene_show_labels_var.get()),
+            "show_grid": bool(self._camera_scene_show_grid_var.get()),
+        }
+
+    def _reset_camera_scene_view(self) -> None:
+        if self._camera_scene_initial_view_state is None:
+            self._reset_camera_scene_transform()
+            self._redraw_camera_scene_canvas()
+            return
+        state = self._camera_scene_initial_view_state
+        self._camera_scene_quat = np.asarray(
+            state["quat"],
+            dtype=np.float32,
+        ).copy()
+        self._camera_scene_zoom = float(state["zoom"])
+        self._camera_scene_pan = (
+            float(state["pan"][0]),
+            float(state["pan"][1]),
+        )
+        self._set_camera_scene_view_center(
+            np.asarray(state["view_center"], dtype=np.float32),
+            reset_view_transform=False,
+            capture_initial=False,
+            redraw=False,
+        )
+        self._camera_scene_drag_last = None
+        self._camera_scene_pan_last = None
+        self._camera_scene_projection_mode.set(str(state["projection_mode"]))
+        self._camera_scene_point_cap_var.set(str(state["point_cap"]))
+        self._camera_scene_interactive_point_cap_var.set(
+            str(state["interactive_point_cap"])
+        )
+        self._camera_scene_point_size_var.set(str(state["point_size"]))
+        self._camera_scene_camera_scale_var.set(str(state["camera_scale"]))
+        self._camera_scene_camera_stride_var.set(str(state["camera_stride"]))
+        self._camera_scene_grid_step_var.set(str(state["grid_step"]))
+        self._camera_scene_grid_span_var.set(str(state["grid_span"]))
+        self._camera_scene_draw_points_var.set(bool(state["draw_points"]))
+        self._camera_scene_draw_cameras_var.set(bool(state["draw_cameras"]))
+        self._camera_scene_monochrome_points_var.set(
+            bool(state["monochrome_points"])
+        )
+        self._camera_scene_show_world_axes_var.set(bool(state["show_world_axes"]))
+        self._camera_scene_show_camera_axes_var.set(bool(state["show_camera_axes"]))
+        self._camera_scene_show_labels_var.set(bool(state["show_labels"]))
+        self._camera_scene_show_grid_var.set(bool(state["show_grid"]))
+        self._redraw_camera_scene_canvas(force=True)
+
+    def _reset_camera_scene_load_defaults(self) -> None:
+        if self.camera_converter_vars:
+            self.camera_converter_vars["link_transform"].set(True)
+            self.camera_converter_vars["camera_rot_x_deg"].set("0")
+            self.camera_converter_vars["camera_rot_y_deg"].set("0")
+            self.camera_converter_vars["camera_rot_z_deg"].set("0")
+            self.camera_converter_vars["camera_scale"].set("1.0")
+            self.camera_converter_vars["pointcloud_rot_x_deg"].set("0")
+            self.camera_converter_vars["pointcloud_rot_y_deg"].set("0")
+            self.camera_converter_vars["pointcloud_rot_z_deg"].set("0")
+            self.camera_converter_vars["pointcloud_scale"].set("1.0")
+            self._sync_camera_scene_transform_link_state()
+        self._camera_scene_projection_mode.set("Orthographic")
+        self._camera_scene_point_cap_var.set(str(PLY_VIEW_MAX_POINTS))
+        self._camera_scene_interactive_point_cap_var.set(
+            str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
+        )
+        self._camera_scene_point_size_var.set("2")
+        self._camera_scene_camera_scale_var.set("1")
+        self._camera_scene_camera_stride_var.set("1")
+        self._camera_scene_grid_step_var.set("1.0")
+        self._camera_scene_grid_span_var.set("auto")
+        self._camera_scene_draw_points_var.set(True)
+        self._camera_scene_draw_cameras_var.set(True)
+        self._camera_scene_monochrome_points_var.set(False)
+        self._camera_scene_show_world_axes_var.set(True)
+        self._camera_scene_show_camera_axes_var.set(False)
+        self._camera_scene_show_labels_var.set(False)
+        self._camera_scene_show_grid_var.set(True)
+
+    def _get_camera_scene_axis_length(self) -> float:
+        return max(self._camera_scene_max_extent * 0.2, 1e-3)
+
+    def _set_camera_scene_view_center(
+        self,
+        center_xyz: np.ndarray,
+        reset_view_transform: bool = False,
+        capture_initial: bool = False,
+        redraw: bool = True,
+    ) -> None:
+        center = np.asarray(center_xyz, dtype=np.float32).reshape(3)
+        self._camera_scene_view_center = center.copy()
+        self._camera_scene_center = center.copy()
+        if self._camera_scene_points is not None and self._camera_scene_points.size:
+            self._camera_scene_points_centered = (
+                self._camera_scene_points - center
+            ).astype(np.float32, copy=False)
+        else:
+            self._camera_scene_points_centered = np.zeros((0, 3), dtype=np.float32)
+        for item in self._camera_scene_camera_items:
+            center_abs = np.asarray(item["center"], dtype=np.float32)
+            item["center_centered"] = (
+                center_abs - center
+            ).astype(np.float32, copy=False)
+        self._camera_scene_origin_centered = (-center).astype(
+            np.float32,
+            copy=False,
+        )
+        self._camera_scene_ground_y = float(self._camera_scene_origin_centered[1])
+        if reset_view_transform:
+            self._reset_camera_scene_transform()
+        if capture_initial:
+            self._capture_camera_scene_initial_view_state()
+        if redraw:
+            self._redraw_camera_scene_canvas(force=True)
+
+    def _get_camera_scene_grid_step(self) -> float:
+        text = self._camera_scene_grid_step_var.get().strip()
+        if not text:
+            return 1.0
+        try:
+            value = float(text)
+        except Exception:
+            return 1.0
+        if value <= 0.0:
+            return 1.0
+        return value
+
+    def _get_camera_scene_point_size(self) -> int:
+        text = self._camera_scene_point_size_var.get().strip()
+        if not text:
+            return 1
+        try:
+            value = int(round(float(text)))
+        except Exception:
+            return 1
+        if value < 1:
+            return 1
+        return min(value, 9)
+
+    def _get_camera_scene_grid_span(self) -> Optional[float]:
+        text = self._camera_scene_grid_span_var.get().strip()
+        if not text or text.lower() == "auto":
+            return None
+        try:
+            value = float(text)
+        except Exception:
+            return None
+        if value <= 0.0:
+            return None
+        return value
+
+    def _redraw_camera_scene_canvas(self, force: bool = False) -> None:
+        canvas = self._camera_scene_canvas
+        if canvas is None or not canvas.winfo_exists():
+            return
+        if not force and not self._is_camera_scene_tab_active():
+            self._camera_scene_redraw_pending = True
+            return
+        self._camera_scene_redraw_pending = False
+        self._render_camera_scene(canvas)
+
+    def _on_camera_scene_canvas_configure(self, _event=None) -> None:
+        self._redraw_camera_scene_canvas()
+
+    def _begin_camera_scene_interaction(self) -> None:
+        self._camera_scene_is_interacting = True
+        if self._camera_scene_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._camera_scene_interaction_after_id)
+            except Exception:
+                pass
+            self._camera_scene_interaction_after_id = None
+
+    def _schedule_end_camera_scene_interaction(
+        self, delay_ms: int = PLY_INTERACTION_SETTLE_DELAY_MS
+    ) -> None:
+        if self._camera_scene_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._camera_scene_interaction_after_id)
+            except Exception:
+                pass
+            self._camera_scene_interaction_after_id = None
+        self._camera_scene_interaction_after_id = self.root.after(
+            delay_ms,
+            self._finish_camera_scene_interaction,
+        )
+
+    def _finish_camera_scene_interaction(self) -> None:
+        if self._camera_scene_interaction_after_id is not None:
+            try:
+                self.root.after_cancel(self._camera_scene_interaction_after_id)
+            except Exception:
+                pass
+            self._camera_scene_interaction_after_id = None
+        was_interacting = self._camera_scene_is_interacting
+        self._camera_scene_is_interacting = False
+        if was_interacting:
+            self._redraw_camera_scene_canvas()
+
+    def _on_camera_scene_drag_start(self, event: tk.Event) -> None:
+        if not self._camera_scene_camera_items and self._camera_scene_points_centered is None:
+            return
+        self._begin_camera_scene_interaction()
+        self._camera_scene_drag_last = (event.x, event.y)
+
+    def _on_camera_scene_drag_move(self, event: tk.Event) -> None:
+        if self._camera_scene_drag_last is None:
+            return
+        last_x, last_y = self._camera_scene_drag_last
+        dx = event.x - last_x
+        dy = event.y - last_y
+        self._camera_scene_drag_last = (event.x, event.y)
+        angle_y = math.radians(dx * 0.35)
+        angle_x = math.radians(dy * 0.35)
+        q_y = self._quat_from_axis_angle((0.0, 1.0, 0.0), angle_y)
+        q_x = self._quat_from_axis_angle((1.0, 0.0, 0.0), angle_x)
+        q_inc = self._quat_multiply(q_x, q_y)
+        self._camera_scene_quat = self._quat_normalize(
+            self._quat_multiply(q_inc, self._camera_scene_quat)
+        )
+        self._redraw_camera_scene_canvas()
+
+    def _on_camera_scene_drag_end(self, _event=None) -> None:
+        self._camera_scene_drag_last = None
+        self._camera_scene_pan_last = None
+        self._schedule_end_camera_scene_interaction()
+
+    def _on_camera_scene_double_click(self, event: tk.Event) -> Optional[str]:
+        if not self._camera_scene_camera_items or self._camera_scene_canvas is None:
+            return None
+        canvas = self._camera_scene_canvas
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        rotation = self._quat_to_matrix(self._camera_scene_quat)
+        proj_scale = min(width, height) * 0.9 * self._camera_scene_zoom
+        ortho_scale = self._compute_camera_scene_ortho_scale(width, height)
+        projection_mode = (self._camera_scene_projection_mode.get() or "").lower()
+        is_orthographic = projection_mode.startswith("ortho")
+        pan_x, pan_y = self._camera_scene_pan
+        best_item: Optional[Dict[str, Any]] = None
+        best_distance_sq: Optional[float] = None
+        for item in self._camera_scene_camera_items:
+            center_pt = self._project_point_to_screen(
+                tuple(float(v) for v in item["center_centered"]),
+                width,
+                height,
+                rotation,
+                self._camera_scene_depth_offset,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+            if center_pt is None:
+                continue
+            dx = float(center_pt[0] - event.x)
+            dy = float(center_pt[1] - event.y)
+            distance_sq = dx * dx + dy * dy
+            if best_distance_sq is None or distance_sq < best_distance_sq:
+                best_distance_sq = distance_sq
+                best_item = item
+        if best_item is None or best_distance_sq is None:
+            return "break"
+        if best_distance_sq > (36.0 * 36.0):
+            return "break"
+        self._camera_scene_pan = (0.0, 0.0)
+        self._camera_scene_drag_last = None
+        self._camera_scene_pan_last = None
+        self._set_camera_scene_view_center(
+            np.asarray(best_item["center"], dtype=np.float32),
+            reset_view_transform=False,
+            capture_initial=False,
+            redraw=True,
+        )
+        return "break"
+
+    def _on_camera_scene_pan_start(self, event: tk.Event) -> None:
+        if not self._camera_scene_camera_items and self._camera_scene_points_centered is None:
+            return
+        self._begin_camera_scene_interaction()
+        self._camera_scene_pan_last = (event.x, event.y)
+
+    def _on_camera_scene_pan_move(self, event: tk.Event) -> None:
+        if self._camera_scene_pan_last is None:
+            return
+        last_x, last_y = self._camera_scene_pan_last
+        dx = event.x - last_x
+        dy = event.y - last_y
+        pan_x, pan_y = self._camera_scene_pan
+        self._camera_scene_pan = (pan_x + dx, pan_y + dy)
+        self._camera_scene_pan_last = (event.x, event.y)
+        self._redraw_camera_scene_canvas()
+
+    def _on_camera_scene_pan_end(self, _event=None) -> None:
+        self._camera_scene_pan_last = None
+        self._schedule_end_camera_scene_interaction()
+
+    def _on_camera_scene_zoom(self, event: tk.Event) -> Optional[str]:
+        if not self._camera_scene_camera_items and self._camera_scene_points_centered is None:
+            return None
+        delta = getattr(event, "delta", 0)
+        if delta == 0:
+            num = getattr(event, "num", None)
+            if num == 4:
+                delta = 120
+            elif num == 5:
+                delta = -120
+        if delta == 0:
+            return None
+        factor = 1.0 + (0.12 if delta > 0 else -0.12)
+        new_zoom = self._camera_scene_zoom * factor
+        self._camera_scene_zoom = max(0.1, min(PLY_VIEW_MAX_ZOOM, new_zoom))
+        self._begin_camera_scene_interaction()
+        self._redraw_camera_scene_canvas()
+        self._schedule_end_camera_scene_interaction()
+        return "break"
+
+    def _get_camera_scene_point_cap(
+        self,
+        interactive: bool,
+        show_error: bool = False,
+    ) -> int:
+        var = (
+            self._camera_scene_interactive_point_cap_var
+            if interactive
+            else self._camera_scene_point_cap_var
+        )
+        default = (
+            PLY_VIEW_INTERACTIVE_MAX_POINTS
+            if interactive
+            else PLY_VIEW_MAX_POINTS
+        )
+        text = var.get().strip()
+        try:
+            value = int(text)
+        except Exception:
+            value = default
+        if value <= 0:
+            if show_error:
+                messagebox.showerror(
+                    "CameraFormatConverter",
+                    "Point cap must be a positive integer.",
+                )
+            return default
+        return value
+
+    def _get_camera_scene_camera_stride(self) -> int:
+        text = self._camera_scene_camera_stride_var.get().strip()
+        try:
+            value = int(text)
+        except Exception:
+            value = 1
+        return max(1, value)
+
+    def _get_camera_scene_effective_camera_stride(self) -> int:
+        stride = self._get_camera_scene_camera_stride()
+        if not self._camera_scene_is_interacting:
+            return stride
+        interactive_stride = self._compute_sample_step(
+            self._camera_scene_total_cameras,
+            CAMERA_SCENE_INTERACTIVE_MAX_CAMERAS,
+        )
+        return max(stride, interactive_stride)
+
+    def _get_camera_scene_camera_scale(self) -> float:
+        text = self._camera_scene_camera_scale_var.get().strip()
+        if not text:
+            return 1.0
+        try:
+            value = float(text)
+        except Exception:
+            return 1.0
+        if value <= 0:
+            return 1.0
+        return value
+
+    def _compute_camera_scene_ortho_scale(self, width: int, height: int) -> float:
+        max_extent = max(self._camera_scene_max_extent, 1e-6)
+        return max(
+            1e-6,
+            self._camera_scene_zoom * (min(width, height) * 0.45 / max_extent),
+        )
+
+    def _project_camera_scene_xyz(
+        self,
+        xyz: np.ndarray,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        arr = np.asarray(xyz, dtype=np.float32)
+        if arr.size == 0:
+            empty = np.zeros((0,), dtype=np.float32)
+            return empty, empty, empty, np.zeros((0,), dtype=bool)
+        rotated = arr @ rotation.T
+        x1 = rotated[:, 0]
+        y1 = rotated[:, 1]
+        z2 = rotated[:, 2]
+        depth = z2 + self._camera_scene_depth_offset
+        if is_orthographic:
+            sx = width / 2.0 + x1 * ortho_scale + pan_x
+            sy = height / 2.0 - y1 * ortho_scale + pan_y
+            valid = np.ones_like(depth, dtype=bool)
+        else:
+            valid = depth > 1e-4
+            scale = np.zeros_like(depth)
+            scale[valid] = proj_scale / depth[valid]
+            sx = width / 2.0 + x1 * scale + pan_x
+            sy = height / 2.0 - y1 * scale + pan_y
+        return sx, sy, depth, valid
+
+    def _draw_camera_scene_point_layer(
+        self,
+        buf: np.ndarray,
+        depth_buf: np.ndarray,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> None:
+        if (
+            self._camera_scene_points_centered is None
+            or self._camera_scene_points_centered.size == 0
+            or self._camera_scene_colors is None
+            or not bool(self._camera_scene_draw_points_var.get())
+        ):
+            self._camera_scene_sample_step = 1
+            return
+        points = self._camera_scene_points_centered
+        colors = self._camera_scene_colors
+        render_cap = self._get_camera_scene_point_cap(
+            interactive=self._camera_scene_is_interacting,
+            show_error=False,
+        )
+        sample_step = self._compute_sample_step(points.shape[0], render_cap)
+        self._camera_scene_sample_step = max(1, sample_step)
+        if sample_step > 1:
+            points = points[::sample_step]
+            colors = colors[::sample_step]
+        sx, sy, depth, valid = self._project_camera_scene_xyz(
+            points,
+            width,
+            height,
+            rotation,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            pan_x,
+            pan_y,
+        )
+        ix = np.rint(sx).astype(np.int32)
+        iy = np.rint(sy).astype(np.int32)
+        valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
+        if not np.any(valid):
+            return
+        self._draw_projected_point_layer(
+            buf,
+            depth_buf,
+            width,
+            height,
+            ix[valid],
+            iy[valid],
+            depth[valid],
+            colors[valid],
+            monochrome=bool(self._camera_scene_monochrome_points_var.get()),
+            point_size=self._get_camera_scene_point_size(),
+        )
+
+    def _render_camera_scene(self, canvas: tk.Canvas) -> None:
+        has_points = (
+            self._camera_scene_points_centered is not None
+            and self._camera_scene_points_centered.size > 0
+        )
+        has_cameras = bool(self._camera_scene_camera_items)
+        if not has_points and not has_cameras:
+            self._camera_scene_rendered_grid_span = 0.0
+            self._render_camera_scene_idle_canvas(canvas)
+            return
+        canvas.update_idletasks()
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = PLY_VIEW_CANVAS_HEIGHT
+        rotation = self._quat_to_matrix(self._camera_scene_quat)
+        proj_scale = min(width, height) * 0.9 * self._camera_scene_zoom
+        ortho_scale = self._compute_camera_scene_ortho_scale(width, height)
+        projection_mode = (self._camera_scene_projection_mode.get() or "").lower()
+        is_orthographic = projection_mode.startswith("ortho")
+        pan_x, pan_y = self._camera_scene_pan
+
+        buf = np.full((height, width, 3), 0x11, dtype=np.uint8)
+        if bool(self._camera_scene_show_grid_var.get()):
+            image_bg = Image.fromarray(buf, mode="RGB")
+            draw_bg = ImageDraw.Draw(image_bg)
+            self._draw_camera_scene_ground_grid(
+                draw_bg,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+            buf = np.asarray(image_bg, dtype=np.uint8).copy()
+        depth_buf = np.full((height, width), np.inf, dtype=np.float32)
+        if has_points:
+            self._draw_camera_scene_point_layer(
+                buf,
+                depth_buf,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+        image = Image.fromarray(buf, mode="RGB")
+        draw = ImageDraw.Draw(image)
+        if bool(self._camera_scene_show_world_axes_var.get()):
+            self._draw_camera_scene_world_axes(
+                draw,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+        self._camera_scene_camera_sample_step = self._get_camera_scene_effective_camera_stride()
+        self._camera_scene_rendered_camera_count = 0
+        if bool(self._camera_scene_draw_cameras_var.get()) and has_cameras:
+            self._draw_camera_scene_camera_overlay(
+                draw,
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+        self._draw_camera_scene_info_overlay(draw, image)
+        photo = ImageTk.PhotoImage(image=image)
+        self._camera_scene_canvas_photo = photo
+        if self._camera_scene_canvas_image_id is None:
+            self._camera_scene_canvas_image_id = canvas.create_image(
+                0, 0, anchor="nw", image=photo
+            )
+        else:
+            canvas.itemconfigure(self._camera_scene_canvas_image_id, image=photo)
+        canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _render_camera_scene_idle_canvas(self, canvas: tk.Canvas) -> None:
+        canvas.update_idletasks()
+        width = max(1, canvas.winfo_width())
+        height = max(1, canvas.winfo_height())
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = PLY_VIEW_CANVAS_HEIGHT
+        image = Image.new("RGB", (width, height), (0x11, 0x11, 0x11))
+        draw = ImageDraw.Draw(image)
+        info = self._camera_scene_info_var.get().strip() or "Camera format viewer is idle"
+        bbox = draw.textbbox((0, 0), info)
+        text_w = max(0, int(bbox[2] - bbox[0]))
+        text_h = max(0, int(bbox[3] - bbox[1]))
+        x = max(12, (width - text_w) // 2)
+        y = max(12, (height - text_h) // 2)
+        draw.text((x, y), info, fill=(220, 220, 220))
+        photo = ImageTk.PhotoImage(image=image)
+        self._camera_scene_canvas_photo = photo
+        if self._camera_scene_canvas_image_id is None:
+            self._camera_scene_canvas_image_id = canvas.create_image(
+                0, 0, anchor="nw", image=photo
+            )
+        else:
+            canvas.itemconfigure(self._camera_scene_canvas_image_id, image=photo)
+        canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _draw_camera_scene_ground_grid(
+        self,
+        draw: ImageDraw.ImageDraw,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> None:
+        step = self._get_camera_scene_grid_step()
+        span = self._get_camera_scene_grid_span()
+        if span is None:
+            half_span = max(self._camera_scene_max_extent * 0.75, step * 2.0, 1.0)
+        else:
+            half_span = max(float(span) * 0.5, step * 2.0)
+        line_count = max(2, int(math.ceil(half_span / step)))
+        line_count = min(line_count, CAMERA_SCENE_GRID_MAX_HALF_LINES)
+        grid_limit = line_count * step
+        self._camera_scene_rendered_grid_span = float(grid_limit * 2.0)
+        y_value = float(self._camera_scene_origin_centered[1])
+        origin_x = float(self._camera_scene_origin_centered[0])
+        origin_z = float(self._camera_scene_origin_centered[2])
+        minor_color = (48, 56, 68)
+        major_color = (74, 86, 102)
+        axis_color = (105, 123, 146)
+        for index in range(-line_count, line_count + 1):
+            coord = index * step
+            line_color = major_color if index % 5 == 0 else minor_color
+            if index == 0:
+                line_color = axis_color
+            x_line = (
+                (origin_x - grid_limit, y_value, origin_z + coord),
+                (origin_x + grid_limit, y_value, origin_z + coord),
+            )
+            z_line = (
+                (origin_x + coord, y_value, origin_z - grid_limit),
+                (origin_x + coord, y_value, origin_z + grid_limit),
+            )
+            for start, end in (x_line, z_line):
+                start_pt = self._project_point_to_screen(
+                    start,
+                    width,
+                    height,
+                    rotation,
+                    self._camera_scene_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                )
+                end_pt = self._project_point_to_screen(
+                    end,
+                    width,
+                    height,
+                    rotation,
+                    self._camera_scene_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                )
+                if start_pt is None or end_pt is None:
+                    continue
+                draw.line([start_pt, end_pt], fill=line_color, width=1)
+
+    def _draw_camera_scene_world_axes(
+        self,
+        draw: ImageDraw.ImageDraw,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> None:
+        axis_len = self._get_camera_scene_axis_length()
+        origin = tuple(float(v) for v in self._camera_scene_origin_centered)
+        colors = {
+            "X": (255, 80, 80),
+            "Y": (80, 255, 120),
+            "Z": (80, 160, 255),
+        }
+        origin_pt = self._project_point_to_screen(
+            origin,
+            width,
+            height,
+            rotation,
+            self._camera_scene_depth_offset,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            pan_x,
+            pan_y,
+        )
+        if origin_pt is None:
+            return
+        for label, endpoint in (
+            ("X", (origin[0] + axis_len, origin[1], origin[2])),
+            ("Y", (origin[0], origin[1] + axis_len, origin[2])),
+            ("Z", (origin[0], origin[1], origin[2] + axis_len)),
+        ):
+            screen_pt = self._project_point_to_screen(
+                endpoint,
+                width,
+                height,
+                rotation,
+                self._camera_scene_depth_offset,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+            if screen_pt is None:
+                continue
+            color = colors[label]
+            draw.line([origin_pt, screen_pt], fill=color, width=2)
+            draw.text((screen_pt[0] + 4, screen_pt[1] - 12), label, fill=color)
+        radius = 4
+        draw.ellipse(
+            [
+                (origin_pt[0] - radius, origin_pt[1] - radius),
+                (origin_pt[0] + radius, origin_pt[1] + radius),
+            ],
+            fill=(255, 255, 255),
+        )
+    def _draw_camera_scene_camera_overlay(
+        self,
+        draw: ImageDraw.ImageDraw,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+    ) -> None:
+        camera_scale = self._get_camera_scene_camera_scale()
+        camera_stride = self._get_camera_scene_effective_camera_stride()
+        self._camera_scene_camera_sample_step = camera_stride
+        rendered_camera_count = 0
+        show_labels = False
+        show_axes = False
+        frustum_color = (255, 196, 92)
+        for index, item in enumerate(self._camera_scene_camera_items):
+            if (index % camera_stride) != 0:
+                continue
+            rendered_camera_count += 1
+            center = item["center_centered"]
+            center_tuple = tuple(float(v) for v in center)
+            center_pt = self._project_point_to_screen(
+                center_tuple,
+                width,
+                height,
+                rotation,
+                self._camera_scene_depth_offset,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            )
+            if center_pt is None:
+                continue
+            rot_cw = np.asarray(item["rotation_cw"], dtype=np.float32)
+            half_w = float(item["frustum_half_w"]) * camera_scale
+            half_h = float(item["frustum_half_h"]) * camera_scale
+            depth = camera_scale
+            corners_local = (
+                (-half_w, -half_h, depth),
+                (half_w, -half_h, depth),
+                (half_w, half_h, depth),
+                (-half_w, half_h, depth),
+            )
+            corners_world: List[Tuple[float, float, float]] = []
+            corner_points: List[Tuple[float, float]] = []
+            for local in corners_local:
+                world = center + (rot_cw @ np.asarray(local, dtype=np.float32))
+                world_tuple = tuple(float(v) for v in world)
+                corners_world.append(world_tuple)
+                screen_pt = self._project_point_to_screen(
+                    world_tuple,
+                    width,
+                    height,
+                    rotation,
+                    self._camera_scene_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                )
+                if screen_pt is not None:
+                    corner_points.append(screen_pt)
+            if len(corner_points) == 4:
+                for corner_pt in corner_points:
+                    draw.line([center_pt, corner_pt], fill=frustum_color, width=1)
+                for idx_line in range(4):
+                    draw.line(
+                        [
+                            corner_points[idx_line],
+                            corner_points[(idx_line + 1) % 4],
+                        ],
+                        fill=frustum_color,
+                        width=1,
+                    )
+            draw.ellipse(
+                [
+                    (center_pt[0] - 2, center_pt[1] - 2),
+                    (center_pt[0] + 2, center_pt[1] + 2),
+                ],
+                fill=frustum_color,
+            )
+            if show_axes:
+                axis_defs = (
+                    ("X", (camera_scale * 0.45, 0.0, 0.0), (255, 80, 80)),
+                    ("Y", (0.0, camera_scale * 0.45, 0.0), (80, 255, 120)),
+                    ("Z", (0.0, 0.0, camera_scale * 0.65), (80, 160, 255)),
+                )
+                for _label, local_axis, color in axis_defs:
+                    axis_world = center + (
+                        rot_cw @ np.asarray(local_axis, dtype=np.float32)
+                    )
+                    axis_pt = self._project_point_to_screen(
+                        tuple(float(v) for v in axis_world),
+                        width,
+                        height,
+                        rotation,
+                        self._camera_scene_depth_offset,
+                        proj_scale,
+                        ortho_scale,
+                        is_orthographic,
+                        pan_x,
+                        pan_y,
+                    )
+                    if axis_pt is not None:
+                        draw.line([center_pt, axis_pt], fill=color, width=2)
+            if show_labels:
+                draw.text(
+                    (center_pt[0] + 4, center_pt[1] - 10),
+                    item["name"],
+                    fill=(255, 255, 255),
+                )
+        self._camera_scene_rendered_camera_count = rendered_camera_count
+
+    def _draw_camera_scene_info_overlay(
+        self,
+        draw: ImageDraw.ImageDraw,
+        image: Image.Image,
+    ) -> None:
+        info_text = self._camera_scene_info_var.get().strip()
+        stride = self._camera_scene_camera_sample_step
+        cap = self._get_camera_scene_point_cap(
+            interactive=self._camera_scene_is_interacting,
+            show_error=False,
+        )
+        point_render_count = (
+            min(self._camera_scene_total_points, cap)
+            if bool(self._camera_scene_draw_points_var.get())
+            else 0
+        )
+        camera_render_count = (
+            self._camera_scene_rendered_camera_count
+            if bool(self._camera_scene_draw_cameras_var.get())
+            else 0
+        )
+        axis_len = self._get_camera_scene_axis_length()
+        grid_step = self._get_camera_scene_grid_step()
+        grid_span = self._get_camera_scene_grid_span()
+        if grid_span is None:
+            grid_span_text = "{:.3f} units (auto)".format(
+                float(self._camera_scene_rendered_grid_span)
+            )
+        else:
+            grid_span_text = "{:.3f} units".format(grid_span)
+        lines = [
+            info_text or "Camera format viewer",
+            "render: {} pts (step {}) / {} cams (stride {})".format(
+                point_render_count,
+                self._camera_scene_sample_step,
+                camera_render_count,
+                stride,
+            ),
+            "XYZ axis length: {:.3f}".format(axis_len),
+            "Grid step: {:.3f} units (recommended: 1 unit = 1 m)".format(
+                grid_step
+            ),
+            "Grid span: {}".format(grid_span_text),
+        ]
+        self._draw_overlay_lines(draw, image, lines)
+
+    def _draw_overlay_lines(
+        self,
+        draw: ImageDraw.ImageDraw,
+        image: Image.Image,
+        lines: Sequence[str],
+        x0: int = 8,
+        y0: int = 8,
+    ) -> None:
+        y = y0
+        for line in lines:
+            if not line:
+                continue
+            bbox = draw.textbbox((0, 0), line)
+            text_w = max(0, int(bbox[2] - bbox[0]))
+            text_h = max(0, int(bbox[3] - bbox[1]))
+            x1 = min(image.width - 8, x0 + text_w + 8)
+            y1 = y + text_h + 8
+            draw.rectangle([(x0, y), (x1, y1)], fill=(0, 0, 0))
+            draw.text((x0 + 4, y + 4), line, fill=(255, 255, 255))
+            y = y1 + 4
+
+    def _draw_projected_point_layer(
+        self,
+        buf: np.ndarray,
+        depth_buf: np.ndarray,
+        width: int,
+        height: int,
+        ix: np.ndarray,
+        iy: np.ndarray,
+        depth: np.ndarray,
+        colors: np.ndarray,
+        *,
+        monochrome: bool,
+        point_size: int,
+    ) -> None:
+        if ix.size == 0 or iy.size == 0 or depth.size == 0 or colors.size == 0:
+            return
+        pixel_index = (iy * width + ix).astype(np.int64, copy=False)
+        depth_valid = depth.astype(np.float32, copy=False)
+        colors_valid = colors.astype(np.uint8, copy=False)
+        if monochrome:
+            colors_linear = colors_valid.astype(np.float32)
+            gray = np.rint(
+                colors_linear[:, 0] * 0.2126
+                + colors_linear[:, 1] * 0.7152
+                + colors_linear[:, 2] * 0.0722
+            ).astype(np.uint8)
+            colors_valid = np.stack((gray, gray, gray), axis=1)
+        order = np.lexsort((depth_valid, pixel_index))
+        pixel_sorted = pixel_index[order]
+        depth_sorted = depth_valid[order]
+        colors_sorted = colors_valid[order]
+        unique_mask = np.ones(pixel_sorted.shape[0], dtype=bool)
+        if pixel_sorted.shape[0] > 1:
+            unique_mask[1:] = pixel_sorted[1:] != pixel_sorted[:-1]
+        selected_pixels = pixel_sorted[unique_mask]
+        selected_depth = depth_sorted[unique_mask]
+        selected_colors = colors_sorted[unique_mask]
+        flat_depth = depth_buf.reshape(-1)
+        flat_buf = buf.reshape(-1, 3)
+        nearer_mask = selected_depth < flat_depth[selected_pixels]
+        if not np.any(nearer_mask):
+            return
+        target_pixels = selected_pixels[nearer_mask]
+        target_depth = selected_depth[nearer_mask]
+        target_colors = selected_colors[nearer_mask]
+        if point_size <= 1:
+            flat_depth[target_pixels] = target_depth
+            flat_buf[target_pixels, :] = target_colors
+            return
+        target_x = (target_pixels % width).astype(np.int32, copy=False)
+        target_y = (target_pixels // width).astype(np.int32, copy=False)
+        radius = max(0, point_size // 2)
+        for dy in range(-radius, radius + 1):
+            y_pix = target_y + dy
+            y_ok = (y_pix >= 0) & (y_pix < height)
+            if not np.any(y_ok):
+                continue
+            for dx in range(-radius, radius + 1):
+                x_pix = target_x + dx
+                valid_pix = y_ok & (x_pix >= 0) & (x_pix < width)
+                if not np.any(valid_pix):
+                    continue
+                pixel_block = (
+                    y_pix[valid_pix] * width + x_pix[valid_pix]
+                ).astype(np.int64, copy=False)
+                block_depth = target_depth[valid_pix]
+                block_colors = target_colors[valid_pix]
+                nearer_block = block_depth < flat_depth[pixel_block]
+                if not np.any(nearer_block):
+                    continue
+                write_pixels = pixel_block[nearer_block]
+                flat_depth[write_pixels] = block_depth[nearer_block]
+                flat_buf[write_pixels, :] = block_colors[nearer_block]
 
     def _select_file(
         self,
@@ -10133,6 +13997,12 @@ class PreviewApp:
     @staticmethod
     def _selector_entry_name_stem(entry: Dict[str, Any]) -> str:
         """Return a display-friendly filename stem for an overview entry."""
+        pair_base = str(entry.get("pair_base", "") or "").strip()
+        if pair_base:
+            try:
+                return Path(pair_base).stem
+            except Exception:
+                return pair_base
         raw_name = str(entry.get("filename", "") or "").strip()
         if not raw_name:
             return ""
@@ -10149,9 +14019,24 @@ class PreviewApp:
             return "index {} ({})".format(frame_idx, name_stem)
         return "index {}".format(frame_idx)
 
-    def _selector_image_path_for_entry(self, entry: Dict[str, Any]) -> Optional[Path]:
-        """Resolve the image file path for a CSV entry using the selector input dir."""
-        raw_name = str(entry.get("filename", "") or "").strip()
+    def _selector_input_base_dir(self) -> Optional[Path]:
+        """Return the current FrameSelector input directory as a Path."""
+        if not self.selector_vars:
+            return None
+        in_var = self.selector_vars.get("in_dir")
+        if in_var is None:
+            return None
+        raw_base = str(in_var.get()).strip()
+        if not raw_base:
+            return None
+        try:
+            return Path(raw_base).expanduser()
+        except Exception:
+            return None
+
+    def _selector_resolve_image_name(self, raw_name: str) -> Optional[Path]:
+        """Resolve one CSV image name using the selector input directory."""
+        raw_name = str(raw_name or "").strip()
         if not raw_name:
             return None
         try:
@@ -10160,20 +14045,64 @@ class PreviewApp:
             return None
         if candidate.is_absolute():
             return candidate if candidate.exists() else None
-        base_dir = None
-        if self.selector_vars:
-            in_var = self.selector_vars.get("in_dir")
-            if in_var is not None:
-                raw_base = str(in_var.get()).strip()
-                if raw_base:
-                    try:
-                        base_dir = Path(raw_base).expanduser()
-                    except Exception:
-                        base_dir = None
+        base_dir = self._selector_input_base_dir()
         if base_dir is None:
             return None
         path_obj = base_dir / candidate
         return path_obj if path_obj.exists() else None
+
+    def _selector_image_paths_for_entry(self, entry: Dict[str, Any]) -> List[Path]:
+        """Resolve one or two preview image paths for a CSV entry."""
+        raw_names: List[str] = []
+        for key in ("x_filename", "y_filename"):
+            raw_value = str(entry.get(key, "") or "").strip()
+            if raw_value:
+                raw_names.append(raw_value)
+        if not raw_names:
+            raw_value = str(entry.get("filename", "") or "").strip()
+            if raw_value:
+                raw_names.append(raw_value)
+
+        resolved: List[Path] = []
+        seen: Set[str] = set()
+        for raw_name in raw_names:
+            path_obj = self._selector_resolve_image_name(raw_name)
+            if path_obj is None:
+                return []
+            key = str(path_obj).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved.append(path_obj)
+        return resolved
+
+    @staticmethod
+    def _compose_selector_preview_sheet(
+        image_paths: Sequence[Path],
+        images: Sequence[Image.Image],
+    ) -> Tuple[Image.Image, str]:
+        """Create a side-by-side preview sheet for one or more images."""
+        if not images:
+            raise ValueError("No preview images to compose.")
+        if len(images) == 1:
+            return images[0].copy(), image_paths[0].name
+
+        margin = 20
+        gap = 20
+        label_height = 24
+        widths = [img.width for img in images]
+        heights = [img.height for img in images]
+        sheet_w = margin * 2 + sum(widths) + gap * (len(images) - 1)
+        sheet_h = margin * 2 + label_height + max(heights)
+        sheet = Image.new("RGB", (sheet_w, sheet_h), "#202020")
+        draw = ImageDraw.Draw(sheet)
+        x_pos = margin
+        for path_obj, image in zip(image_paths, images):
+            sheet.paste(image, (x_pos, margin + label_height))
+            draw.text((x_pos, margin), path_obj.name, fill="#f0f0f0")
+            x_pos += image.width + gap
+        label = " | ".join(path_obj.name for path_obj in image_paths)
+        return sheet, label
 
     def _close_selector_preview_panel(self) -> None:
         """Close the consolidated preview panel and clear preview state."""
@@ -10597,7 +14526,11 @@ class PreviewApp:
         info_label = self.selector_preview_panel_info_label
         status_label = self.selector_preview_panel_status_label
         if info_label is not None:
-            name = image_path.name if isinstance(image_path, Path) else str(image_path)
+            label = str(item.get("label", "") or "").strip()
+            if label:
+                name = label
+            else:
+                name = image_path.name if isinstance(image_path, Path) else str(image_path)
             info_label.configure(text="{} | orig {}x{} | view {}x{}".format(name, orig_w, orig_h, disp_w, disp_h))
         if status_label is not None:
             status_label.configure(text="Zoom: {:.1f}%".format(zoom * 100.0))
@@ -10767,33 +14700,55 @@ class PreviewApp:
         idx: int,
         show_errors: bool = True,
     ) -> bool:
-        """Load one frame image and add it to the preview set."""
+        """Load one single image or X/Y pair and add it to the preview set."""
         if idx < 0 or idx >= len(self.selector_score_entries):
             return False
         entry = self.selector_score_entries[idx]
-        image_path = self._selector_image_path_for_entry(entry)
-        if image_path is None:
+        image_paths = self._selector_image_paths_for_entry(entry)
+        if not image_paths:
             if show_errors:
                 messagebox.showerror(
                     "FrameSelector",
-                    "Could not resolve image path for {}.".format(
+                    "Could not resolve preview image path(s) for {}.".format(
                         self._selector_entry_label_text(entry)
                     ),
                 )
             return False
+        preview_images: List[Image.Image] = []
         try:
-            with Image.open(image_path) as img:
-                image = img.convert("RGB").copy()
+            for image_path in image_paths:
+                with Image.open(image_path) as img:
+                    preview_images.append(img.convert("RGB").copy())
         except Exception as exc:
             if show_errors:
                 messagebox.showerror(
                     "FrameSelector",
-                    "Failed to open image:\n{}\n\n{}".format(image_path, exc),
+                    "Failed to open preview image(s):\n{}\n\n{}".format(
+                        "\n".join(str(path_obj) for path_obj in image_paths),
+                        exc,
+                    ),
+                )
+            return False
+        try:
+            image, label = self._compose_selector_preview_sheet(
+                image_paths,
+                preview_images,
+            )
+        except Exception as exc:
+            if show_errors:
+                messagebox.showerror(
+                    "FrameSelector",
+                    "Failed to compose preview image(s):\n{}\n\n{}".format(
+                        "\n".join(str(path_obj) for path_obj in image_paths),
+                        exc,
+                    ),
                 )
             return False
         self.selector_preview_items[idx] = {
             "image": image,
-            "path": image_path,
+            "path": image_paths[0],
+            "paths": list(image_paths),
+            "label": label,
         }
         return True
 
@@ -11013,7 +14968,12 @@ class PreviewApp:
 
     def _selector_overview_zoom_min(self) -> None:
         """Set overview X zoom to the minimum (fit whole view behavior)."""
-        self._selector_overview_set_zoom(SELECTOR_OVERVIEW_X_ZOOM_MIN)
+        total = len(self.selector_score_entries)
+        if total <= 0:
+            return
+        self._selector_overview_set_zoom(
+            self._selector_overview_zoom_for_visible_bars(total)
+        )
 
     def _jump_to_next_selector_suspect(self) -> None:
         """Jump the overview viewport to the next suspect bar and max zoom."""
@@ -11209,6 +15169,10 @@ class PreviewApp:
                     brightness_key = field_map.get("brightness_mean")
                     filename_key = field_map.get("filename")
                     index_key = field_map.get("index")
+                    input_mode_key = field_map.get("input_mode")
+                    pair_base_key = field_map.get("pair_base")
+                    x_filename_key = field_map.get("x_filename")
+                    y_filename_key = field_map.get("y_filename")
                     if not selected_key or not score_key:
                         raise ValueError("CSV must contain 'selected(1=keep)' (or 'selected') and 'score' columns.")
                     parsed_entries: List[Dict[str, Any]] = []
@@ -11246,6 +15210,10 @@ class PreviewApp:
                         except (TypeError, ValueError):
                             frame_idx = row_counter
                         fname = row.get(filename_key, "") if filename_key else ""
+                        input_mode = row.get(input_mode_key, "") if input_mode_key else ""
+                        pair_base = row.get(pair_base_key, "") if pair_base_key else ""
+                        x_filename = row.get(x_filename_key, "") if x_filename_key else ""
+                        y_filename = row.get(y_filename_key, "") if y_filename_key else ""
                         idx_text = row.get(index_key, "") if index_key else ""
                         parsed_entries.append(
                             {
@@ -11256,6 +15224,10 @@ class PreviewApp:
                                 "score": score_val,
                                 "brightness_mean": brightness_val,
                                 "filename": fname,
+                                "input_mode": input_mode,
+                                "pair_base": pair_base,
+                                "x_filename": x_filename,
+                                "y_filename": y_filename,
                                 "index_text": idx_text,
                                 "row": dict(row),
                             }
@@ -11294,7 +15266,11 @@ class PreviewApp:
                 selected_entries.append(
                     {
                         "score": float(score_val),
-                        "filename": str(entry.get("filename", "")),
+                        "filename": str(
+                            entry.get("pair_base", "")
+                            or entry.get("filename", "")
+                            or ""
+                        ),
                         "index_text": str(entry.get("index_text", "")),
                         "pos": pos,
                         "brightness_mean": brightness_val,
@@ -11454,7 +15430,10 @@ class PreviewApp:
             SELECTOR_OVERVIEW_X_ZOOM_MIN,
             min(SELECTOR_OVERVIEW_X_ZOOM_MAX, float(self.selector_score_zoom)),
         )
-        bar_width = max(2.0, min(SELECTOR_OVERVIEW_BAR_WIDTH_MAX, approx_width * zoom))
+        bar_width = max(
+            SELECTOR_OVERVIEW_BAR_WIDTH_MIN,
+            min(SELECTOR_OVERVIEW_BAR_WIDTH_MAX, approx_width * zoom),
+        )
         total_width = max(bar_width * total, view_width)
         self.selector_score_bar_width = bar_width
         self.selector_score_bar_area_height = bar_area_height
@@ -13073,23 +17052,50 @@ class PreviewApp:
         if self.root is None:
             return
         self.root.update_idletasks()
+        screen_w = max(1, int(self.root.winfo_screenwidth()))
+        screen_h = max(1, int(self.root.winfo_screenheight()))
         if self.controls_frame is not None:
             controls_width = max(
                 self.controls_frame.winfo_width(),
                 self.controls_frame.winfo_reqwidth(),
-                460,
+                420,
             )
         else:
-            controls_width = 460
-        total_width = int(self.display_width + controls_width + 80)
-        total_height = int(self.display_height + 320)
+            controls_width = 420
+        total_width = int(self.display_width + controls_width + 48)
+        total_height = int(self.display_height + 120)
+        target_default_w, target_default_h = self._physical_px_to_logical(
+            self.DEFAULT_WINDOW_WIDTH_PX,
+            self.DEFAULT_WINDOW_HEIGHT_PX,
+        )
+        target_min_w, target_min_h = self._physical_px_to_logical(
+            self.DEFAULT_WINDOW_MIN_WIDTH_PX,
+            self.DEFAULT_WINDOW_MIN_HEIGHT_PX,
+        )
+        max_w = max(target_min_w, screen_w - 90)
+        max_h = max(target_min_h, screen_h - 90)
+        default_w = min(target_default_w, max_w)
+        default_h = min(target_default_h, max_h)
+        min_w = min(max(target_min_w, min(total_width, default_w)), max_w)
+        min_h = min(max(target_min_h, min(total_height, default_h)), max_h)
         current_w = self.root.winfo_width()
         current_h = self.root.winfo_height()
-        new_w = max(current_w, total_width)
-        self.root.minsize(total_width, total_height)
-        if new_w != current_w or total_height > current_h:
-            new_h = max(current_h, total_height)
-            self.root.geometry(f"{new_w}x{new_h}")
+        current_x = max(0, int(self.root.winfo_x()))
+        current_y = max(0, int(self.root.winfo_y()))
+        desired_w = default_w
+        desired_h = default_h
+        self.root.minsize(min_w, min_h)
+        if (
+            desired_w != current_w
+            or desired_h != current_h
+            or min_h > current_h
+            or current_h > max_h
+        ):
+            max_x = max(24, screen_w - desired_w - 24)
+            max_y = max(24, screen_h - desired_h - 48)
+            new_x = min(max(24, current_x), max_x)
+            new_y = min(max(24, current_y), max_y)
+            self.root.geometry(f"{desired_w}x{desired_h}+{new_x}+{new_y}")
 
     def _sync_panel_heights(self) -> None:
         if self.left_frame is None or self.right_inner is None:
@@ -13102,7 +17108,7 @@ class PreviewApp:
             target_canvas_height = max(desired_inner_height, self.display_height)
             self.canvas.configure(height=target_canvas_height, width=self.display_width)
         if self.preview_frame is not None:
-            self.preview_frame.configure(width=self.display_width + 16)
+            self.preview_frame.configure(width=self.display_width + 10)
         if self.left_frame is not None:
             self.left_frame.configure(width=self.display_width)
         if self.canvas is not None:
