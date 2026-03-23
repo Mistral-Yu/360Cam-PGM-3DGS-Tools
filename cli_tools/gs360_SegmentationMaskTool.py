@@ -16,9 +16,11 @@ gs360_SegmentationMaskTool.py
 """
 
 import argparse
+import os
 import sys
 import re
 import warnings
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import cv2
@@ -26,7 +28,6 @@ import numpy as np
 from PIL import Image
 
 import torch
-from torchvision import transforms
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 
 try:
@@ -59,19 +60,188 @@ DEFAULT_MASK_EXPAND_PIXELS = 15
 DEFAULT_MASK_EXPAND_PERCENT = 1.0
 DEFAULT_EDGE_FUSE_PIXELS = 25
 MASK_EXPAND_MODE_CHOICES = ["pixels", "percent"]
-SHADOW_T = 0.7
-SHADOW_SIGMA = 15
+SHADOW_T = 0.82
+SHADOW_SIGMA = 21
 SHADOW_NEAR = 25
-SHADOW_MIN_AREA = 500
+SHADOW_MIN_AREA = 160
+SHADOW_DELTA_MIN = 12
+SHADOW_SAT_MAX = 115
+SHADOW_NEAR_SCALE = 0.2
+SHADOW_MAX_NEAR = 128
+SHADOW_CLOSE_SCALE = 0.2
 PROGRESS_INTERVAL = 5
 INPAINT_RADIUS = 5
-TARGET_TO_COCO_LABELS = {
-    "person": [1],
-    "bicycle": [2],
-    "car": [3],
-    "animal": [16, 17, 18],  # bird, cat, dog
+DEFAULT_CPU_WORKERS = max(1, int(os.cpu_count() or 1))
+COCO_INSTANCE_CATEGORIES = [
+    (1, "person"),
+    (2, "bicycle"),
+    (3, "car"),
+    (4, "motorcycle"),
+    (5, "airplane"),
+    (6, "bus"),
+    (7, "train"),
+    (8, "truck"),
+    (9, "boat"),
+    (10, "traffic light"),
+    (11, "fire hydrant"),
+    (13, "stop sign"),
+    (14, "parking meter"),
+    (15, "bench"),
+    (16, "bird"),
+    (17, "cat"),
+    (18, "dog"),
+    (19, "horse"),
+    (20, "sheep"),
+    (21, "cow"),
+    (22, "elephant"),
+    (23, "bear"),
+    (24, "zebra"),
+    (25, "giraffe"),
+    (27, "backpack"),
+    (28, "umbrella"),
+    (31, "handbag"),
+    (32, "tie"),
+    (33, "suitcase"),
+    (34, "frisbee"),
+    (35, "skis"),
+    (36, "snowboard"),
+    (37, "sports ball"),
+    (38, "kite"),
+    (39, "baseball bat"),
+    (40, "baseball glove"),
+    (41, "skateboard"),
+    (42, "surfboard"),
+    (43, "tennis racket"),
+    (44, "bottle"),
+    (46, "wine glass"),
+    (47, "cup"),
+    (48, "fork"),
+    (49, "knife"),
+    (50, "spoon"),
+    (51, "bowl"),
+    (52, "banana"),
+    (53, "apple"),
+    (54, "sandwich"),
+    (55, "orange"),
+    (56, "broccoli"),
+    (57, "carrot"),
+    (58, "hot dog"),
+    (59, "pizza"),
+    (60, "donut"),
+    (61, "cake"),
+    (62, "chair"),
+    (63, "couch"),
+    (64, "potted plant"),
+    (65, "bed"),
+    (67, "dining table"),
+    (70, "toilet"),
+    (72, "tv"),
+    (73, "laptop"),
+    (74, "mouse"),
+    (75, "remote"),
+    (76, "keyboard"),
+    (77, "cell phone"),
+    (78, "microwave"),
+    (79, "oven"),
+    (80, "toaster"),
+    (81, "sink"),
+    (82, "refrigerator"),
+    (84, "book"),
+    (85, "clock"),
+    (86, "vase"),
+    (87, "scissors"),
+    (88, "teddy bear"),
+    (89, "hair drier"),
+    (90, "toothbrush"),
+]
+COCO_TARGET_TO_LABELS = {
+    name: [label_id] for label_id, name in COCO_INSTANCE_CATEGORIES
 }
-TARGET_CHOICES = ["person", "bicycle", "car", "animal"]
+TARGET_TO_COCO_LABELS = dict(COCO_TARGET_TO_LABELS)
+TARGET_TO_COCO_LABELS.update({
+    "animal": [16, 17, 18],  # bird, cat, dog
+})
+TARGET_NAME_ALIASES = {
+    "motorbike": "motorcycle",
+    "tv monitor": "tv",
+    "diningtable": "dining table",
+    "pottedplant": "potted plant",
+    "cellphone": "cell phone",
+    "hairdryer": "hair drier",
+    "trafficlight": "traffic light",
+    "firehydrant": "fire hydrant",
+    "stopsign": "stop sign",
+    "parkingmeter": "parking meter",
+    "sportsball": "sports ball",
+    "baseballbat": "baseball bat",
+    "baseballglove": "baseball glove",
+    "tennisracket": "tennis racket",
+    "wineglass": "wine glass",
+    "hotdog": "hot dog",
+    "teddybear": "teddy bear",
+    "dining table": "dining table",
+    "potted plant": "potted plant",
+    "cell phone": "cell phone",
+    "hair drier": "hair drier",
+}
+TARGET_CHOICES = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "bus",
+    "truck",
+    "animal",
+]
+
+
+def normalize_target_name(name: str) -> str:
+    """Normalize a user-provided target name to a canonical key."""
+    text = str(name or "").strip().lower()
+    text = re.sub(r"[_-]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    compact = text.replace(" ", "")
+    if compact in TARGET_NAME_ALIASES:
+        return TARGET_NAME_ALIASES[compact]
+    return TARGET_NAME_ALIASES.get(text, text)
+
+
+def split_target_inputs(values):
+    """Split repeated target inputs into normalized name tokens."""
+    tokens = []
+    if not values:
+        return tokens
+    for raw_value in values:
+        if raw_value is None:
+            continue
+        for part in re.split(r"[,\n;]+", str(raw_value)):
+            name = part.strip()
+            if name:
+                tokens.append(name)
+    return tokens
+
+
+def resolve_target_names(values):
+    """Resolve a list of user target names into canonical internal keys."""
+    resolved = []
+    invalid = []
+    for raw_name in split_target_inputs(values):
+        normalized = normalize_target_name(raw_name)
+        if normalized in TARGET_TO_COCO_LABELS:
+            if normalized not in resolved:
+                resolved.append(normalized)
+        else:
+            invalid.append(raw_name)
+    return resolved, invalid
+
+
+def list_available_target_names():
+    """Return the list of accepted target names shown to the user."""
+    names = list(TARGET_CHOICES)
+    for name in sorted(COCO_TARGET_TO_LABELS.keys()):
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def is_image(path: Path) -> bool:
@@ -327,12 +497,19 @@ def fuse_mask_to_edges(mask,
 
 
 def estimate_shadow_mask(img_rgb, person_mask,
-                         t=0.7, sigma=15, near_px=25, min_area=500):
+                         t=SHADOW_T,
+                         sigma=SHADOW_SIGMA,
+                         near_px=SHADOW_NEAR,
+                         min_area=SHADOW_MIN_AREA,
+                         delta_min=SHADOW_DELTA_MIN,
+                         sat_max=SHADOW_SAT_MAX):
     """
     Extract shadow candidates near the person mask (0/255 mask).
-    - ratio = gray / (blurred gray) < t to detect darker regions.
-    - Keep only pixels with low saturation.
-    - Limit to areas near a dilated person mask.
+    - ratio = gray / blurred(gray) plus absolute darkness difference.
+    - Keep low-to-medium saturation pixels because sun shadows often remain
+      slightly colored on asphalt, grass, or concrete.
+    - Limit to an adaptive area around the detected person so small people
+      still get a usable shadow search radius.
     """
     if person_mask is None:
         return None
@@ -340,16 +517,37 @@ def estimate_shadow_mask(img_rgb, person_mask,
     gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
     illum = cv2.GaussianBlur(gray, (0, 0), sigma)
     ratio = gray / (illum + 1e-6)
-    shadow = (ratio < t).astype(np.uint8) * 255
+    delta = illum - gray
+    shadow = ((ratio < t) & (delta >= float(delta_min))).astype(np.uint8) * 255
 
     hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
-    low_sat = (hsv[:, :, 1] < 80).astype(np.uint8) * 255
+    low_sat = (hsv[:, :, 1] <= int(sat_max)).astype(np.uint8) * 255
     shadow = cv2.bitwise_and(shadow, low_sat)
 
-    k = max(3, int(near_px) | 1)
+    mask_pixels = max(1, int(np.count_nonzero(person_mask)))
+    adaptive_near = int(
+        max(
+            int(near_px),
+            min(SHADOW_MAX_NEAR, np.sqrt(mask_pixels) * SHADOW_NEAR_SCALE),
+        )
+    )
+    k = max(3, adaptive_near | 1)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
     near = cv2.dilate(person_mask, kernel, iterations=1)
     shadow = cv2.bitwise_and(shadow, near)
+    shadow = cv2.bitwise_and(shadow, cv2.bitwise_not(person_mask))
+
+    close_k = max(5, int(round(k * SHADOW_CLOSE_SCALE)) | 1)
+    close_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (close_k, close_k)
+    )
+    shadow = cv2.morphologyEx(shadow, cv2.MORPH_CLOSE, close_kernel, iterations=1)
+    shadow = cv2.morphologyEx(
+        shadow,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        iterations=1,
+    )
 
     cnts, _ = cv2.findContours(shadow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     clean = np.zeros_like(shadow)
@@ -438,6 +636,151 @@ def save_cutout_rgba(img_rgb, mask, out_path: Path):
     Image.fromarray(rgba).save(str(out_path))
 
 
+def load_image_sample(in_path: Path, manual_mask_dir: Path = None):
+    """Load one image and its optional manual mask layer on CPU."""
+    with Image.open(str(in_path)) as src_img:
+        img = src_img.convert("RGB")
+        image_size = img.size
+        img_rgb = np.array(img)
+    add_mask = load_manual_mask_layers(
+        in_path,
+        manual_mask_dir=manual_mask_dir,
+        image_size=image_size,
+    )
+    return {
+        "in_path": in_path,
+        "img_rgb": img_rgb,
+        "image_size": image_size,
+        "add_mask": add_mask,
+    }
+
+
+def image_rgb_to_tensor(img_rgb):
+    """Convert an RGB uint8 array to a CHW float tensor in [0, 1]."""
+    tensor = torch.from_numpy(np.ascontiguousarray(img_rgb))
+    tensor = tensor.permute(2, 0, 1).contiguous().float()
+    tensor.div_(255.0)
+    return tensor
+
+
+def run_inference(model, device, img_rgb):
+    """Run a single-image inference while keeping GPU concurrency flat."""
+    t = image_rgb_to_tensor(img_rgb)
+    t = t.to(device)
+
+    with torch.no_grad():
+        if device.type == "cuda" and USE_FP16 and autocast is not None:
+            with autocast():
+                pred = model([t])[0]
+        else:
+            pred = model([t])[0]
+    return pred
+
+
+def process_loaded_sample(model, device, sample, out_dir: Path,
+                          score_thres: float = SCORE_THRESH,
+                          mask_thres: float = MASK_THRESH,
+                          close: int = CLOSE_KERNEL,
+                          mode: str = "mask",
+                          include_shadow: bool = False,
+                          mask_expand_mode: str = DEFAULT_MASK_EXPAND_MODE,
+                          mask_expand_pixels: int = DEFAULT_MASK_EXPAND_PIXELS,
+                          mask_expand_percent: float = (
+                              DEFAULT_MASK_EXPAND_PERCENT
+                          ),
+                          edge_fuse_pixels: int = DEFAULT_EDGE_FUSE_PIXELS,
+                          targets=None):
+    """Process a preloaded CPU sample with single-image GPU inference."""
+    if targets is None:
+        targets = ["person"]
+
+    in_path = sample["in_path"]
+    img_rgb = sample["img_rgb"]
+    image_size = sample["image_size"]
+    add_mask = sample["add_mask"]
+
+    pred = run_inference(model, device, img_rgb)
+
+    # Selected target mask (target=255, background=0).
+    mask = target_mask_from_prediction(pred, targets, score_thres, mask_thres)
+    del pred
+    mask = refine_mask(mask,
+                       close=close,
+                       expand_mode="pixels",
+                       expand_pixels=0,
+                       expand_percent=0.0,
+                       image_shape=(image_size[1], image_size[0]))
+
+    # Merge shadow mask (optional).
+    if include_shadow:
+        shadow = estimate_shadow_mask(img_rgb,
+                                      mask,
+                                      t=SHADOW_T,
+                                      sigma=SHADOW_SIGMA,
+                                      near_px=SHADOW_NEAR,
+                                      min_area=SHADOW_MIN_AREA)
+        if shadow is not None:
+            base = np.zeros_like(shadow) if mask is None else mask
+            mask = np.maximum(base, shadow)
+    mask = expand_mask(mask,
+                       expand_mode=mask_expand_mode,
+                       expand_pixels=mask_expand_pixels,
+                       expand_percent=mask_expand_percent,
+                       image_shape=(image_size[1], image_size[0]))
+    mask = fuse_mask_to_edges(
+        mask,
+        edge_fuse_pixels=edge_fuse_pixels,
+    )
+    mask = apply_manual_mask_layers(
+        mask,
+        add_mask=add_mask,
+        image_shape=(image_size[1], image_size[0]),
+    )
+
+    stem = in_path.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if mode == "alpha":
+        # Save RGBA as <source>.png.
+        if mask is None:
+            w, h = image_size
+            alpha = np.zeros((h, w), np.uint8)
+            out_path = out_dir / f"{stem}.png"
+            rgba = np.dstack([img_rgb, alpha])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(rgba).save(str(out_path))
+        else:
+            mask = 255 - mask
+            save_cutout_rgba(img_rgb, mask, out_dir / f"{stem}.png")
+
+    elif mode == "cutout":
+        if mask is None:
+            w, h = image_size
+            alpha = np.zeros((h, w), np.uint8)
+            rgba = np.dstack([img_rgb, alpha])
+            Image.fromarray(rgba).save(str(out_dir / f"{stem}_cutout.png"))
+        else:
+            save_cutout_rgba(img_rgb, mask, out_dir / f"{stem}_cutout.png")
+
+    elif mode == "mask":
+        # Invert: person=black (0), background=white (255) -> <source>.png.
+        if mask is None:
+            mask = np.zeros((image_size[1], image_size[0]), np.uint8)
+        # Ensure dimensions match.
+        h, w = image_size[1], image_size[0]
+        if mask.shape[:2] != (h, w):
+            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        mask = 255 - mask
+        save_mask_png(mask, out_dir / f"{stem}.png")
+
+    else:
+        # keep_person / remove_person / inpaint
+        if mask is None:
+            out = img_rgb
+        else:
+            out = apply_mode(img_rgb, mask, mode)
+        Image.fromarray(out).save(str(out_dir / f"{stem}_{mode}.png"))
+
+
 def apply_mode(img_rgb, mask, mode: str):
     """
     mode:
@@ -475,7 +818,8 @@ def apply_mode(img_rgb, mask, mode: str):
 
 
 def process_image(model, device, in_path: Path, out_dir: Path,
-                  score_thres: float = SCORE_THRESH, mask_thres: float = MASK_THRESH,
+                  score_thres: float = SCORE_THRESH,
+                  mask_thres: float = MASK_THRESH,
                   close: int = CLOSE_KERNEL, mode: str = "mask",
                   include_shadow: bool = False,
                   mask_expand_mode: str = DEFAULT_MASK_EXPAND_MODE,
@@ -484,102 +828,83 @@ def process_image(model, device, in_path: Path, out_dir: Path,
                   edge_fuse_pixels: int = DEFAULT_EDGE_FUSE_PIXELS,
                   manual_mask_dir: Path = None,
                   targets=None):
-    if targets is None:
-        targets = ["person"]
-
-    img = Image.open(str(in_path)).convert("RGB")
-    t = transforms.ToTensor()(img).to(device)
-
-    # Inference.
-    with torch.no_grad():
-        if device.type == "cuda" and USE_FP16 and autocast is not None:
-            with autocast():
-                pred = model([t])[0]
-        else:
-            pred = model([t])[0]
-
-    # Selected target mask (target=255, background=0).
-    mask = target_mask_from_prediction(pred, targets, score_thres, mask_thres)
-    mask = refine_mask(mask,
-                       close=close,
-                       expand_mode="pixels",
-                       expand_pixels=0,
-                       expand_percent=0.0,
-                       image_shape=(img.size[1], img.size[0]))
-
-    # Merge shadow mask (optional).
-    if include_shadow:
-        shadow = estimate_shadow_mask(np.array(img),
-                                      mask,
-                                      t=SHADOW_T,
-                                      sigma=SHADOW_SIGMA,
-                                      near_px=SHADOW_NEAR,
-                                      min_area=SHADOW_MIN_AREA)
-        if shadow is not None:
-            base = np.zeros_like(shadow) if mask is None else mask
-            mask = np.maximum(base, shadow)
-    mask = expand_mask(mask,
-                       expand_mode=mask_expand_mode,
-                       expand_pixels=mask_expand_pixels,
-                       expand_percent=mask_expand_percent,
-                       image_shape=(img.size[1], img.size[0]))
-    mask = fuse_mask_to_edges(
-        mask,
+    sample = load_image_sample(in_path, manual_mask_dir=manual_mask_dir)
+    process_loaded_sample(
+        model,
+        device,
+        sample,
+        out_dir,
+        score_thres=score_thres,
+        mask_thres=mask_thres,
+        close=close,
+        mode=mode,
+        include_shadow=include_shadow,
+        mask_expand_mode=mask_expand_mode,
+        mask_expand_pixels=mask_expand_pixels,
+        mask_expand_percent=mask_expand_percent,
         edge_fuse_pixels=edge_fuse_pixels,
-    )
-    add_mask = load_manual_mask_layers(
-        in_path,
-        manual_mask_dir=manual_mask_dir,
-        image_size=img.size,
-    )
-    mask = apply_manual_mask_layers(
-        mask,
-        add_mask=add_mask,
-        image_shape=(img.size[1], img.size[0]),
+        targets=targets,
     )
 
-    stem = in_path.stem
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if mode == "alpha":
-        # Save RGBA as <source>.png.
-        if mask is None:
-            w, h = img.size
-            alpha = np.zeros((h, w), np.uint8)
-            out_path = out_dir / f"{stem}.png"
-            rgba = np.dstack([np.array(img), alpha])
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(rgba).save(str(out_path))
-        else:
-            mask = 255 - mask
-            save_cutout_rgba(np.array(img), mask, out_dir / f"{stem}.png")
 
-    elif mode == "cutout":
-        if mask is None:
-            w, h = img.size
-            alpha = np.zeros((h, w), np.uint8)
-            rgba = np.dstack([np.array(img), alpha])
-            Image.fromarray(rgba).save(str(out_dir / f"{stem}_cutout.png"))
-        else:
-            save_cutout_rgba(np.array(img), mask, out_dir / f"{stem}_cutout.png")
+def resolve_cpu_workers(requested_workers: int) -> int:
+    """Resolve the number of CPU preload workers used in all modes."""
+    if requested_workers is None:
+        requested_workers = DEFAULT_CPU_WORKERS
+    requested_workers = int(requested_workers)
+    if requested_workers > 0:
+        return requested_workers
+    return DEFAULT_CPU_WORKERS
 
-    elif mode == "mask":
-        # Invert: person=black (0), background=white (255) -> <source>.png.
-        if mask is None:
-            mask = np.zeros((img.size[1], img.size[0]), np.uint8)
-        # Ensure dimensions match.
-        h, w = img.size[1], img.size[0]
-        if mask.shape[:2] != (h, w):
-            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
-        mask = 255 - mask
-        save_mask_png(mask, out_dir / f"{stem}.png")
 
-    else:
-        # keep_person / remove_person
-        if mask is None:
-            out = np.array(img)
-        else:
-            out = apply_mode(np.array(img), mask, mode)
-        Image.fromarray(out).save(str(out_dir / f"{stem}_{mode}.png"))
+def iter_loaded_samples(images,
+                        manual_mask_dir: Path = None,
+                        prefetch_workers: int = 1):
+    """Yield loaded samples, optionally prefetching on CPU worker threads."""
+    if prefetch_workers <= 1:
+        for in_path in images:
+            yield load_image_sample(in_path, manual_mask_dir=manual_mask_dir)
+        return
+
+    image_iter = iter(images)
+    with ThreadPoolExecutor(max_workers=prefetch_workers) as executor:
+        pending = {}
+
+        while len(pending) < prefetch_workers:
+            try:
+                next_path = next(image_iter)
+            except StopIteration:
+                break
+            future = executor.submit(
+                load_image_sample,
+                next_path,
+                manual_mask_dir,
+            )
+            pending[future] = next_path
+
+        while pending:
+            done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                in_path = pending.pop(future)
+                try:
+                    sample = future.result()
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Failed to preload image: {}".format(in_path)
+                    ) from exc
+
+                yield sample
+
+                try:
+                    next_path = next(image_iter)
+                except StopIteration:
+                    continue
+                future = executor.submit(
+                    load_image_sample,
+                    next_path,
+                    manual_mask_dir,
+                )
+                pending[future] = next_path
 
 
 def collect_images(in_path: Path):
@@ -611,12 +936,37 @@ def main():
 
     ap.add_argument("--cpu", action="store_true", help="Force CPU")
     ap.add_argument(
+        "--cpu-workers",
+        type=int,
+        default=DEFAULT_CPU_WORKERS,
+        help=(
+            "CPU worker count used to preload images in both CPU and GPU modes. "
+            "Default: current CPU count."
+        ),
+    )
+    ap.add_argument(
+        "--gpu-prefetch-workers",
+        dest="cpu_workers",
+        type=int,
+        help=argparse.SUPPRESS,
+    )
+    ap.add_argument(
         "--target",
         action="append",
         dest="targets",
         choices=TARGET_CHOICES,
         default=None,
         help="Target category to mask (repeatable). default: person",
+    )
+    ap.add_argument(
+        "--target-name",
+        action="append",
+        dest="target_names",
+        default=None,
+        help=(
+            "Additional target name(s). Accepts comma-separated values and "
+            "the standard COCO category names such as motorcycle, bus, truck."
+        ),
     )
     ap.add_argument("--include_shadow", action="store_true",
                     help="Include adjacent shadows in the mask")
@@ -665,6 +1015,8 @@ def main():
         ap.error("--mask-expand-percent must be 0 or greater")
     if args.edge_fuse_pixels < 0:
         ap.error("--edge-fuse-pixels must be 0 or greater")
+    if args.cpu_workers <= 0:
+        ap.error("--cpu-workers must be 1 or greater")
 
     input_dir = Path(args.input_dir)
     if not input_dir.exists() or not input_dir.is_dir():
@@ -689,13 +1041,26 @@ def main():
             sys.exit(1)
 
     device = torch.device("cpu" if args.cpu or not torch.cuda.is_available() else "cuda")
+    print("Available targets: {}".format(", ".join(list_available_target_names())))
     print(f"Device: {device}")
-    targets = args.targets if args.targets else ["person"]
-    deduped_targets = []
-    for target_name in targets:
-        if target_name not in deduped_targets:
-            deduped_targets.append(target_name)
-    targets = deduped_targets
+    raw_targets = []
+    if args.targets:
+        raw_targets.extend(args.targets)
+    if args.target_names:
+        raw_targets.extend(args.target_names)
+    if not raw_targets:
+        raw_targets = ["person"]
+    targets, invalid_targets = resolve_target_names(raw_targets)
+    if invalid_targets:
+        print(
+            "Unsupported target name(s): {}".format(", ".join(invalid_targets)),
+            file=sys.stderr,
+        )
+        print(
+            "Available targets: {}".format(", ".join(list_available_target_names())),
+            file=sys.stderr,
+        )
+        sys.exit(1)
     print(f"Targets: {', '.join(targets)}")
     if args.mask_expand_mode == "pixels":
         print(f"Mask expand: {args.mask_expand_pixels} px")
@@ -729,19 +1094,32 @@ def main():
 
     last_pct = -1
     total = len(images)
-    for idx, p in enumerate(images, 1):
+    cpu_workers = resolve_cpu_workers(args.cpu_workers)
+    print(f"CPU workers (CPU/GPU modes): {cpu_workers}")
+
+    loaded_samples = iter_loaded_samples(
+        images,
+        manual_mask_dir=manual_mask_dir,
+        prefetch_workers=cpu_workers,
+    )
+    for idx, sample in enumerate(loaded_samples, 1):
         last_pct = update_progress("Processing", idx, total, last_pct)
-        process_image(model, device, p, out_dir,
-                      score_thres=SCORE_THRESH, mask_thres=MASK_THRESH,
-                      close=CLOSE_KERNEL,
-                      mode=args.mode,
-                      include_shadow=args.include_shadow,
-                      mask_expand_mode=args.mask_expand_mode,
-                      mask_expand_pixels=args.mask_expand_pixels,
-                      mask_expand_percent=args.mask_expand_percent,
-                      edge_fuse_pixels=args.edge_fuse_pixels,
-                      manual_mask_dir=manual_mask_dir,
-                      targets=targets)
+        process_loaded_sample(
+            model,
+            device,
+            sample,
+            out_dir,
+            score_thres=SCORE_THRESH,
+            mask_thres=MASK_THRESH,
+            close=CLOSE_KERNEL,
+            mode=args.mode,
+            include_shadow=args.include_shadow,
+            mask_expand_mode=args.mask_expand_mode,
+            mask_expand_pixels=args.mask_expand_pixels,
+            mask_expand_percent=args.mask_expand_percent,
+            edge_fuse_pixels=args.edge_fuse_pixels,
+            targets=targets,
+        )
     if total > 0:
         update_progress("Processing", total, total, last_pct)
         sys.stdout.write("\n")
