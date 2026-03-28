@@ -22,6 +22,7 @@ import numpy as np
 from plyfile import PlyData, PlyElement
 
 SKY_AXIS_CHOICES = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
+SH_C0 = 0.28209479177387814
 
 # ------------------------------ Utilities ------------------------------
 
@@ -36,6 +37,30 @@ def _fmt3(a) -> str:
         Compact string representation of the first three values.
     """
     return f"({float(a[0]):.6g}, {float(a[1]):.6g}, {float(a[2]):.6g})"
+
+
+def _float_rgb_to_u8(values: np.ndarray) -> np.ndarray:
+    """Convert float RGB values in either 0..1 or 0..255 to uint8."""
+    values32 = values.astype(np.float32, copy=False)
+    finite = values32[np.isfinite(values32)]
+    if finite.size == 0:
+        return np.zeros(values32.shape, dtype=np.uint8)
+    max_value = float(finite.max())
+    if max_value <= 1.0 + 1e-6:
+        scaled = np.clip(values32, 0.0, 1.0) * 255.0
+    else:
+        scaled = np.clip(values32, 0.0, 255.0)
+    return np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
+
+
+def convert_3dgs_dc_to_rgb8(dc_rgb: np.ndarray) -> np.ndarray:
+    """Convert 3DGS DC SH coefficients to 8-bit RGB for preview/export."""
+    rgb01 = np.clip(
+        dc_rgb.astype(np.float32, copy=False) * SH_C0 + 0.5,
+        0.0,
+        1.0,
+    )
+    return np.clip(np.rint(rgb01 * 255.0), 0, 255).astype(np.uint8)
 
 
 @dataclass
@@ -318,15 +343,18 @@ def _extract_xyz_rgb_from_structured(v) -> Tuple[np.ndarray, np.ndarray]:
                 or gg.dtype.kind == "f"
                 or bb.dtype.kind == "f"
             ):
-                rr = np.clip(rr, 0.0, 1.0) * 255.0
-                gg = np.clip(gg, 0.0, 1.0) * 255.0
-                bb = np.clip(bb, 0.0, 1.0) * 255.0
-                rgb = np.stack([rr, gg, bb], axis=1).round().astype(np.uint8)
+                rgb = _float_rgb_to_u8(np.stack([rr, gg, bb], axis=1))
             else:
                 rgb = np.stack([rr, gg, bb], axis=1).astype(
                     np.uint8, copy=False
                 )
             break
+    if rgb is None and all(
+        channel in names for channel in ("f_dc_0", "f_dc_1", "f_dc_2")
+    ):
+        rgb = convert_3dgs_dc_to_rgb8(
+            np.stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]], axis=1)
+        )
     if rgb is None:
         rgb = np.full((xyz.shape[0], 3), 255, dtype=np.uint8)
 
