@@ -1188,11 +1188,15 @@ def augment_spacing(
     initial_selected,
     max_spacing,
     min_diff,
+    mode="single",
     fast_window=FAST_SPACING_WINDOW,
 ):
     """Augment the selection by inserting frames when spacing exceeds the limit."""
     if max_spacing is None or max_spacing <= 0:
         return set(final_selected)
+    mode = str(mode or "single").strip().lower()
+    if mode not in {"single", "strict"}:
+        mode = "single"
     position_map = {idx: pos for pos, idx in enumerate(existing_indices)}
     augmented = set(final_selected)
     used = set(final_selected)
@@ -1230,6 +1234,10 @@ def augment_spacing(
             used.add(candidate)
             insort(selected_sorted, candidate)
             changed = True
+            if mode == "single":
+                continue
+            break
+        if mode == "single":
             break
     return augmented
 
@@ -1491,6 +1499,40 @@ def load_selection_from_csv(csv_path, files, scores, brightness_mean_arr, group_
     if last_decode_error is not None:
         raise last_decode_error
     return selection_flags
+
+
+def csv_has_numeric_flow_motion_values(csv_path):
+    """Return True when the CSV contains at least one numeric flow_motion value."""
+    last_decode_error = None
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            with open(csv_path, "r", newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    return False
+                fields_lower = {name.lower(): name for name in reader.fieldnames}
+                flow_key = fields_lower.get("flow_motion")
+                if flow_key is None:
+                    return False
+                for row in reader:
+                    raw_value = row.get(flow_key)
+                    if raw_value is None:
+                        continue
+                    text = str(raw_value).strip()
+                    if not text:
+                        continue
+                    try:
+                        float(text)
+                    except ValueError:
+                        continue
+                    return True
+                return False
+        except UnicodeDecodeError as exc:
+            last_decode_error = exc
+            continue
+    if last_decode_error is not None:
+        raise last_decode_error
+    return False
 
 def augment_motion_segments(
     final_selected,
@@ -1977,9 +2019,20 @@ def main():
         help="Disable the gap backfill augmentation step.",
     )
     ap.add_argument(
+        "--augment_gap_mode",
+        choices=["single", "strict"],
+        default="single",
+        help="Gap augmentation mode: 'single' inserts at most one frame per wide gap, 'strict' keeps inserting until gaps satisfy the spacing limit.",
+    )
+    ap.add_argument(
         "--augment_lowlight",
         action="store_true",
         help="Enable the low-light sharpness in-group augmentation step.",
+    )
+    ap.add_argument(
+        "--compute_optical_flow",
+        action="store_true",
+        help="Compute optical-flow magnitudes and write them to flow_motion without changing selection.",
     )
     ap.add_argument(
         "--augment_motion",
@@ -2018,7 +2071,7 @@ def main():
         dest="ignore_highlights",
         action="store_true",
         default=True,
-        help="Ignore pixels above 95% brightness when computing sharpness (default: enabled).",
+        help="Ignore pixels above 95%% brightness when computing sharpness (default: enabled).",
     )
     ap.add_argument(
         "--no-ignore-highlights",
@@ -2131,6 +2184,9 @@ def main():
     motion_arr = [1.0] * n
     group_score_arr = [0.0] * n
     flow_mag_arr = [0.0] * n
+    compute_optical_flow = bool(
+        args.compute_optical_flow or args.prune_motion or args.augment_motion
+    )
 
     total = n
     source_file_total = sum(len(record.get("file_paths", [])) for record in records)
@@ -2147,8 +2203,10 @@ def main():
     initial_selected = set()
     group_infos = []
     existing_indices = []
+    apply_csv_path = None
     motion_pruned_indices = set()
     motion_prune_threshold = None
+    reused_flow_from_reselect_csv = False
 
     auto_workers = max(1, (os.cpu_count() or 4) // 2)
     max_workers = max(1, auto_workers * 2)
@@ -2227,6 +2285,14 @@ def main():
         existing_indices = [
             idx for idx in range(total) if record_exists(records[idx])
         ]
+        if compute_optical_flow:
+            reused_flow_from_reselect_csv = csv_has_numeric_flow_motion_values(
+                reselect_csv_path
+            )
+            if reused_flow_from_reselect_csv:
+                print(
+                    "[INFO] reselect CSV already contains numeric flow_motion values; reusing them without recomputation."
+                )
         cancelled = cancel_event.is_set()
     else:
         with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -2280,10 +2346,9 @@ def main():
     flow_pairs_total = 0
     if (
         not cancelled
-        and not args.apply_csv
-        and not args.reselect_csv
         and n > 1
-        and (args.prune_motion or args.augment_motion)
+        and compute_optical_flow
+        and not reused_flow_from_reselect_csv
     ):
         flow_pairs_total = _compute_flow_magnitudes(
             records,
@@ -2336,6 +2401,8 @@ def main():
             if os.path.isabs(args.csv)
             else os.path.join(args.in_dir, args.csv)
         )
+    elif apply_csv_path and compute_optical_flow:
+        csv_path = apply_csv_path
     elif reselect_csv_path:
         csv_path = reselect_csv_path
     if csv_path:
@@ -2578,6 +2645,7 @@ def main():
                 initial_selected,
                 max_spacing,
                 augment_min_diff,
+                args.augment_gap_mode,
                 fast_window,
             )
             gap_added_count = len(final_selected - before_gap_aug)
@@ -2729,6 +2797,44 @@ def main():
         )
     if args.augment_motion:
         print(f"Motion augmentation added {motion_added_count} frame(s).")
+    if compute_optical_flow:
+        flow_values = [
+            float(value)
+            for value in flow_mag_arr
+            if value is not None
+            and math.isfinite(value)
+            and float(value) < FLOW_MISSING_HIGH_VALUE
+        ]
+        if flow_values:
+            flow_values_sorted = sorted(flow_values)
+            mid = len(flow_values_sorted) // 2
+            if len(flow_values_sorted) % 2 == 1:
+                median_flow = flow_values_sorted[mid]
+            else:
+                median_flow = (
+                    flow_values_sorted[mid - 1] + flow_values_sorted[mid]
+                ) * 0.5
+            if reused_flow_from_reselect_csv:
+                print(
+                    "Optical flow reused from reselect CSV: min={:.4f}, median={:.4f}, max={:.4f}".format(
+                        min(flow_values_sorted),
+                        median_flow,
+                        max(flow_values_sorted),
+                    )
+                )
+            else:
+                print(
+                    "Optical flow computed for {} pair(s): min={:.4f}, median={:.4f}, max={:.4f}".format(
+                        flow_pairs_total,
+                        min(flow_values_sorted),
+                        median_flow,
+                        max(flow_values_sorted),
+                    )
+                )
+        elif n > 1:
+            print(
+                "Optical flow requested, but no finite pair magnitudes were available."
+            )
 
     print(f"Done:")
     print(f" Input records {total}")
