@@ -129,10 +129,18 @@ SELECTOR_INPUT_MODE_LABEL_TO_CLI = {
 SELECTOR_INPUT_MODE_CLI_TO_LABEL = {
     value: key for key, value in SELECTOR_INPUT_MODE_LABEL_TO_CLI.items()
 }
+SELECTOR_GAP_MODE_LABEL_TO_CLI = {
+    "Off": "off",
+    "Single insert": "single",
+    "Strict": "strict",
+}
+SELECTOR_GAP_MODE_CLI_TO_LABEL = {
+    value: key for key, value in SELECTOR_GAP_MODE_LABEL_TO_CLI.items()
+}
 
 PLY_VIEW_CANVAS_WIDTH = 840
 PLY_VIEW_CANVAS_HEIGHT = 840
-PLY_VIEW_MAX_POINTS = 500_000
+PLY_VIEW_MAX_POINTS = 5_000_000
 PLY_VIEW_INTERACTIVE_MAX_POINTS = 100_000
 CAMERA_SCENE_INTERACTIVE_MAX_CAMERAS = 300
 CAMERA_SCENE_GRID_MAX_HALF_LINES = 60
@@ -769,7 +777,7 @@ class PreviewApp:
         self.pano_width = 0
         self.pano_height = 0
         self.scale = 1.0
-        self.display_width = 680
+        self.display_width = 760
         self.display_height = 300
 
         self.root = tk.Tk()
@@ -844,6 +852,7 @@ class PreviewApp:
         self.selector_last_scores: List[Tuple[int, bool, Optional[float]]] = []
         self.selector_score_entries: List[Dict[str, Any]] = []
         self.selector_score_suspect_positions: Set[int] = set()
+        self.selector_motion_suspect_positions: Set[int] = set()
         self.selector_score_csv_path_loaded: Optional[Path] = None
         self.selector_score_csv_fieldnames: List[str] = []
         self.selector_score_selected_key: Optional[str] = None
@@ -853,6 +862,7 @@ class PreviewApp:
         self.selector_score_total_width = 0.0
         self.selector_score_value_min = 0.0
         self.selector_score_value_range = 0.0
+        self.selector_optical_flow_threshold_entry: Optional[tk.Entry] = None
         self.selector_last_suspect_jump_idx: Optional[int] = None
         self.selector_preview_panel_window: Optional[tk.Toplevel] = None
         self.selector_preview_panel_image_label: Optional[tk.Label] = None
@@ -1044,6 +1054,7 @@ class PreviewApp:
         self._ply_view_max_extent = 1.0
         self._ply_monochrome_var = tk.BooleanVar(value=False)
         self._ply_projection_mode = tk.StringVar(value="Orthographic")
+        self._ply_display_up_axis_var = tk.StringVar(value="Z-up")
         self._ply_view_interactive_max_points_var = tk.StringVar(
             value=str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
         )
@@ -1054,6 +1065,8 @@ class PreviewApp:
         self._ply_grid_step_var = tk.StringVar(value="1.0")
         self._ply_grid_span_var = tk.StringVar(value="auto")
         self._ply_draw_points_var = tk.BooleanVar(value=True)
+        self._ply_front_occlusion_var = tk.BooleanVar(value=True)
+        self._ply_front_occlusion_checkbutton: Optional[tk.Checkbutton] = None
         self._ply_show_world_axes_var = tk.BooleanVar(value=True)
         self._ply_show_grid_var = tk.BooleanVar(value=True)
         self._ply_projection_combo: Optional[ttk.Combobox] = None
@@ -1081,6 +1094,32 @@ class PreviewApp:
         self._ply_sky_save_path_var = tk.StringVar()
         self._ply_sky_points: Optional[np.ndarray] = None
         self._ply_sky_colors: Optional[np.ndarray] = None
+        self._ply_exp_bbox_center_x_var = tk.StringVar(value="0")
+        self._ply_exp_bbox_center_y_var = tk.StringVar(value="0")
+        self._ply_exp_bbox_center_z_var = tk.StringVar(value="0")
+        self._ply_exp_bbox_size_x_var = tk.StringVar(value="1")
+        self._ply_exp_bbox_size_y_var = tk.StringVar(value="1")
+        self._ply_exp_bbox_size_z_var = tk.StringVar(value="1")
+        self._ply_exp_point_count_var = tk.StringVar(value="5000")
+        self._ply_exp_mode_var = tk.StringVar(value="Outside")
+        self._ply_exp_outer_mult_var = tk.StringVar(value="10")
+        self._ply_exp_color_mode_var = tk.StringVar(value="Edge Sample")
+        self._ply_exp_color_count_var = tk.StringVar(value="4")
+        self._ply_exp_bbox_active_var = tk.BooleanVar(value=False)
+        self._ply_exp_edit_mode_var = tk.StringVar(value="Move")
+        self._ply_exp_bbox_center = np.zeros(3, dtype=np.float32)
+        self._ply_exp_bbox_size = np.ones(3, dtype=np.float32)
+        self._ply_exp_bbox_rotation = np.eye(3, dtype=np.float32)
+        self._ply_exp_points: Optional[np.ndarray] = None
+        self._ply_exp_colors: Optional[np.ndarray] = None
+        self._ply_exp_drag_kind: Optional[str] = None
+        self._ply_exp_drag_axis: Optional[int] = None
+        self._ply_exp_drag_last: Optional[Tuple[int, int]] = None
+        self._ply_exp_drag_center_start = np.zeros(3, dtype=np.float32)
+        self._ply_exp_drag_size_start = np.ones(3, dtype=np.float32)
+        self._ply_exp_drag_axis_world = np.zeros(3, dtype=np.float32)
+        self._ply_exp_drag_screen_dir = np.zeros(2, dtype=np.float32)
+        self._ply_exp_drag_pixels_per_world = 0.0
         self._ply_view_point_ids: Optional[np.ndarray] = None
         self._ply_view_rgb_mean: Optional[Tuple[float, float, float]] = None
         self._ply_loaded_points: Optional[np.ndarray] = None
@@ -1088,6 +1127,18 @@ class PreviewApp:
         self._ply_loaded_point_ids: Optional[np.ndarray] = None
         self._ply_loaded_total_points = 0
         self._ply_loaded_sample_step = 1
+        self._ply_pre_append_points: Optional[np.ndarray] = None
+        self._ply_pre_append_colors: Optional[np.ndarray] = None
+        self._ply_pre_append_point_ids: Optional[np.ndarray] = None
+        self._ply_pre_append_total_points = 0
+        self._ply_pre_append_sample_step = 1
+        self._ply_pre_remove_points: Optional[np.ndarray] = None
+        self._ply_pre_remove_colors: Optional[np.ndarray] = None
+        self._ply_pre_remove_point_ids: Optional[np.ndarray] = None
+        self._ply_pre_remove_total_points = 0
+        self._ply_pre_remove_sample_step = 1
+        self._ply_pre_remove_sky_points: Optional[np.ndarray] = None
+        self._ply_pre_remove_sky_colors: Optional[np.ndarray] = None
         self._ply_is_interacting = False
         self._ply_interaction_after_id: Optional[str] = None
         self._ply_redraw_pending = False
@@ -1148,11 +1199,14 @@ class PreviewApp:
         self._camera_scene_camera_stride_var = tk.StringVar(value="1")
         self._camera_scene_grid_step_var = tk.StringVar(value="1.0")
         self._camera_scene_grid_span_var = tk.StringVar(value="auto")
+        self._camera_scene_display_up_axis_var = tk.StringVar(value="Z-up")
         self._camera_scene_show_labels_var = tk.BooleanVar(value=False)
         self._camera_scene_show_camera_axes_var = tk.BooleanVar(value=False)
         self._camera_scene_show_world_axes_var = tk.BooleanVar(value=True)
         self._camera_scene_show_grid_var = tk.BooleanVar(value=True)
         self._camera_scene_monochrome_points_var = tk.BooleanVar(value=False)
+        self._camera_scene_front_occlusion_var = tk.BooleanVar(value=True)
+        self._camera_scene_front_occlusion_checkbutton: Optional[tk.Checkbutton] = None
         self._camera_scene_draw_points_var = tk.BooleanVar(value=True)
         self._camera_scene_draw_cameras_var = tk.BooleanVar(value=True)
         self._camera_scene_initial_view_state: Optional[Dict[str, Any]] = None
@@ -1643,6 +1697,18 @@ class PreviewApp:
                         )
                     except Exception:
                         pass
+                elif widget_class in {"Checkbutton", "Radiobutton"}:
+                    try:
+                        widget.configure(
+                            activebackground=self.APP_BG,
+                            activeforeground=self.TEXT_FG,
+                            disabledforeground=self.MUTED_FG,
+                            highlightbackground=self.APP_BG,
+                            highlightcolor=self.APP_BG,
+                            selectcolor=self.DARK_BUTTON_ACTIVE_BG,
+                        )
+                    except Exception:
+                        pass
                 elif widget_class == "Text":
                     try:
                         widget.configure(
@@ -1674,6 +1740,18 @@ class PreviewApp:
                             disabledforeground=self.MUTED_FG,
                             disabledbackground=self.LIGHT_ENTRY_BG,
                             readonlybackground=self.LIGHT_ENTRY_BG,
+                        )
+                    except Exception:
+                        pass
+                elif widget_class in {"Checkbutton", "Radiobutton"}:
+                    try:
+                        widget.configure(
+                            activebackground=self.APP_BG,
+                            activeforeground=self.TEXT_FG,
+                            disabledforeground=self.LIGHT_DISABLED_FG,
+                            highlightbackground=self.APP_BG,
+                            highlightcolor=self.APP_BG,
+                            selectcolor=self.LIGHT_ENTRY_BG,
                         )
                     except Exception:
                         pass
@@ -2950,8 +3028,12 @@ class PreviewApp:
             "csv_path": tk.StringVar(),
             "crop_ratio": tk.StringVar(value="0.8"),
             "min_spacing_frames": tk.StringVar(value="auto"),
-            "augment_gap": tk.BooleanVar(value=True),
+            "augment_gap_mode": tk.StringVar(
+                value=SELECTOR_GAP_MODE_CLI_TO_LABEL["single"]
+            ),
             "augment_lowlight": tk.BooleanVar(value=False),
+            "compute_optical_flow": tk.BooleanVar(value=False),
+            "optical_flow_low_threshold": tk.StringVar(value="3"),
             "augment_motion": tk.BooleanVar(value=False),
             "segment_boundary_reopt": tk.BooleanVar(value=True),
             "ignore_highlights": tk.BooleanVar(value=True),
@@ -2960,6 +3042,10 @@ class PreviewApp:
         self.selector_vars["csv_mode"].trace_add("write", self._on_selector_csv_mode_changed)
         self.selector_vars["in_dir"].trace_add("write", self._on_selector_in_dir_changed)
         self.selector_vars["csv_path"].trace_add("write", self._on_selector_csv_path_changed)
+        self.selector_vars["compute_optical_flow"].trace_add(
+            "write",
+            self._update_selector_optical_flow_state,
+        )
 
         row = 0
         tk.Label(params, text="Input folder").grid(row=row, column=0, sticky="e", padx=4, pady=4)
@@ -3047,18 +3133,43 @@ class PreviewApp:
         self.selector_csv_button.pack(side=tk.LEFT, padx=(0, 4))
 
         row += 1
-        tk.Label(params, text="Min spacing").grid(row=row, column=0, sticky="e", padx=4, pady=4)
-        tk.Entry(params, textvariable=self.selector_vars["min_spacing_frames"], width=10).grid(row=row, column=1, sticky="w", padx=4, pady=4)
+        spacing_frame = tk.Frame(params)
+        spacing_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
+        tk.Label(spacing_frame, text="Min spacing").pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(
+            spacing_frame,
+            textvariable=self.selector_vars["min_spacing_frames"],
+            width=10,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(spacing_frame, text="Augment gap").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Combobox(
+            spacing_frame,
+            textvariable=self.selector_vars["augment_gap_mode"],
+            values=tuple(SELECTOR_GAP_MODE_LABEL_TO_CLI.keys()),
+            state="readonly",
+            width=14,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Checkbutton(
+            spacing_frame,
+            text="Segment Top-K + Boundary Local Reopt",
+            variable=self.selector_vars["segment_boundary_reopt"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
 
         row += 1
         augment_frame = tk.Frame(params)
         augment_frame.grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
-        tk.Checkbutton(augment_frame, text="Augment gap", variable=self.selector_vars["augment_gap"]).pack(side=tk.LEFT, padx=(0, 12))
         tk.Checkbutton(
             augment_frame,
-            text="Augment lowlight (Experimental)",
-            variable=self.selector_vars["augment_lowlight"],
+            text="Compute optical flow",
+            variable=self.selector_vars["compute_optical_flow"],
         ).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Label(augment_frame, text="Low motion span <=").pack(side=tk.LEFT, padx=(0, 4))
+        self.selector_optical_flow_threshold_entry = tk.Entry(
+            augment_frame,
+            textvariable=self.selector_vars["optical_flow_low_threshold"],
+            width=6,
+        )
+        self.selector_optical_flow_threshold_entry.pack(side=tk.LEFT, padx=(0, 12))
         tk.Checkbutton(
             augment_frame,
             text="Augment motion (Experimental)",
@@ -3066,8 +3177,8 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(0, 12))
         tk.Checkbutton(
             augment_frame,
-            text="Segment Top-K + Boundary Local Reopt",
-            variable=self.selector_vars["segment_boundary_reopt"],
+            text="Augment lowlight (Experimental)",
+            variable=self.selector_vars["augment_lowlight"],
         ).pack(side=tk.LEFT, padx=(0, 12))
 
         row += 1
@@ -3190,9 +3301,10 @@ class PreviewApp:
         self.selector_score_canvas.configure(xscrollcommand=score_scrollbar.set)
         tk.Label(
             summary_frame,
-            text="Legend: selected=teal, unselected=gray, suspect=red outline, preview set=blue outline, preview current=deep blue outline, manual edit=orange outline, left-click=toggle, right-click=preview toggle, wheel=zoom X",
+            text="Legend: sharpness suspect=red outline, motion suspect=gold outline, selected=teal, unselected=gray, preview set=blue outline, preview current=deep blue outline, manual edit=orange outline, left-click=toggle, right-click=preview toggle, wheel=zoom X",
             anchor="w",
         ).pack(fill="x", padx=6, pady=(0, 4))
+        self._update_selector_optical_flow_state()
 
         log_frame = tk.LabelFrame(container, text="Log")
         log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -6680,6 +6792,9 @@ class PreviewApp:
 
         params = tk.LabelFrame(left_panel, text="Parameters")
         params.pack(fill="x", padx=0, pady=(0, 8))
+        params.grid_columnconfigure(1, weight=1)
+        params_label_width = 16
+        params_path_button_width = 11
 
         self.ply_vars = {
             "input": tk.StringVar(),
@@ -6716,48 +6831,81 @@ class PreviewApp:
         }
 
         row = 0
-        tk.Label(params, text="Input Point Cloud").grid(row=row, column=0, sticky="e", padx=4, pady=4)
-        tk.Entry(params, textvariable=self.ply_vars["input"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(
+            params,
+            text="Input Point Cloud",
+            width=params_label_width,
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", padx=(8, 6), pady=(8, 4))
+        tk.Entry(params, textvariable=self.ply_vars["input"], width=52).grid(
+            row=row,
+            column=1,
+            sticky="we",
+            padx=(0, 6),
+            pady=(8, 4),
+        )
         tk.Button(
             params,
             text="Ply File",
+            width=params_path_button_width,
             command=lambda: self._select_file(
                 self.ply_vars["input"],
                 title="Select input PLY",
                 filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
                 on_select=self._on_ply_input_selected,
             ),
-        ).grid(row=row, column=2, padx=4, pady=4)
+        ).grid(row=row, column=2, padx=(0, 6), pady=(8, 4))
         tk.Button(
             params,
             text="Colmap Folder",
+            width=params_path_button_width,
             command=lambda: self._select_directory(
                 self.ply_vars["input"],
                 title="Select input COLMAP folder",
                 on_select=self._on_ply_input_selected,
             ),
-        ).grid(row=row, column=3, padx=4, pady=4)
+        ).grid(row=row, column=3, padx=(0, 8), pady=(8, 4))
 
         row += 1
-        tk.Label(params, text="Output Point Cloud").grid(row=row, column=0, sticky="e", padx=4, pady=4)
-        tk.Entry(params, textvariable=self.ply_vars["output"], width=52).grid(row=row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(
+            params,
+            text="Output Point Cloud",
+            width=params_label_width,
+            anchor="w",
+        ).grid(row=row, column=0, sticky="w", padx=(8, 6), pady=4)
+        tk.Entry(params, textvariable=self.ply_vars["output"], width=52).grid(
+            row=row,
+            column=1,
+            sticky="we",
+            padx=(0, 6),
+            pady=4,
+        )
         tk.Button(
             params,
             text="Ply File",
+            width=params_path_button_width,
             command=lambda: self._select_save_file(self.ply_vars["output"], title="Select output PLY", defaultextension=".ply", filetypes=[("PLY files", "*.ply"), ("All files", "*.*")]),
-        ).grid(row=row, column=2, padx=4, pady=4)
+        ).grid(row=row, column=2, padx=(0, 6), pady=4)
         tk.Button(
             params,
             text="Colmap Folder",
+            width=params_path_button_width,
             command=lambda: self._select_directory(
                 self.ply_vars["output"],
                 title="Select output COLMAP folder",
             ),
-        ).grid(row=row, column=3, padx=4, pady=4)
+        ).grid(row=row, column=3, padx=(0, 8), pady=4)
 
         row += 1
-        downsample_frame = tk.Frame(params)
-        downsample_frame.grid(row=row, column=0, columnspan=4, sticky="we", pady=4)
+        downsample_frame = tk.Frame(params, bg=self.APP_BG)
+        downsample_frame.grid(
+            row=row,
+            column=0,
+            columnspan=4,
+            sticky="we",
+            padx=(8, 8),
+            pady=(6, 2),
+        )
         downsample_frame.grid_columnconfigure(1, weight=1)
         downsample_frame.grid_columnconfigure(3, weight=1)
         downsample_frame.grid_columnconfigure(5, weight=1)
@@ -6824,8 +6972,15 @@ class PreviewApp:
         self._update_ply_target_value_widgets()
 
         row += 1
-        params_actions = tk.Frame(params)
-        params_actions.grid(row=row, column=0, columnspan=4, sticky="e", pady=(4, 4))
+        params_actions = tk.Frame(params, bg=self.APP_BG)
+        params_actions.grid(
+            row=row,
+            column=0,
+            columnspan=4,
+            sticky="e",
+            padx=(8, 8),
+            pady=(2, 8),
+        )
         self.ply_stop_button = tk.Button(
             params_actions,
             text="Stop",
@@ -6840,10 +6995,15 @@ class PreviewApp:
         )
         self.ply_run_button.pack(side=tk.RIGHT, padx=4, pady=4)
 
-        params.grid_columnconfigure(1, weight=1)
-
         viewer_tools_frame = tk.LabelFrame(left_panel, text="Viewer Tools")
         viewer_tools_frame.pack(fill="x", padx=0, pady=(0, 8))
+        viewer_tools_actions = tk.Frame(viewer_tools_frame, bg=self.APP_BG)
+        viewer_tools_actions.pack(fill="x", padx=12, pady=(6, 0))
+        tk.Button(
+            viewer_tools_actions,
+            text="Reset All Edits",
+            command=self._on_reset_ply_view_state,
+        ).pack(side=tk.RIGHT)
 
         viewer_frame = tk.Frame(right_panel, bg=self.APP_BG, bd=1, relief=tk.GROOVE)
         viewer_frame.pack(fill="both", expand=True, padx=0, pady=0)
@@ -6897,6 +7057,21 @@ class PreviewApp:
         )
         self._ply_projection_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._ply_projection_combo.bind("<<ComboboxSelected>>", self._on_ply_projection_changed)
+        tk.Label(viewer_actions, text="Display Up", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(10, 4)
+        )
+        ply_display_up_combo = ttk.Combobox(
+            viewer_actions,
+            textvariable=self._ply_display_up_axis_var,
+            values=("Z-up", "Y-up"),
+            state="readonly",
+            width=8,
+        )
+        ply_display_up_combo.pack(side=tk.LEFT, padx=(0, 4))
+        ply_display_up_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._redraw_ply_canvas(),
+        )
         tk.Label(viewer_actions, text="Interactive Points", bg=self.APP_BG).pack(
             side=tk.LEFT, padx=(10, 4)
         )
@@ -6966,6 +7141,20 @@ class PreviewApp:
             state="normal",
             width=7,
         ).pack(side=tk.LEFT)
+        tk.Checkbutton(
+            viewer_controls_middle,
+            text="Ground Grid",
+            variable=self._ply_show_grid_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_middle,
+            text="World XYZ Axes",
+            variable=self._ply_show_world_axes_var,
+            command=self._redraw_ply_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
         viewer_controls_bottom = tk.Frame(viewer_frame, bg=self.APP_BG)
         viewer_controls_bottom.pack(fill="x", padx=12, pady=(0, 2))
@@ -6978,32 +7167,28 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(12, 0))
         tk.Checkbutton(
             viewer_controls_bottom,
-            text="Monochrome points",
+            text="Depth View",
             variable=self._ply_monochrome_var,
-            command=self._redraw_ply_canvas,
+            command=self._on_ply_depth_view_toggle,
             bg=self.APP_BG,
         ).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Checkbutton(
+        ply_front_occlusion_cb = tk.Checkbutton(
             viewer_controls_bottom,
-            text="Ground grid",
-            variable=self._ply_show_grid_var,
-            command=self._redraw_ply_canvas,
+            text="Depth Occlusion",
+            variable=self._ply_front_occlusion_var,
+            command=self._on_ply_depth_occlusion_toggle,
             bg=self.APP_BG,
-        ).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Checkbutton(
-            viewer_controls_bottom,
-            text="World XYZ axes",
-            variable=self._ply_show_world_axes_var,
-            command=self._redraw_ply_canvas,
-            bg=self.APP_BG,
-        ).pack(side=tk.LEFT, padx=(12, 0))
+        )
+        ply_front_occlusion_cb.pack(side=tk.LEFT, padx=(12, 0))
+        self._ply_front_occlusion_checkbutton = ply_front_occlusion_cb
+        self._enforce_ply_depth_view_constraints()
 
         viewer_controls_actions = tk.Frame(viewer_frame, bg=self.APP_BG)
         viewer_controls_actions.pack(fill="x", padx=12, pady=(0, 4))
         tk.Button(
             viewer_controls_actions,
             text="Reset View",
-            command=self._reset_ply_view,
+            command=self._on_reset_ply_camera_view,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         status_band = tk.Frame(viewer_frame, bg=self.APP_BG)
@@ -7019,10 +7204,10 @@ class PreviewApp:
 
         color_label_width = 16
         pick_color_button_width = 15
-        remove_color_controls = tk.LabelFrame(viewer_tools_frame, text="Remove")
+        remove_color_controls = tk.LabelFrame(viewer_tools_frame, text="Remove Points")
         remove_color_controls.pack(fill="x", padx=12, pady=(6, 0))
         remove_color_controls.grid_columnconfigure(1, weight=1)
-        remove_color_controls.grid_columnconfigure(3, weight=1)
+        remove_color_controls.grid_columnconfigure(2, weight=1)
         tk.Label(
             remove_color_controls,
             text="Remove color",
@@ -7043,12 +7228,20 @@ class PreviewApp:
             (135, 206, 250),
             self._ply_remove_color_var.get(),
         )
+        remove_actions_top = tk.Frame(remove_color_controls, bg=self.APP_BG)
+        remove_actions_top.grid(
+            row=0,
+            column=2,
+            sticky="e",
+            padx=(0, 8),
+            pady=(6, 4),
+        )
         tk.Button(
-            remove_color_controls,
+            remove_actions_top,
             text="Pick Remove Color",
             width=pick_color_button_width,
             command=self._on_pick_remove_color,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(6, 4))
+        ).pack(side=tk.RIGHT)
         tk.Label(remove_color_controls, text="Tol (RGB)").grid(
             row=1, column=0, sticky="w", padx=(8, 4), pady=(0, 6)
         )
@@ -7057,16 +7250,24 @@ class PreviewApp:
             textvariable=self._ply_remove_color_tol_var,
             width=6,
         ).grid(row=1, column=1, sticky="w", padx=(4, 8), pady=(0, 6))
+        remove_actions_bottom = tk.Frame(remove_color_controls, bg=self.APP_BG)
+        remove_actions_bottom.grid(
+            row=1,
+            column=2,
+            sticky="e",
+            padx=(0, 8),
+            pady=(0, 6),
+        )
         tk.Button(
-            remove_color_controls,
+            remove_actions_bottom,
             text="Remove Color Points",
             command=self._on_remove_color_points,
-        ).grid(row=1, column=2, sticky="w", padx=(0, 8), pady=(0, 6))
+        ).pack(side=tk.LEFT)
         tk.Button(
-            remove_color_controls,
-            text="Reset",
-            command=self._on_reset_ply_view_state,
-        ).grid(row=1, column=3, sticky="w", pady=(0, 6))
+            remove_actions_bottom,
+            text="Reset Remove",
+            command=self._on_reset_ply_remove_controls,
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         sky_controls = tk.LabelFrame(viewer_tools_frame, text="Add Sky")
         sky_controls.pack(fill="x", padx=12, pady=(6, 0))
@@ -7087,17 +7288,26 @@ class PreviewApp:
         sky_color_display.grid(row=0, column=1, sticky="w", padx=(4, 8), pady=(6, 4))
         self._ply_sky_color_label = sky_color_display
         self._update_sky_color_display((135, 206, 250), self._ply_sky_color_var.get())
+        sky_actions_top = tk.Frame(sky_controls, bg=self.APP_BG)
+        sky_actions_top.grid(
+            row=0,
+            column=2,
+            columnspan=2,
+            sticky="e",
+            padx=(0, 8),
+            pady=(6, 4),
+        )
         tk.Button(
-            sky_controls,
+            sky_actions_top,
             text="Pick Sky Color",
             width=pick_color_button_width,
             command=self._on_pick_sky_color,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(6, 4))
+        ).pack(side=tk.LEFT)
         tk.Button(
-            sky_controls,
+            sky_actions_top,
             text="Auto Pick Sky Color",
             command=self._on_auto_pick_sky_color,
-        ).grid(row=0, column=3, sticky="w", pady=(6, 4))
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         axis_options = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
         tk.Label(sky_controls, text="Sky axis").grid(
@@ -7138,69 +7348,239 @@ class PreviewApp:
             width=6,
         )
         sky_percent_entry.grid(row=2, column=3, sticky="w", padx=(0, 12), pady=(0, 6))
+        sky_actions_bottom = tk.Frame(sky_controls, bg=self.APP_BG)
+        sky_actions_bottom.grid(
+            row=3,
+            column=0,
+            columnspan=4,
+            sticky="e",
+            padx=(8, 8),
+            pady=(0, 6),
+        )
         tk.Button(
-            sky_controls,
-            text="Add Sky PointClouds (Preview)",
+            sky_actions_bottom,
+            text="Add Sky Points (Preview)",
             command=self._on_add_sky_points,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(8, 8), pady=(0, 6))
+        ).pack(side=tk.LEFT)
         tk.Button(
-            sky_controls,
+            sky_actions_bottom,
             text="Clear Sky",
             command=self._on_clear_sky_points,
-        ).grid(row=3, column=2, sticky="w", pady=(0, 6))
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
-        append_controls = tk.Frame(viewer_tools_frame)
+        exp_controls = tk.LabelFrame(
+            viewer_tools_frame,
+            text="BBox Scatter (Experimental)",
+        )
+        exp_controls.pack(fill="x", padx=12, pady=(6, 0))
+        exp_controls.grid_columnconfigure(0, weight=1)
+        exp_controls.grid_columnconfigure(1, weight=1)
+        bbox_entry_width = 6
+        bbox_combo_width = 15
+
+        center_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        center_wrap.grid(row=0, column=0, sticky="we", padx=(8, 6), pady=(6, 4))
+        tk.Label(center_wrap, text="Center", anchor="w").pack(anchor="w")
+        center_entry_frame = tk.Frame(center_wrap, bg=self.APP_BG)
+        center_entry_frame.pack(anchor="w", pady=(2, 0))
+        center_vars = (
+            ("X", self._ply_exp_bbox_center_x_var),
+            ("Y", self._ply_exp_bbox_center_y_var),
+            ("Z", self._ply_exp_bbox_center_z_var),
+        )
+        for col_idx, (axis_label, axis_var) in enumerate(center_vars):
+            tk.Label(center_entry_frame, text=axis_label).grid(
+                row=0,
+                column=col_idx * 2,
+                sticky="w",
+                padx=(0 if col_idx == 0 else 4, 2),
+            )
+            entry = tk.Entry(
+                center_entry_frame,
+                textvariable=axis_var,
+                width=bbox_entry_width,
+            )
+            entry.grid(row=0, column=col_idx * 2 + 1, sticky="w", padx=(0, 4))
+            entry.bind("<Return>", self._on_apply_ply_exp_bbox)
+            entry.bind("<FocusOut>", self._on_ply_exp_bbox_focus_out)
+        size_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        size_wrap.grid(row=0, column=1, sticky="we", padx=(6, 8), pady=(6, 4))
+        tk.Label(size_wrap, text="Size", anchor="w").pack(anchor="w")
+        size_entry_frame = tk.Frame(size_wrap, bg=self.APP_BG)
+        size_entry_frame.pack(anchor="w", pady=(2, 0))
+        size_vars = (
+            ("X", self._ply_exp_bbox_size_x_var),
+            ("Y", self._ply_exp_bbox_size_y_var),
+            ("Z", self._ply_exp_bbox_size_z_var),
+        )
+        for col_idx, (axis_label, axis_var) in enumerate(size_vars):
+            tk.Label(size_entry_frame, text=axis_label).grid(
+                row=0,
+                column=col_idx * 2,
+                sticky="w",
+                padx=(0 if col_idx == 0 else 4, 2),
+            )
+            entry = tk.Entry(
+                size_entry_frame,
+                textvariable=axis_var,
+                width=bbox_entry_width,
+            )
+            entry.grid(row=0, column=col_idx * 2 + 1, sticky="w", padx=(0, 4))
+            entry.bind("<Return>", self._on_apply_ply_exp_bbox)
+            entry.bind("<FocusOut>", self._on_ply_exp_bbox_focus_out)
+
+        edit_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        edit_wrap.grid(row=1, column=0, sticky="we", padx=(8, 6), pady=(0, 4))
+        mode_row = tk.Frame(edit_wrap, bg=self.APP_BG)
+        mode_row.pack(anchor="w")
+        tk.Checkbutton(
+            mode_row,
+            text="Active",
+            variable=self._ply_exp_bbox_active_var,
+            command=self._redraw_ply_canvas,
+        ).pack(side=tk.LEFT)
+        tk.Label(mode_row, text="Edit mode").pack(side=tk.LEFT, padx=(12, 4))
+        edit_mode_combo = ttk.Combobox(
+            mode_row,
+            textvariable=self._ply_exp_edit_mode_var,
+            values=("Move", "Scale"),
+            state="readonly",
+            width=9,
+        )
+        edit_mode_combo.pack(side=tk.LEFT)
+        edit_mode_combo.bind("<<ComboboxSelected>>", self._on_ply_exp_edit_mode_selected)
+
+        scatter_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        scatter_wrap.grid(row=1, column=1, sticky="we", padx=(6, 8), pady=(0, 4))
+        scatter_row = tk.Frame(scatter_wrap, bg=self.APP_BG)
+        scatter_row.pack(anchor="w")
+        tk.Label(scatter_row, text="Scatter mode").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Combobox(
+            scatter_row,
+            textvariable=self._ply_exp_mode_var,
+            values=("Inside", "Outside"),
+            state="readonly",
+            width=11,
+        ).pack(side=tk.LEFT)
+        tk.Label(scatter_row, text="Count").pack(side=tk.LEFT, padx=(12, 4))
+        tk.Entry(
+            scatter_row,
+            textvariable=self._ply_exp_point_count_var,
+            width=9,
+        ).pack(side=tk.LEFT)
+
+        outer_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        outer_wrap.grid(row=2, column=0, sticky="we", padx=(8, 6), pady=(0, 4))
+        tk.Label(outer_wrap, text="Outer distance x", anchor="w").pack(anchor="w")
+        tk.Entry(
+            outer_wrap,
+            textvariable=self._ply_exp_outer_mult_var,
+            width=8,
+        ).pack(anchor="w", pady=(2, 0))
+
+        color_wrap = tk.Frame(exp_controls, bg=self.APP_BG)
+        color_wrap.grid(row=2, column=1, sticky="we", padx=(6, 8), pady=(0, 4))
+        color_top = tk.Frame(color_wrap, bg=self.APP_BG)
+        color_top.pack(fill="x")
+        tk.Label(color_top, text="Color mode", anchor="w").pack(side=tk.LEFT)
+        ttk.Combobox(
+            color_top,
+            textvariable=self._ply_exp_color_mode_var,
+            values=("Random", "Edge Sample", "Main Sample"),
+            state="readonly",
+            width=14,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        color_bottom = tk.Frame(color_wrap, bg=self.APP_BG)
+        color_bottom.pack(fill="x", pady=(2, 0))
+        tk.Label(color_bottom, text="Types").pack(side=tk.LEFT)
+        tk.Entry(
+            color_bottom,
+            textvariable=self._ply_exp_color_count_var,
+            width=6,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        button_row = tk.Frame(exp_controls, bg=self.APP_BG)
+        button_row.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="e",
+            padx=(8, 8),
+            pady=(2, 6),
+        )
+        tk.Button(
+            button_row,
+            text="Add Scatter Points",
+            command=self._on_add_ply_exp_points,
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            button_row,
+            text="Reset Scatter",
+            command=self._on_reset_ply_exp_points,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(
+            button_row,
+            text="Reset BBox",
+            command=self._on_reset_ply_exp_bbox,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        append_controls = tk.LabelFrame(viewer_tools_frame, text="Append PLY")
         append_controls.pack(fill="x", padx=12, pady=(6, 0))
         append_controls.grid_columnconfigure(1, weight=1)
         action_button_width = 11
         browse_button_width = 10
-        tk.Label(append_controls, text="Append PLY").grid(
-            row=0, column=0, sticky="w", padx=(0, 4)
+        tk.Label(append_controls, text="Files").grid(
+            row=0, column=0, sticky="w", padx=(8, 4), pady=(6, 6)
         )
         append_entry = tk.Entry(
             append_controls,
             textvariable=self.ply_vars["append_ply"],
             width=44,
         )
-        append_entry.grid(row=0, column=1, sticky="we", padx=(0, 4))
+        append_entry.grid(row=0, column=1, sticky="we", padx=(0, 4), pady=(6, 6))
         self.ply_append_entry = append_entry
         tk.Button(
             append_controls,
             text="Browse...",
             width=browse_button_width,
             command=self._browse_ply_append_files,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(6, 6))
+        tk.Button(
+            append_controls,
+            text="Clear",
+            width=8,
+            command=self._clear_appended_ply_from_viewer,
+        ).grid(row=0, column=3, sticky="w", padx=(0, 4), pady=(6, 6))
         tk.Button(
             append_controls,
             text="Append PLY",
             width=action_button_width,
             command=self._append_ply_files_to_viewer,
-        ).grid(row=0, column=3, sticky="w", padx=(0, 4))
+        ).grid(row=0, column=4, sticky="w", padx=(0, 8), pady=(6, 6))
 
-        save_top_controls = tk.Frame(viewer_tools_frame)
+        save_top_controls = tk.LabelFrame(viewer_tools_frame, text="Save Viewed PLY")
         save_top_controls.pack(fill="x", padx=12, pady=(6, 8))
         save_top_controls.grid_columnconfigure(1, weight=1)
-        tk.Label(save_top_controls, text="Save Viewed PLY").grid(
-            row=0, column=0, sticky="w", padx=(0, 4)
+        tk.Label(save_top_controls, text="Path").grid(
+            row=0, column=0, sticky="w", padx=(8, 4), pady=(6, 6)
         )
         sky_save_entry = tk.Entry(
             save_top_controls,
             textvariable=self._ply_sky_save_path_var,
             width=44,
         )
-        sky_save_entry.grid(row=0, column=1, sticky="we", padx=(0, 4))
+        sky_save_entry.grid(row=0, column=1, sticky="we", padx=(0, 4), pady=(6, 6))
         tk.Button(
             save_top_controls,
             text="Browse...",
             width=browse_button_width,
             command=self._on_browse_sky_save_path,
-        ).grid(row=0, column=2, sticky="w", padx=(0, 4))
+        ).grid(row=0, column=2, sticky="w", padx=(0, 4), pady=(6, 6))
         tk.Button(
             save_top_controls,
             text="Save PLY",
             width=action_button_width,
             command=self._on_save_sky_points,
-        ).grid(row=0, column=3, sticky="w", padx=(0, 4))
+        ).grid(row=0, column=3, sticky="w", padx=(0, 8), pady=(6, 6))
 
         canvas_wrap = tk.Frame(viewer_frame, bg="#0f172a")
         canvas_wrap.pack(fill="both", expand=True, padx=12, pady=12)
@@ -7225,6 +7605,10 @@ class PreviewApp:
         canvas.bind("<MouseWheel>", self._on_ply_zoom)
         canvas.bind("<Button-4>", self._on_ply_zoom)
         canvas.bind("<Button-5>", self._on_ply_zoom)
+        canvas.bind("<KeyPress-w>", self._on_ply_exp_mode_move)
+        canvas.bind("<KeyPress-W>", self._on_ply_exp_mode_move)
+        canvas.bind("<KeyPress-e>", self._on_ply_exp_mode_scale)
+        canvas.bind("<KeyPress-E>", self._on_ply_exp_mode_scale)
 
         log_frame = tk.LabelFrame(left_panel, text="Log")
         log_frame.pack(fill="both", expand=True, padx=0, pady=0)
@@ -7893,6 +8277,21 @@ class PreviewApp:
             lambda _event: self._redraw_camera_scene_canvas(),
         )
         self._camera_scene_projection_combo = projection_combo
+        tk.Label(viewer_controls_top, text="Display Up", bg=self.APP_BG).pack(
+            side=tk.LEFT, padx=(8, 4)
+        )
+        camera_display_up_combo = ttk.Combobox(
+            viewer_controls_top,
+            textvariable=self._camera_scene_display_up_axis_var,
+            values=("Z-up", "Y-up"),
+            state="readonly",
+            width=8,
+        )
+        camera_display_up_combo.pack(side=tk.LEFT, padx=(0, 8))
+        camera_display_up_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._redraw_camera_scene_canvas(),
+        )
         tk.Label(viewer_controls_top, text="Interactive Points", bg=self.APP_BG).pack(
             side=tk.LEFT, padx=(8, 4)
         )
@@ -7966,6 +8365,20 @@ class PreviewApp:
             state="normal",
             width=7,
         ).pack(side=tk.LEFT)
+        tk.Checkbutton(
+            viewer_controls_middle,
+            text="Ground Grid",
+            variable=self._camera_scene_show_grid_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        tk.Checkbutton(
+            viewer_controls_middle,
+            text="World XYZ Axes",
+            variable=self._camera_scene_show_world_axes_var,
+            command=self._redraw_camera_scene_canvas,
+            bg=self.APP_BG,
+        ).pack(side=tk.LEFT, padx=(12, 0))
         viewer_controls_bottom = tk.Frame(viewer_controls_shell, bg=self.APP_BG)
         viewer_controls_bottom.pack(fill="x", padx=12, pady=(0, 2))
         tk.Checkbutton(
@@ -7977,29 +8390,25 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(12, 0))
         tk.Checkbutton(
             viewer_controls_bottom,
-            text="Monochrome points",
+            text="Depth View",
             variable=self._camera_scene_monochrome_points_var,
-            command=self._redraw_camera_scene_canvas,
+            command=self._on_camera_scene_depth_view_toggle,
             bg=self.APP_BG,
         ).pack(side=tk.LEFT, padx=(12, 0))
+        camera_front_occlusion_cb = tk.Checkbutton(
+            viewer_controls_bottom,
+            text="Depth Occlusion",
+            variable=self._camera_scene_front_occlusion_var,
+            command=self._on_camera_scene_depth_occlusion_toggle,
+            bg=self.APP_BG,
+        )
+        camera_front_occlusion_cb.pack(side=tk.LEFT, padx=(12, 0))
+        self._camera_scene_front_occlusion_checkbutton = camera_front_occlusion_cb
+        self._enforce_camera_scene_depth_view_constraints()
         tk.Checkbutton(
             viewer_controls_bottom,
             text="Draw cameras",
             variable=self._camera_scene_draw_cameras_var,
-            command=self._redraw_camera_scene_canvas,
-            bg=self.APP_BG,
-        ).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Checkbutton(
-            viewer_controls_bottom,
-            text="Ground grid",
-            variable=self._camera_scene_show_grid_var,
-            command=self._redraw_camera_scene_canvas,
-            bg=self.APP_BG,
-        ).pack(side=tk.LEFT, padx=(12, 0))
-        tk.Checkbutton(
-            viewer_controls_bottom,
-            text="World XYZ axes",
-            variable=self._camera_scene_show_world_axes_var,
             command=self._redraw_camera_scene_canvas,
             bg=self.APP_BG,
         ).pack(side=tk.LEFT, padx=(12, 0))
@@ -8008,7 +8417,7 @@ class PreviewApp:
         tk.Button(
             viewer_controls_actions,
             text="Reset View",
-            command=self._reset_camera_scene_view,
+            command=self._on_reset_camera_scene_camera_view,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         status_band = tk.Frame(viewer_frame, bg=self.APP_BG)
@@ -9503,7 +9912,14 @@ class PreviewApp:
         cmd.extend(["-n", str(segment_value)])
 
         dry_run_required = bool(self.selector_vars["dry_run"].get())
+        compute_optical_flow_enabled = bool(
+            self.selector_vars["compute_optical_flow"].get()
+        )
+        compute_optical_flow_cli_enabled = compute_optical_flow_enabled
         augment_motion_enabled = bool(self.selector_vars["augment_motion"].get())
+        if compute_optical_flow_enabled:
+            if self._selector_optical_flow_threshold_value(show_error=True) is None:
+                return
 
         workers_text = self.selector_vars["workers"].get().strip()
         auto_workers = self._auto_frame_selector_workers()
@@ -9555,15 +9971,20 @@ class PreviewApp:
 
         csv_mode = self.selector_vars["csv_mode"].get().strip()
         csv_path = self.selector_vars["csv_path"].get().strip()
-        flow_recompute_needed = False
-        if augment_motion_enabled and csv_mode in {"apply", "reselect"} and csv_path:
-            flow_zero = self._csv_flow_motion_all_zero(csv_path, base_dir=in_dir)
-            if flow_zero:
-                flow_recompute_needed = True
-                csv_mode = "write"
+        if (
+            compute_optical_flow_enabled
+            and csv_mode == "reselect"
+            and csv_path
+        ):
+            flow_exists = self._csv_has_numeric_flow_motion(
+                csv_path,
+                base_dir=in_dir,
+            )
+            if flow_exists:
+                compute_optical_flow_cli_enabled = False
                 self._append_text_widget(
                     self.selector_log,
-                    "[info] flow_motion values are zero; recomputing metrics with motion before selection.",
+                    "[info] reselect CSV already has numeric flow_motion values; reusing them without recomputation.",
                 )
         if csv_mode and csv_mode != "none":
             if not csv_path:
@@ -9615,12 +10036,20 @@ class PreviewApp:
                 return
             cmd.extend(["--min_spacing_frames", min_spacing])
 
-        if bool(self.selector_vars["augment_gap"].get()):
+        gap_mode_label = self.selector_vars["augment_gap_mode"].get().strip()
+        gap_mode = SELECTOR_GAP_MODE_LABEL_TO_CLI.get(
+            gap_mode_label,
+            gap_mode_label.lower(),
+        )
+        if gap_mode and gap_mode != "off":
             cmd.append("--augment_gaps")
+            cmd.extend(["--augment_gap_mode", gap_mode])
         else:
             cmd.append("--no_augment_gaps")
         if bool(self.selector_vars["augment_lowlight"].get()):
             cmd.append("--augment_lowlight")
+        if compute_optical_flow_cli_enabled:
+            cmd.append("--compute_optical_flow")
         if augment_motion_enabled:
             cmd.append("--augment_motion")
         if not bool(self.selector_vars["segment_boundary_reopt"].get()):
@@ -9675,6 +10104,135 @@ class PreviewApp:
             cpu = 4
         return max(1, cpu // 2)
 
+    def _update_selector_optical_flow_state(self, *_args) -> None:
+        """Enable the low-motion threshold entry only when optical flow is requested."""
+        entry = self.selector_optical_flow_threshold_entry
+        if entry is None:
+            return
+        enabled = False
+        if self.selector_vars:
+            flow_var = self.selector_vars.get("compute_optical_flow")
+            enabled = bool(flow_var.get()) if flow_var is not None else False
+        try:
+            entry.configure(state="normal" if enabled else "disabled")
+        except tk.TclError:
+            pass
+
+    def _selector_optical_flow_threshold_value(
+        self,
+        show_error: bool = False,
+    ) -> Optional[float]:
+        """Parse the low-motion threshold used for overview highlighting."""
+        threshold_var = self.selector_vars.get("optical_flow_low_threshold")
+        raw_value = threshold_var.get().strip() if threshold_var is not None else ""
+        if not raw_value:
+            raw_value = "0.10"
+        try:
+            threshold = float(raw_value)
+        except ValueError:
+            if show_error:
+                messagebox.showerror(
+                    "gs360_FrameSelector",
+                    "Optical flow low-motion threshold must be numeric.",
+                )
+            return None
+        if threshold < 0.0:
+            if show_error:
+                messagebox.showerror(
+                    "gs360_FrameSelector",
+                    "Optical flow low-motion threshold must be zero or greater.",
+                )
+            return None
+        return threshold
+
+    def _selector_collect_low_motion_spans(
+        self,
+        parsed_entries: Sequence[Dict[str, Any]],
+        flow_threshold: float,
+    ) -> List[Dict[str, Any]]:
+        """Collect spans where motion stays low between consecutive selected frames."""
+        selected_positions = [
+            pos
+            for pos, entry in enumerate(parsed_entries)
+            if bool(entry.get("selected_current", False))
+        ]
+        if len(selected_positions) < 2:
+            return []
+
+        valid_pair_spans: List[Dict[str, Any]] = []
+        for left_pos, right_pos in zip(selected_positions, selected_positions[1:]):
+            interval_flow_values: List[float] = []
+            valid_span = True
+            for entry in parsed_entries[left_pos:right_pos + 1]:
+                flow_val = entry.get("flow_motion")
+                if flow_val is None:
+                    valid_span = False
+                    break
+                try:
+                    flow_value = float(flow_val)
+                except (TypeError, ValueError):
+                    valid_span = False
+                    break
+                if not math.isfinite(flow_value) or flow_value > flow_threshold:
+                    valid_span = False
+                    break
+                interval_flow_values.append(flow_value)
+            if not valid_span or not interval_flow_values:
+                continue
+            valid_pair_spans.append(
+                {
+                    "start_pos": left_pos,
+                    "end_pos": right_pos,
+                    "selected_positions": [left_pos, right_pos],
+                    "max_flow": max(interval_flow_values),
+                }
+            )
+
+        if not valid_pair_spans:
+            return []
+
+        merged_spans: List[Dict[str, Any]] = []
+        current_span: Optional[Dict[str, Any]] = None
+        for span in valid_pair_spans:
+            if current_span is None:
+                current_span = dict(span)
+                current_span["selected_positions"] = list(span["selected_positions"])
+                continue
+            current_selected_positions = current_span.get("selected_positions", [])
+            current_end_selected = (
+                current_selected_positions[-1]
+                if current_selected_positions else current_span["end_pos"]
+            )
+            if span["start_pos"] == current_end_selected:
+                current_span["end_pos"] = span["end_pos"]
+                current_span["max_flow"] = max(
+                    float(current_span["max_flow"]),
+                    float(span["max_flow"]),
+                )
+                current_span["selected_positions"].append(span["end_pos"])
+                continue
+            merged_spans.append(current_span)
+            current_span = dict(span)
+            current_span["selected_positions"] = list(span["selected_positions"])
+        if current_span is not None:
+            merged_spans.append(current_span)
+
+        result_spans: List[Dict[str, Any]] = []
+        for span in merged_spans:
+            selected_pos_list = list(span.get("selected_positions", []))
+            start_pos = int(span["start_pos"])
+            end_pos = int(span["end_pos"])
+            result_spans.append(
+                {
+                    "start_pos": start_pos,
+                    "end_pos": end_pos,
+                    "selected_count": len(selected_pos_list),
+                    "frame_count": max(1, end_pos - start_pos + 1),
+                    "max_flow": float(span["max_flow"]),
+                }
+            )
+        return result_spans
+
     def _csv_flow_motion_all_zero(self, csv_path: str, base_dir: Optional[str] = None) -> Optional[bool]:
         """Return True when flow_motion exists and all numeric values are zero."""
         try:
@@ -9708,6 +10266,44 @@ class PreviewApp:
                 if any_values:
                     return True
                 return None
+        except Exception:
+            return None
+
+    def _csv_has_numeric_flow_motion(
+        self,
+        csv_path: str,
+        base_dir: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Return True when flow_motion contains at least one numeric value."""
+        try:
+            path_obj = Path(csv_path).expanduser()
+            if not path_obj.is_absolute() and base_dir:
+                path_obj = Path(base_dir).expanduser() / path_obj
+            if not path_obj.exists():
+                return None
+            with path_obj.open("r", newline="") as f:
+                reader = csv.DictReader(f)
+                if not reader.fieldnames:
+                    return None
+                field_map = {name.lower(): name for name in reader.fieldnames}
+                flow_key = field_map.get("flow_motion")
+                if not flow_key:
+                    return None
+                saw_value = False
+                for row in reader:
+                    raw = row.get(flow_key)
+                    if raw is None:
+                        continue
+                    text = str(raw).strip()
+                    if not text:
+                        continue
+                    try:
+                        float(text)
+                    except ValueError:
+                        continue
+                    saw_value = True
+                    break
+                return saw_value
         except Exception:
             return None
 
@@ -9910,6 +10506,59 @@ class PreviewApp:
                 merged.append(text)
         append_var.set("; ".join(merged))
 
+    def _clear_ply_append_files(self) -> None:
+        if not self.ply_vars:
+            return
+        append_var = self.ply_vars.get("append_ply")
+        if append_var is not None:
+            append_var.set("")
+
+    def _clear_ply_remove_snapshot(self) -> None:
+        self._ply_pre_remove_points = None
+        self._ply_pre_remove_colors = None
+        self._ply_pre_remove_point_ids = None
+        self._ply_pre_remove_total_points = 0
+        self._ply_pre_remove_sample_step = 1
+        self._ply_pre_remove_sky_points = None
+        self._ply_pre_remove_sky_colors = None
+
+    def _clear_appended_ply_from_viewer(self) -> None:
+        if (
+            self._ply_pre_append_points is None
+            or self._ply_pre_append_colors is None
+        ):
+            return
+        self._ply_view_points = self._ply_pre_append_points.astype(
+            np.float32,
+            copy=True,
+        )
+        self._ply_view_colors = self._ply_pre_append_colors.astype(
+            np.uint8,
+            copy=True,
+        )
+        self._ply_view_point_ids = (
+            self._ply_pre_append_point_ids.astype(np.int64, copy=True)
+            if self._ply_pre_append_point_ids is not None
+            else None
+        )
+        self._ply_view_points_centered = self._ply_view_points.astype(
+            np.float32,
+            copy=False,
+        )
+        self._ply_view_total_points = int(
+            max(self._ply_pre_append_total_points, self._ply_view_points.shape[0])
+        )
+        self._ply_view_sample_step = max(1, int(self._ply_pre_append_sample_step))
+        self._ply_pre_append_points = None
+        self._ply_pre_append_colors = None
+        self._ply_pre_append_point_ids = None
+        self._ply_pre_append_total_points = 0
+        self._ply_pre_append_sample_step = 1
+        self._clear_ply_remove_snapshot()
+        self._refresh_ply_view_rgb_mean()
+        self._update_ply_view_info_from_current()
+        self._redraw_ply_canvas()
+
     def _append_ply_files_to_viewer(self) -> None:
         """Append additional PLY files into the current viewer buffers."""
         if self._ply_view_points is None or self._ply_view_colors is None:
@@ -9982,6 +10631,23 @@ class PreviewApp:
         base_colors = self._ply_view_colors.astype(np.uint8, copy=False)
         base_loaded = int(base_points.shape[0])
         base_original = int(max(self._ply_view_total_points, base_loaded))
+        if self._ply_pre_append_points is None or self._ply_pre_append_colors is None:
+            self._ply_pre_append_points = self._ply_view_points.astype(
+                np.float32,
+                copy=True,
+            )
+            self._ply_pre_append_colors = self._ply_view_colors.astype(
+                np.uint8,
+                copy=True,
+            )
+            self._ply_pre_append_point_ids = (
+                self._ply_view_point_ids.astype(np.int64, copy=True)
+                if self._ply_view_point_ids is not None
+                else None
+            )
+            self._ply_pre_append_total_points = int(self._ply_view_total_points)
+            self._ply_pre_append_sample_step = int(self._ply_view_sample_step)
+        self._clear_ply_remove_snapshot()
 
         merged_points = [base_points] + append_points
         merged_colors = [base_colors] + append_colors
@@ -10005,15 +10671,6 @@ class PreviewApp:
         )
         self._ply_view_total_points = int(base_original + added_original)
         self._ply_view_sample_step = 1
-        self._ply_loaded_points = self._ply_view_points.astype(np.float32, copy=True)
-        self._ply_loaded_colors = self._ply_view_colors.astype(np.uint8, copy=True)
-        self._ply_loaded_point_ids = (
-            self._ply_view_point_ids.astype(np.int64, copy=True)
-            if self._ply_view_point_ids is not None
-            else None
-        )
-        self._ply_loaded_total_points = int(self._ply_view_total_points)
-        self._ply_loaded_sample_step = 1
 
         spans = np.maximum(
             self._ply_view_points.max(axis=0) - self._ply_view_points.min(axis=0),
@@ -10209,11 +10866,20 @@ class PreviewApp:
         self._ply_view_center = np.zeros(3, dtype=np.float32)
         self._ply_sky_points = None
         self._ply_sky_colors = None
+        self._ply_exp_points = None
+        self._ply_exp_colors = None
+        self._reset_ply_exp_bbox_defaults()
         self._ply_loaded_points = None
         self._ply_loaded_colors = None
         self._ply_loaded_point_ids = None
         self._ply_loaded_total_points = 0
         self._ply_loaded_sample_step = 1
+        self._ply_pre_append_points = None
+        self._ply_pre_append_colors = None
+        self._ply_pre_append_point_ids = None
+        self._ply_pre_append_total_points = 0
+        self._ply_pre_append_sample_step = 1
+        self._clear_ply_remove_snapshot()
         self._ply_view_total_points = 0
         self._ply_view_sample_step = 1
         self._ply_view_source_label = "PLY"
@@ -10586,6 +11252,12 @@ class PreviewApp:
         )
         self._ply_loaded_total_points = original_count
         self._ply_loaded_sample_step = max(1, sample_step)
+        self._ply_pre_append_points = None
+        self._ply_pre_append_colors = None
+        self._ply_pre_append_point_ids = None
+        self._ply_pre_append_total_points = 0
+        self._ply_pre_append_sample_step = 1
+        self._clear_ply_remove_snapshot()
         self._reset_ply_view_defaults()
         self._reset_ply_view_transform()
         self._capture_ply_initial_view_state()
@@ -10600,6 +11272,9 @@ class PreviewApp:
         self._update_sky_save_default(path)
         default_sky_count = max(1, int(round(original_count * 0.05)))
         self._ply_sky_count_var.set(str(default_sky_count))
+        self._ply_exp_points = None
+        self._ply_exp_colors = None
+        self._reset_ply_exp_bbox_defaults()
         remove_color = self._parse_color_to_rgb(self._ply_sky_color_var.get())
         if remove_color is not None:
             sky_hex = self._ply_sky_color_var.get()
@@ -10686,8 +11361,9 @@ class PreviewApp:
         )
 
     def _reset_ply_view_transform(self) -> None:
-        yaw = math.radians(35.0)
-        pitch = math.radians(25.0)
+        yaw, pitch = self._get_default_display_view_angles(
+            self._ply_display_up_axis_var.get()
+        )
         q_yaw = self._quat_from_axis_angle((0.0, 1.0, 0.0), yaw)
         q_pitch = self._quat_from_axis_angle((1.0, 0.0, 0.0), pitch)
         self._ply_view_quat = self._quat_normalize(
@@ -10706,6 +11382,7 @@ class PreviewApp:
                 float(self._ply_view_pan[1]),
             ),
             "projection_mode": self._ply_projection_mode.get(),
+            "display_up_axis": self._ply_display_up_axis_var.get(),
             "interactive_point_cap": self._ply_view_interactive_max_points_var.get(),
             "point_cap": self._ply_view_high_max_points_var.get(),
             "point_size": self._ply_point_size_var.get(),
@@ -10713,12 +11390,14 @@ class PreviewApp:
             "grid_span": self._ply_grid_span_var.get(),
             "draw_points": bool(self._ply_draw_points_var.get()),
             "monochrome": bool(self._ply_monochrome_var.get()),
+            "front_occlusion": bool(self._ply_front_occlusion_var.get()),
             "show_world_axes": bool(self._ply_show_world_axes_var.get()),
             "show_grid": bool(self._ply_show_grid_var.get()),
         }
 
     def _reset_ply_view_defaults(self) -> None:
         self._ply_projection_mode.set("Orthographic")
+        self._ply_display_up_axis_var.set("Z-up")
         self._ply_view_interactive_max_points_var.set(
             str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
         )
@@ -10728,8 +11407,10 @@ class PreviewApp:
         self._ply_grid_span_var.set("auto")
         self._ply_draw_points_var.set(True)
         self._ply_monochrome_var.set(False)
+        self._ply_front_occlusion_var.set(True)
         self._ply_show_world_axes_var.set(True)
         self._ply_show_grid_var.set(True)
+        self._enforce_ply_depth_view_constraints()
 
     def _reset_ply_view(self) -> None:
         state = self._ply_initial_view_state
@@ -10746,6 +11427,7 @@ class PreviewApp:
         self._ply_drag_last = None
         self._ply_pan_last = None
         self._ply_projection_mode.set(str(state["projection_mode"]))
+        self._ply_display_up_axis_var.set(str(state.get("display_up_axis", "Z-up")))
         self._ply_view_interactive_max_points_var.set(
             str(state["interactive_point_cap"])
         )
@@ -10755,9 +11437,35 @@ class PreviewApp:
         self._ply_grid_span_var.set(str(state["grid_span"]))
         self._ply_draw_points_var.set(bool(state["draw_points"]))
         self._ply_monochrome_var.set(bool(state["monochrome"]))
+        self._ply_front_occlusion_var.set(
+            bool(state.get("front_occlusion", True))
+        )
         self._ply_show_world_axes_var.set(bool(state["show_world_axes"]))
         self._ply_show_grid_var.set(bool(state["show_grid"]))
+        self._enforce_ply_depth_view_constraints()
         self._redraw_ply_canvas(force=True)
+
+    def _on_reset_ply_camera_view(self) -> None:
+        self._reset_ply_view_transform()
+        self._redraw_ply_canvas(force=True)
+
+    def _enforce_ply_depth_view_constraints(self) -> None:
+        if bool(self._ply_monochrome_var.get()):
+            self._ply_front_occlusion_var.set(True)
+        state = "disabled" if bool(self._ply_monochrome_var.get()) else "normal"
+        if self._ply_front_occlusion_checkbutton is not None:
+            try:
+                self._ply_front_occlusion_checkbutton.configure(state=state)
+            except Exception:
+                pass
+
+    def _on_ply_depth_view_toggle(self) -> None:
+        self._enforce_ply_depth_view_constraints()
+        self._redraw_ply_canvas()
+
+    def _on_ply_depth_occlusion_toggle(self) -> None:
+        self._enforce_ply_depth_view_constraints()
+        self._redraw_ply_canvas()
 
     def _get_ply_grid_step(self) -> float:
         text = self._ply_grid_step_var.get().strip()
@@ -10856,18 +11564,38 @@ class PreviewApp:
     def _on_ply_drag_start(self, event: tk.Event) -> None:
         if self._ply_view_points_centered is None:
             return
+        try:
+            event.widget.focus_set()
+        except Exception:
+            pass
+        if self._try_begin_ply_exp_drag(event):
+            return
         self._begin_ply_interaction()
         self._ply_drag_last = (event.x, event.y)
 
     def _on_ply_drag_move(self, event: tk.Event) -> None:
-        if self._ply_drag_last is None or self._ply_view_points_centered is None:
+        if self._ply_view_points_centered is None:
+            return
+        if self._ply_exp_drag_kind and self._ply_exp_drag_last is not None:
+            last_x, last_y = self._ply_exp_drag_last
+            dx = event.x - last_x
+            dy = event.y - last_y
+            self._ply_exp_drag_last = (event.x, event.y)
+            if self._ply_exp_drag_kind in ("move", "move_axis"):
+                self._move_ply_exp_bbox_by_screen_delta(dx, dy)
+            elif self._ply_exp_drag_kind == "scale":
+                self._scale_ply_exp_bbox_by_screen_delta(dx, dy)
+            self._sync_ply_exp_bbox_vars_from_state()
+            self._redraw_ply_canvas()
+            return
+        if self._ply_drag_last is None:
             return
         last_x, last_y = self._ply_drag_last
         dx = event.x - last_x
         dy = event.y - last_y
         self._ply_drag_last = (event.x, event.y)
-        angle_y = math.radians(dx * 0.35)
-        angle_x = math.radians(dy * 0.35)
+        angle_y = math.radians(-dx * 0.35)
+        angle_x = math.radians(-dy * 0.35)
         q_y = self._quat_from_axis_angle((0.0, 1.0, 0.0), angle_y)
         q_x = self._quat_from_axis_angle((1.0, 0.0, 0.0), angle_x)
         q_inc = self._quat_multiply(q_x, q_y)
@@ -10878,6 +11606,10 @@ class PreviewApp:
 
     def _on_ply_drag_end(self, _event=None) -> None:
         self._ply_drag_last = None
+        self._ply_exp_drag_kind = None
+        self._ply_exp_drag_axis = None
+        self._ply_exp_drag_last = None
+        self._ply_exp_drag_axis_world = np.zeros(3, dtype=np.float32)
         self._ply_pan_last = None
         self._schedule_end_ply_interaction()
 
@@ -11080,6 +11812,56 @@ class PreviewApp:
             except tk.TclError:
                 pass
 
+    def _on_reset_ply_remove_controls(self) -> None:
+        default_hex = self._ply_sky_color_var.get().strip() or "#87cefa"
+        self._ply_remove_color_var.set(default_hex)
+        self._ply_remove_color_tol_var.set("125")
+        rgb = self._hex_to_rgb(default_hex)
+        if rgb is not None:
+            self._update_remove_color_display(rgb, default_hex)
+        if self._ply_pre_remove_points is not None and self._ply_pre_remove_colors is not None:
+            self._ply_view_points = self._ply_pre_remove_points.astype(
+                np.float32,
+                copy=True,
+            )
+            self._ply_view_colors = self._ply_pre_remove_colors.astype(
+                np.uint8,
+                copy=True,
+            )
+            self._ply_view_point_ids = (
+                self._ply_pre_remove_point_ids.astype(np.int64, copy=True)
+                if self._ply_pre_remove_point_ids is not None
+                else None
+            )
+            self._ply_view_points_centered = self._ply_view_points.astype(
+                np.float32,
+                copy=False,
+            )
+            self._ply_view_total_points = int(
+                max(
+                    self._ply_pre_remove_total_points,
+                    self._ply_view_points.shape[0],
+                )
+            )
+            self._ply_view_sample_step = max(
+                1,
+                int(self._ply_pre_remove_sample_step),
+            )
+            self._ply_sky_points = (
+                self._ply_pre_remove_sky_points.astype(np.float32, copy=True)
+                if self._ply_pre_remove_sky_points is not None
+                else None
+            )
+            self._ply_sky_colors = (
+                self._ply_pre_remove_sky_colors.astype(np.uint8, copy=True)
+                if self._ply_pre_remove_sky_colors is not None
+                else None
+            )
+            self._clear_ply_remove_snapshot()
+            self._refresh_ply_view_rgb_mean()
+            self._update_ply_view_info_from_current()
+            self._redraw_ply_canvas()
+
     def _sample_auto_sky_color(self) -> Optional[Tuple[int, int, int]]:
         if self._ply_view_points is None or self._ply_view_colors is None:
             return None
@@ -11159,9 +11941,12 @@ class PreviewApp:
         base_count = max(0, int(point_count))
         src_count = max(0, int(original_count))
         sky_count = 0
+        exp_count = 0
         if self._ply_sky_points is not None:
             sky_count = int(self._ply_sky_points.shape[0])
-        total_count = base_count + sky_count
+        if self._ply_exp_points is not None:
+            exp_count = int(self._ply_exp_points.shape[0])
+        total_count = base_count + sky_count + exp_count
         if src_count > 0 and (sample_step > 1 or src_count != base_count):
             suffix = (
                 f"{base_count:,} / {src_count:,} pts"
@@ -11171,7 +11956,11 @@ class PreviewApp:
         else:
             suffix = f"{base_count:,} pts"
         if sky_count > 0:
-            suffix = f"{suffix} + sky {sky_count:,} = {total_count:,}"
+            suffix = f"{suffix} + sky {sky_count:,}"
+        if exp_count > 0:
+            suffix = f"{suffix} + exp {exp_count:,}"
+        if sky_count > 0 or exp_count > 0:
+            suffix = f"{suffix} = {total_count:,}"
         return f"{label} ({suffix})"
 
     @staticmethod
@@ -11274,6 +12063,7 @@ class PreviewApp:
         if points is None or colors is None:
             messagebox.showerror("Sky PointCloud", "Failed to generate sky points. Check axis selection.")
             return
+        self._clear_ply_remove_snapshot()
         self._ply_sky_points = points
         self._ply_sky_colors = colors
         self._update_ply_view_info_from_current()
@@ -11282,9 +12072,628 @@ class PreviewApp:
     def _on_clear_sky_points(self) -> None:
         if self._ply_sky_points is None and self._ply_sky_colors is None:
             return
+        self._clear_ply_remove_snapshot()
         self._ply_sky_points = None
         self._ply_sky_colors = None
         self._update_ply_view_info_from_current()
+        self._redraw_ply_canvas()
+
+    def _format_scalar_text(self, value: float) -> str:
+        return f"{float(value):.6g}"
+
+    def _set_ply_exp_axis_vars(
+        self,
+        axis_vars: Tuple[tk.StringVar, tk.StringVar, tk.StringVar],
+        values: np.ndarray,
+    ) -> None:
+        arr = np.asarray(values, dtype=np.float32).reshape(3)
+        for var, value in zip(axis_vars, arr.tolist()):
+            var.set(self._format_scalar_text(float(value)))
+
+    def _parse_ply_exp_axis_vars(
+        self,
+        axis_vars: Tuple[tk.StringVar, tk.StringVar, tk.StringVar],
+        *,
+        label: str,
+        positive: bool = False,
+    ) -> np.ndarray:
+        values: List[float] = []
+        for axis_label, axis_var in zip(("X", "Y", "Z"), axis_vars):
+            text = axis_var.get().strip()
+            if not text:
+                raise ValueError(f"{label} {axis_label} must not be empty.")
+            try:
+                value = float(text)
+            except Exception:
+                raise ValueError(f"{label} {axis_label} must be numeric.")
+            if positive and value <= 0.0:
+                raise ValueError(f"{label} {axis_label} must be greater than zero.")
+            values.append(value)
+        return np.array(values, dtype=np.float32)
+
+    def _reset_ply_exp_bbox_defaults(self) -> None:
+        if self._ply_view_points is None or self._ply_view_points.size == 0:
+            center = np.zeros(3, dtype=np.float32)
+            size = np.ones(3, dtype=np.float32)
+        else:
+            xyz_min = self._ply_view_points.min(axis=0).astype(np.float32)
+            xyz_max = self._ply_view_points.max(axis=0).astype(np.float32)
+            center = ((xyz_min + xyz_max) * 0.5).astype(np.float32, copy=False)
+            size = np.maximum(xyz_max - xyz_min, 1e-3).astype(
+                np.float32,
+                copy=False,
+            )
+        self._ply_exp_bbox_center = center
+        self._ply_exp_bbox_size = size
+        self._ply_exp_bbox_rotation = np.eye(3, dtype=np.float32)
+        self._sync_ply_exp_bbox_vars_from_state()
+
+    def _apply_ply_exp_bbox_from_vars(self, show_error: bool = True) -> bool:
+        try:
+            center = self._parse_ply_exp_axis_vars(
+                (
+                    self._ply_exp_bbox_center_x_var,
+                    self._ply_exp_bbox_center_y_var,
+                    self._ply_exp_bbox_center_z_var,
+                ),
+                label="BBox Center",
+            )
+            size = self._parse_ply_exp_axis_vars(
+                (
+                    self._ply_exp_bbox_size_x_var,
+                    self._ply_exp_bbox_size_y_var,
+                    self._ply_exp_bbox_size_z_var,
+                ),
+                label="BBox Size",
+                positive=True,
+            )
+        except Exception as exc:
+            if show_error:
+                messagebox.showerror("BBox Scatter", str(exc))
+            return False
+        self._ply_exp_bbox_center = center.astype(np.float32, copy=False)
+        self._ply_exp_bbox_size = np.maximum(size, 1e-3).astype(
+            np.float32,
+            copy=False,
+        )
+        self._ply_exp_bbox_rotation = np.eye(3, dtype=np.float32)
+        return True
+
+    def _get_ply_exp_bbox_corners(self) -> Optional[np.ndarray]:
+        if self._ply_view_points is None or self._ply_view_points.size == 0:
+            return None
+        half = np.maximum(self._ply_exp_bbox_size * 0.5, 1e-6)
+        signs = np.array(
+            [
+                [-1.0, -1.0, -1.0],
+                [1.0, -1.0, -1.0],
+                [1.0, 1.0, -1.0],
+                [-1.0, 1.0, -1.0],
+                [-1.0, -1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [-1.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        local = signs * half.reshape(1, 3)
+        return (
+            local @ self._ply_exp_bbox_rotation.T + self._ply_exp_bbox_center
+        ).astype(np.float32, copy=False)
+
+    def _sync_ply_exp_bbox_vars_from_state(self) -> None:
+        self._set_ply_exp_axis_vars(
+            (
+                self._ply_exp_bbox_center_x_var,
+                self._ply_exp_bbox_center_y_var,
+                self._ply_exp_bbox_center_z_var,
+            ),
+            self._ply_exp_bbox_center,
+        )
+        self._set_ply_exp_axis_vars(
+            (
+                self._ply_exp_bbox_size_x_var,
+                self._ply_exp_bbox_size_y_var,
+                self._ply_exp_bbox_size_z_var,
+            ),
+            self._ply_exp_bbox_size,
+        )
+
+    def _set_ply_exp_edit_mode(self, mode: str) -> None:
+        normalized = "Scale" if (mode or "").strip().lower().startswith("s") else "Move"
+        self._ply_exp_edit_mode_var.set(normalized)
+        self._redraw_ply_canvas()
+
+    def _on_ply_exp_edit_mode_selected(self, _event=None) -> Optional[str]:
+        self._set_ply_exp_edit_mode(self._ply_exp_edit_mode_var.get())
+        return "break"
+
+    def _on_ply_exp_mode_move(self, _event=None) -> Optional[str]:
+        self._set_ply_exp_edit_mode("Move")
+        return "break"
+
+    def _on_ply_exp_mode_scale(self, _event=None) -> Optional[str]:
+        self._set_ply_exp_edit_mode("Scale")
+        return "break"
+
+    def _get_ply_view_render_context(
+        self,
+    ) -> Tuple[int, int, np.ndarray, float, float, bool, float, float]:
+        canvas = self._ply_view_canvas
+        width = PLY_VIEW_CANVAS_WIDTH
+        height = PLY_VIEW_CANVAS_HEIGHT
+        if canvas is not None and canvas.winfo_exists():
+            try:
+                canvas.update_idletasks()
+            except Exception:
+                pass
+            width = max(1, int(canvas.winfo_width()))
+            height = max(1, int(canvas.winfo_height()))
+        if width < 10 or height < 10:
+            width = PLY_VIEW_CANVAS_WIDTH
+            height = PLY_VIEW_CANVAS_HEIGHT
+        rotation = self._quat_to_matrix(self._ply_view_quat)
+        proj_scale = min(width, height) * 0.9 * self._ply_view_zoom
+        ortho_scale = self._compute_ortho_scale(width, height)
+        projection_mode = (self._ply_projection_mode.get() or "").lower()
+        is_orthographic = projection_mode.startswith("ortho")
+        pan_x, pan_y = self._ply_view_pan
+        return (
+            width,
+            height,
+            rotation,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            float(pan_x),
+            float(pan_y),
+        )
+
+    def _get_ply_exp_handle_positions(
+        self,
+    ) -> Optional[Dict[str, object]]:
+        corners = self._get_ply_exp_bbox_corners()
+        if corners is None:
+            return None
+        display_matrix = self._get_ply_display_up_axis_matrix()
+        (
+            width,
+            height,
+            rotation,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            pan_x,
+            pan_y,
+        ) = self._get_ply_view_render_context()
+        center_pt = self._project_point_to_screen(
+            tuple(float(v) for v in self._ply_exp_bbox_center),
+            width,
+            height,
+            rotation,
+            self._ply_view_depth_offset,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            pan_x,
+            pan_y,
+            display_matrix=display_matrix,
+        )
+        axis_handles: List[Optional[Tuple[float, float]]] = []
+        axis_world: List[np.ndarray] = []
+        half = np.maximum(self._ply_exp_bbox_size * 0.5, 1e-6)
+        for axis_idx in range(3):
+            axis_vec = self._ply_exp_bbox_rotation.T[:, axis_idx].astype(
+                np.float32,
+                copy=False,
+            )
+            axis_world.append(axis_vec)
+            endpoint = self._ply_exp_bbox_center + axis_vec * half[axis_idx]
+            axis_handles.append(
+                self._project_point_to_screen(
+                    tuple(float(v) for v in endpoint),
+                    width,
+                    height,
+                    rotation,
+                    self._ply_view_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                    display_matrix=display_matrix,
+                )
+            )
+        return {
+            "center": center_pt,
+            "axes": axis_handles,
+            "axis_world": axis_world,
+            "context": (
+                width,
+                height,
+                rotation,
+                proj_scale,
+                ortho_scale,
+                is_orthographic,
+                pan_x,
+                pan_y,
+            ),
+        }
+
+    def _try_begin_ply_exp_drag(self, event: tk.Event) -> bool:
+        if not bool(self._ply_exp_bbox_active_var.get()):
+            return False
+        handles = self._get_ply_exp_handle_positions()
+        if handles is None:
+            return False
+        center_pt = handles["center"]
+        if center_pt is None:
+            return False
+        event.widget.focus_set()
+        mode = (self._ply_exp_edit_mode_var.get() or "Move").strip().lower()
+        hit_radius_sq = 12.0 * 12.0
+        dx_center = float(center_pt[0] - event.x)
+        dy_center = float(center_pt[1] - event.y)
+        if mode.startswith("m") and (dx_center * dx_center + dy_center * dy_center) <= hit_radius_sq:
+            self._ply_exp_drag_kind = "move"
+            self._ply_exp_drag_axis = None
+            self._ply_exp_drag_last = (event.x, event.y)
+            self._ply_exp_drag_center_start = self._ply_exp_bbox_center.astype(
+                np.float32,
+                copy=True,
+            )
+            self._begin_ply_interaction()
+            return True
+        axis_handles = handles["axes"]
+        axis_world = handles["axis_world"]
+        for axis_idx, axis_pt in enumerate(axis_handles):
+            if axis_pt is None:
+                continue
+            dx = float(axis_pt[0] - event.x)
+            dy = float(axis_pt[1] - event.y)
+            if (dx * dx + dy * dy) > hit_radius_sq:
+                continue
+            screen_vec = np.array(
+                [axis_pt[0] - center_pt[0], axis_pt[1] - center_pt[1]],
+                dtype=np.float32,
+            )
+            length = float(np.linalg.norm(screen_vec))
+            if length <= 1e-6:
+                continue
+            half_extent = max(float(self._ply_exp_bbox_size[axis_idx] * 0.5), 1e-6)
+            self._ply_exp_drag_kind = "scale" if mode.startswith("s") else "move_axis"
+            self._ply_exp_drag_axis = axis_idx
+            self._ply_exp_drag_last = (event.x, event.y)
+            self._ply_exp_drag_size_start = self._ply_exp_bbox_size.astype(
+                np.float32,
+                copy=True,
+            )
+            self._ply_exp_drag_axis_world = np.asarray(
+                axis_world[axis_idx],
+                dtype=np.float32,
+            )
+            self._ply_exp_drag_screen_dir = (
+                screen_vec / length
+            ).astype(np.float32, copy=False)
+            self._ply_exp_drag_pixels_per_world = length / half_extent
+            self._begin_ply_interaction()
+            return True
+        return False
+
+    def _move_ply_exp_bbox_by_screen_delta(self, dx: int, dy: int) -> None:
+        display_matrix = self._get_ply_display_up_axis_matrix()
+        if self._ply_exp_drag_kind == "move_axis" and self._ply_exp_drag_axis is not None:
+            handles = self._get_ply_exp_handle_positions()
+            if handles is not None:
+                center_pt = handles["center"]
+                axis_pt = handles["axes"][self._ply_exp_drag_axis]
+                if center_pt is not None and axis_pt is not None:
+                    screen_vec = np.array(
+                        [axis_pt[0] - center_pt[0], axis_pt[1] - center_pt[1]],
+                        dtype=np.float32,
+                    )
+                    length = float(np.linalg.norm(screen_vec))
+                    if length > 1e-6:
+                        half_extent = max(
+                            float(self._ply_exp_bbox_size[self._ply_exp_drag_axis] * 0.5),
+                            1e-6,
+                        )
+                        self._ply_exp_drag_screen_dir = (
+                            screen_vec / length
+                        ).astype(np.float32, copy=False)
+                        self._ply_exp_drag_pixels_per_world = length / half_extent
+            screen_dir = self._ply_exp_drag_screen_dir.astype(np.float32, copy=False)
+            drag_pixels = float(dx) * float(screen_dir[0]) + float(dy) * float(screen_dir[1])
+            pixels_per_world = max(self._ply_exp_drag_pixels_per_world, 1e-6)
+            axis_delta = drag_pixels / pixels_per_world
+            self._ply_exp_bbox_center = (
+                self._ply_exp_bbox_center
+                + self._ply_exp_drag_axis_world.astype(np.float32, copy=False) * axis_delta
+            ).astype(np.float32, copy=False)
+            return
+        (
+            _width,
+            _height,
+            rotation,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            _pan_x,
+            _pan_y,
+        ) = self._get_ply_view_render_context()
+        center_display = display_matrix @ self._ply_exp_bbox_center.astype(np.float32)
+        center_view = rotation @ center_display
+        depth = float(center_view[2] + max(self._ply_view_depth_offset, 1e-6))
+        if is_orthographic:
+            screen_scale = max(ortho_scale, 1e-6)
+        else:
+            screen_scale = max(proj_scale / max(depth, 1e-6), 1e-6)
+        delta_view = np.array(
+            [float(dx) / screen_scale, -float(dy) / screen_scale, 0.0],
+            dtype=np.float32,
+        )
+        delta_world = display_matrix.T @ (rotation.T @ delta_view)
+        self._ply_exp_bbox_center = (
+            self._ply_exp_bbox_center + delta_world
+        ).astype(np.float32, copy=False)
+
+    def _scale_ply_exp_bbox_by_screen_delta(self, dx: int, dy: int) -> None:
+        axis_idx = self._ply_exp_drag_axis
+        if axis_idx is None:
+            return
+        handles = self._get_ply_exp_handle_positions()
+        if handles is not None:
+            center_pt = handles["center"]
+            axis_pt = handles["axes"][axis_idx]
+            if center_pt is not None and axis_pt is not None:
+                screen_vec = np.array(
+                    [axis_pt[0] - center_pt[0], axis_pt[1] - center_pt[1]],
+                    dtype=np.float32,
+                )
+                length = float(np.linalg.norm(screen_vec))
+                if length > 1e-6:
+                    half_extent = max(float(self._ply_exp_bbox_size[axis_idx] * 0.5), 1e-6)
+                    self._ply_exp_drag_screen_dir = (
+                        screen_vec / length
+                    ).astype(np.float32, copy=False)
+                    self._ply_exp_drag_pixels_per_world = length / half_extent
+        screen_dir = self._ply_exp_drag_screen_dir.astype(np.float32, copy=False)
+        drag_pixels = float(dx) * float(screen_dir[0]) + float(dy) * float(screen_dir[1])
+        pixels_per_world = max(self._ply_exp_drag_pixels_per_world, 1e-6)
+        half_delta = drag_pixels / pixels_per_world
+        new_size = self._ply_exp_bbox_size.astype(np.float32, copy=True)
+        new_half = max(1e-3, float(new_size[axis_idx] * 0.5) + half_delta)
+        new_size[axis_idx] = new_half * 2.0
+        self._ply_exp_bbox_size = new_size.astype(np.float32, copy=False)
+
+    def _get_ply_exp_color_count(self) -> int:
+        text = self._ply_exp_color_count_var.get().strip()
+        if not text:
+            raise ValueError("Color count must not be empty.")
+        try:
+            count = int(float(text))
+        except Exception:
+            raise ValueError("Color count must be numeric.")
+        if count <= 0:
+            raise ValueError("Color count must be greater than zero.")
+        return count
+
+    def _get_ply_exp_source_points_and_colors(
+        self,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        points = self._ply_view_points
+        colors = self._ply_view_colors
+        if (
+            points is None
+            or colors is None
+            or points.size == 0
+            or colors.size == 0
+        ):
+            raise ValueError("Load a point cloud before sampling scatter colors.")
+        return (
+            points.astype(np.float32, copy=False),
+            colors.astype(np.uint8, copy=False),
+        )
+
+    def _sample_ply_exp_edge_palette(self, palette_size: int) -> np.ndarray:
+        points, colors = self._get_ply_exp_source_points_and_colors()
+        half = np.maximum(self._ply_exp_bbox_size * 0.5, 1e-6).reshape(1, 3)
+        local = (
+            (points - self._ply_exp_bbox_center.reshape(1, 3))
+            @ self._ply_exp_bbox_rotation
+        ).astype(np.float32, copy=False)
+        abs_local = np.abs(local)
+        outside_mask = np.any(abs_local > half, axis=1)
+        if not np.any(outside_mask):
+            raise ValueError("No source points were found outside the BBox.")
+        excess = np.maximum(abs_local - half, 0.0)
+        edge_dist = np.linalg.norm(excess, axis=1)
+        outside_idx = np.flatnonzero(outside_mask)
+        ordered_idx = outside_idx[np.argsort(edge_dist[outside_mask], kind="mergesort")]
+        pool_size = min(ordered_idx.shape[0], max(palette_size * 64, 256))
+        pool = ordered_idx[:pool_size]
+        if pool.size == 0:
+            raise ValueError("Failed to collect edge-near source colors.")
+        rng = np.random.default_rng()
+        take = min(palette_size, pool.size)
+        chosen = rng.choice(pool, size=take, replace=False)
+        palette = colors[chosen].astype(np.uint8, copy=False)
+        if palette.shape[0] < palette_size:
+            extra = colors[
+                rng.choice(pool, size=palette_size - palette.shape[0], replace=True)
+            ].astype(np.uint8, copy=False)
+            palette = np.concatenate((palette, extra), axis=0).astype(
+                np.uint8,
+                copy=False,
+            )
+        return palette
+
+    def _sample_ply_exp_main_palette(self, palette_size: int) -> np.ndarray:
+        points, colors = self._get_ply_exp_source_points_and_colors()
+        half = np.maximum(self._ply_exp_bbox_size * 0.5, 1e-6).reshape(1, 3)
+        local = (
+            (points - self._ply_exp_bbox_center.reshape(1, 3))
+            @ self._ply_exp_bbox_rotation
+        ).astype(np.float32, copy=False)
+        inside_mask = np.all(np.abs(local) <= (half + 1e-6), axis=1)
+        if not np.any(inside_mask):
+            raise ValueError("No source points were found inside the BBox.")
+        inside_colors = colors[inside_mask].astype(np.uint8, copy=False)
+        if inside_colors.shape[0] == 0:
+            raise ValueError("No source colors were found inside the BBox.")
+        bins = np.clip(inside_colors.astype(np.int32) // 32, 0, 7)
+        codes = bins[:, 0] + bins[:, 1] * 8 + bins[:, 2] * 64
+        unique_codes, inverse_idx, counts = np.unique(
+            codes,
+            return_inverse=True,
+            return_counts=True,
+        )
+        order = np.argsort(-counts, kind="mergesort")
+        palette_list: List[np.ndarray] = []
+        for code_idx in order[:palette_size]:
+            mask = inverse_idx == code_idx
+            if not np.any(mask):
+                continue
+            mean_color = np.mean(
+                inside_colors[mask].astype(np.float32, copy=False),
+                axis=0,
+            )
+            palette_list.append(
+                np.clip(np.rint(mean_color), 0, 255).astype(np.uint8)
+            )
+        if not palette_list:
+            raise ValueError("Failed to derive main colors from points inside the BBox.")
+        palette = np.stack(palette_list, axis=0).astype(np.uint8, copy=False)
+        if palette.shape[0] < palette_size:
+            rng = np.random.default_rng()
+            extra = inside_colors[
+                rng.choice(
+                    inside_colors.shape[0],
+                    size=palette_size - palette.shape[0],
+                    replace=True,
+                )
+            ].astype(np.uint8, copy=False)
+            palette = np.concatenate((palette, extra), axis=0).astype(
+                np.uint8,
+                copy=False,
+            )
+        return palette
+
+    def _generate_ply_exp_colors(self, count: int) -> np.ndarray:
+        rng = np.random.default_rng()
+        mode = (self._ply_exp_color_mode_var.get() or "").strip().lower()
+        if mode.startswith("edge"):
+            palette = self._sample_ply_exp_edge_palette(self._get_ply_exp_color_count())
+            palette_idx = rng.integers(0, palette.shape[0], size=count)
+            return palette[palette_idx].astype(np.uint8, copy=False)
+        if mode.startswith("main"):
+            palette = self._sample_ply_exp_main_palette(self._get_ply_exp_color_count())
+            palette_idx = rng.integers(0, palette.shape[0], size=count)
+            return palette[palette_idx].astype(np.uint8, copy=False)
+        return rng.integers(0, 256, size=(count, 3), dtype=np.uint8)
+
+    def _generate_ply_exp_points(self, count: int) -> np.ndarray:
+        half = np.maximum(self._ply_exp_bbox_size * 0.5, 1e-6).astype(
+            np.float32,
+            copy=False,
+        )
+        mode = (self._ply_exp_mode_var.get() or "Inside").strip().lower()
+        rng = np.random.default_rng()
+        if mode.startswith("inside"):
+            local = rng.uniform(-half, half, size=(count, 3)).astype(np.float32)
+        else:
+            outer_mult = float(self._ply_exp_outer_mult_var.get().strip() or "2.0")
+            if outer_mult <= 1.0:
+                raise ValueError(
+                    "Outer distance multiplier must be greater than 1 for Outside mode."
+                )
+            outer_half = half * outer_mult
+            batches: List[np.ndarray] = []
+            remaining = count
+            attempts = 0
+            while remaining > 0 and attempts < 32:
+                batch_size = max(remaining * 2, 2048)
+                candidates = rng.uniform(
+                    -outer_half,
+                    outer_half,
+                    size=(batch_size, 3),
+                ).astype(np.float32)
+                keep = np.any(np.abs(candidates) > half.reshape(1, 3), axis=1)
+                accepted = candidates[keep]
+                if accepted.size > 0:
+                    batches.append(accepted[:remaining])
+                    remaining -= int(min(remaining, accepted.shape[0]))
+                attempts += 1
+            if remaining > 0:
+                raise ValueError(
+                    "Failed to generate enough Outside points. Increase the outer distance multiplier."
+                )
+            local = np.concatenate(batches, axis=0).astype(np.float32, copy=False)
+        return (
+            local @ self._ply_exp_bbox_rotation.T + self._ply_exp_bbox_center
+        ).astype(np.float32, copy=False)
+
+    def _on_apply_ply_exp_bbox(self, _event=None) -> Optional[str]:
+        if not self._apply_ply_exp_bbox_from_vars(show_error=True):
+            return "break"
+        self._sync_ply_exp_bbox_vars_from_state()
+        self._redraw_ply_canvas()
+        return "break"
+
+    def _on_ply_exp_bbox_focus_out(self, _event=None) -> Optional[str]:
+        if self._apply_ply_exp_bbox_from_vars(show_error=False):
+            self._sync_ply_exp_bbox_vars_from_state()
+            self._redraw_ply_canvas()
+        return None
+
+    def _on_add_ply_exp_points(self) -> None:
+        if self._ply_view_points is None or self._ply_view_points.size == 0:
+            messagebox.showerror(
+                "BBox Scatter",
+                "Load a point cloud before adding scatter points.",
+            )
+            return
+        if not self._apply_ply_exp_bbox_from_vars(show_error=True):
+            return
+        try:
+            count = int(float(self._ply_exp_point_count_var.get().strip() or "5000"))
+        except Exception:
+            messagebox.showerror("BBox Scatter", "Point count must be numeric.")
+            return
+        if count <= 0:
+            messagebox.showerror("BBox Scatter", "Point count must be greater than zero.")
+            return
+        try:
+            points = self._generate_ply_exp_points(count)
+            colors = self._generate_ply_exp_colors(count)
+        except Exception as exc:
+            messagebox.showerror("BBox Scatter", str(exc))
+            return
+        self._clear_ply_remove_snapshot()
+        if self._ply_exp_points is None or self._ply_exp_colors is None:
+            self._ply_exp_points = points
+            self._ply_exp_colors = colors
+        else:
+            self._ply_exp_points = np.concatenate(
+                (self._ply_exp_points, points),
+                axis=0,
+            ).astype(np.float32, copy=False)
+            self._ply_exp_colors = np.concatenate(
+                (self._ply_exp_colors, colors),
+                axis=0,
+            ).astype(np.uint8, copy=False)
+        self._update_ply_view_info_from_current()
+        self._redraw_ply_canvas()
+
+    def _on_reset_ply_exp_points(self) -> None:
+        self._ply_exp_points = None
+        self._ply_exp_colors = None
+        self._update_ply_view_info_from_current()
+        self._redraw_ply_canvas()
+
+    def _on_reset_ply_exp_bbox(self) -> None:
+        self._reset_ply_exp_bbox_defaults()
+        self._set_ply_exp_edit_mode("Move")
         self._redraw_ply_canvas()
 
     def _on_pick_sky_color(self) -> None:
@@ -11358,6 +12767,31 @@ class PreviewApp:
         self._update_remove_color_display(target_rgb, target_text)
         target = np.array(target_rgb, dtype=np.int32).reshape(1, 3)
         tol2 = float(tol) * float(tol)
+        self._ply_pre_remove_points = self._ply_view_points.astype(
+            np.float32,
+            copy=True,
+        )
+        self._ply_pre_remove_colors = self._ply_view_colors.astype(
+            np.uint8,
+            copy=True,
+        )
+        self._ply_pre_remove_point_ids = (
+            self._ply_view_point_ids.astype(np.int64, copy=True)
+            if self._ply_view_point_ids is not None
+            else None
+        )
+        self._ply_pre_remove_total_points = int(self._ply_view_total_points)
+        self._ply_pre_remove_sample_step = int(self._ply_view_sample_step)
+        self._ply_pre_remove_sky_points = (
+            self._ply_sky_points.astype(np.float32, copy=True)
+            if self._ply_sky_points is not None
+            else None
+        )
+        self._ply_pre_remove_sky_colors = (
+            self._ply_sky_colors.astype(np.uint8, copy=True)
+            if self._ply_sky_colors is not None
+            else None
+        )
         base_colors = self._ply_view_colors.astype(np.int32, copy=False)
         diff = base_colors - target
         diff64 = diff.astype(np.int64, copy=False)
@@ -11365,6 +12799,7 @@ class PreviewApp:
         keep_mask = dist2 > tol2
         removed_base = int(np.count_nonzero(~keep_mask))
         if removed_base <= 0:
+            self._clear_ply_remove_snapshot()
             self._ply_view_info_var.set(
                 "No points removed "
                 f"(color={target_text}, tol={tol:.1f})."
@@ -11430,6 +12865,8 @@ class PreviewApp:
         self._ply_is_interacting = False
         self._ply_sky_points = None
         self._ply_sky_colors = None
+        self._ply_exp_points = None
+        self._ply_exp_colors = None
         self._ply_view_points = self._ply_loaded_points.astype(
             np.float32, copy=True
         )
@@ -11448,7 +12885,14 @@ class PreviewApp:
             max(self._ply_loaded_total_points, self._ply_view_points.shape[0])
         )
         self._ply_view_sample_step = max(1, int(self._ply_loaded_sample_step))
+        self._ply_pre_append_points = None
+        self._ply_pre_append_colors = None
+        self._ply_pre_append_point_ids = None
+        self._ply_pre_append_total_points = 0
+        self._ply_pre_append_sample_step = 1
+        self._clear_ply_remove_snapshot()
         self._refresh_ply_view_rgb_mean()
+        self._reset_ply_exp_bbox_defaults()
         point_count = int(self._ply_view_points.shape[0])
         info = self._build_ply_info_text(
             point_count,
@@ -11547,6 +12991,8 @@ class PreviewApp:
         base_colors = self._ply_view_colors
         sky_points = self._ply_sky_points
         sky_colors = self._ply_sky_colors
+        exp_points = self._ply_exp_points
+        exp_colors = self._ply_exp_colors
         if base_points is None or base_colors is None:
             raise ValueError("Missing loaded point cloud data.")
         points_list: List[np.ndarray] = [base_points.astype(np.float32, copy=False)]
@@ -11558,6 +13004,9 @@ class PreviewApp:
             sky_world = (sky_points + center).astype(np.float32, copy=False)
             points_list.append(sky_world)
             colors_list.append(sky_colors.astype(np.uint8, copy=False))
+        if exp_points is not None and exp_colors is not None:
+            points_list.append(exp_points.astype(np.float32, copy=False))
+            colors_list.append(exp_colors.astype(np.uint8, copy=False))
         xyz = np.concatenate(points_list, axis=0).astype(np.float32, copy=False)
         rgb = np.concatenate(colors_list, axis=0).astype(np.uint8, copy=False)
         header = (
@@ -11605,6 +13054,8 @@ class PreviewApp:
             point_ids = np.full(base_points.shape[0], -1, dtype=np.int64)
         sky_points = self._ply_sky_points
         sky_colors = self._ply_sky_colors
+        exp_points = self._ply_exp_points
+        exp_colors = self._ply_exp_colors
         points_list: List[np.ndarray] = [base_points.astype(np.float32, copy=False)]
         colors_list: List[np.ndarray] = [base_colors.astype(np.uint8, copy=False)]
         ids_list: List[np.ndarray] = [point_ids.astype(np.int64, copy=False)]
@@ -11616,6 +13067,10 @@ class PreviewApp:
             points_list.append(sky_world)
             colors_list.append(sky_colors.astype(np.uint8, copy=False))
             ids_list.append(np.full(sky_world.shape[0], -1, dtype=np.int64))
+        if exp_points is not None and exp_colors is not None:
+            points_list.append(exp_points.astype(np.float32, copy=False))
+            colors_list.append(exp_colors.astype(np.uint8, copy=False))
+            ids_list.append(np.full(exp_points.shape[0], -1, dtype=np.int64))
         xyz = np.concatenate(points_list, axis=0).astype(np.float32, copy=False)
         rgb = np.concatenate(colors_list, axis=0).astype(np.uint8, copy=False)
         merged_ids = np.concatenate(ids_list, axis=0).astype(
@@ -11709,13 +13164,37 @@ class PreviewApp:
                 sample_step = max(1, int(math.ceil(original_count / max_points)))
                 data = data[::sample_step]
         xyz = np.stack((data["x"], data["y"], data["z"]), axis=1).astype(np.float32, copy=False)
-        if all(channel in data.dtype.names for channel in ("red", "green", "blue")):
-            colors = np.stack((data["red"], data["green"], data["blue"]), axis=1)
-            if np.issubdtype(colors.dtype, np.floating):
-                colors = self._float_colors_to_u8(colors)
-            else:
-                colors = colors.astype(np.uint8, copy=False)
-        else:
+        colors = None
+        color_candidates = (
+            ("red", "green", "blue"),
+            ("r", "g", "b"),
+            ("diffuse_red", "diffuse_green", "diffuse_blue"),
+        )
+        for r_name, g_name, b_name in color_candidates:
+            if all(
+                channel in data.dtype.names
+                for channel in (r_name, g_name, b_name)
+            ):
+                colors = np.stack(
+                    (data[r_name], data[g_name], data[b_name]),
+                    axis=1,
+                )
+                if np.issubdtype(colors.dtype, np.floating):
+                    colors = self._float_colors_to_u8(colors)
+                else:
+                    colors = colors.astype(np.uint8, copy=False)
+                break
+        if colors is None and all(
+            channel in data.dtype.names
+            for channel in ("f_dc_0", "f_dc_1", "f_dc_2")
+        ):
+            colors = pointcloud_optimizer.convert_3dgs_dc_to_rgb8(
+                np.stack(
+                    (data["f_dc_0"], data["f_dc_1"], data["f_dc_2"]),
+                    axis=1,
+                )
+            )
+        if colors is None:
             colors = np.full((xyz.shape[0], 3), 220, dtype=np.uint8)
         return xyz, colors, original_count, sample_step
 
@@ -11732,6 +13211,22 @@ class PreviewApp:
         else:
             scaled = np.clip(values32, 0.0, 255.0)
         return np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _compute_depth_norm(depth_values: np.ndarray) -> np.ndarray:
+        depth32 = depth_values.astype(np.float32, copy=False)
+        finite = depth32[np.isfinite(depth32)]
+        if finite.size == 0:
+            return np.zeros(depth32.shape, dtype=np.float32)
+        depth_min = float(finite.min())
+        depth_max = float(finite.max())
+        if depth_max <= depth_min + 1e-6:
+            return np.zeros(depth32.shape, dtype=np.float32)
+        return np.clip(
+            (depth32 - depth_min) / (depth_max - depth_min),
+            0.0,
+            1.0,
+        ).astype(np.float32, copy=False)
 
     def _render_ply_points(
         self,
@@ -11751,6 +13246,15 @@ class PreviewApp:
         if self._ply_sky_points is not None and self._ply_sky_colors is not None:
             points = np.concatenate((points, self._ply_sky_points), axis=0)
             colors = np.concatenate((colors, self._ply_sky_colors), axis=0)
+        if self._ply_exp_points is not None and self._ply_exp_colors is not None:
+            points = np.concatenate((points, self._ply_exp_points), axis=0)
+            colors = np.concatenate((colors, self._ply_exp_colors), axis=0)
+        depth_view = bool(self._ply_monochrome_var.get())
+        front_occlusion = bool(self._ply_front_occlusion_var.get()) or depth_view
+        show_world_axes = bool(self._ply_show_world_axes_var.get()) and (
+            not bool(self._ply_exp_bbox_active_var.get())
+        )
+        display_matrix = self._get_ply_display_up_axis_matrix()
         if points.size == 0 or colors.size == 0:
             self._render_ply_idle_canvas(canvas)
             return
@@ -11773,7 +13277,8 @@ class PreviewApp:
             colors = colors[::sample_step]
         depth_offset = max(self._ply_view_depth_offset, 1e-6)
         rotation = self._quat_to_matrix(self._ply_view_quat)
-        rotated = points @ rotation.T
+        display_points = points @ display_matrix.T
+        rotated = display_points @ rotation.T
         proj_scale = min(width, height) * 0.9 * self._ply_view_zoom
         ortho_scale = self._compute_ortho_scale(width, height)
         projection_mode = (self._ply_projection_mode.get() or "").lower()
@@ -11793,7 +13298,8 @@ class PreviewApp:
             scale[valid] = proj_scale / depth[valid]
             sx = width / 2.0 + x1 * scale + pan_x
             sy = height / 2.0 - y1 * scale + pan_y
-        buf = np.full((height, width, 3), 0x11, dtype=np.uint8)
+        bg_rgb = (0x11, 0x11, 0x11)
+        buf = np.full((height, width, 3), bg_rgb[0], dtype=np.uint8)
         if bool(self._ply_show_grid_var.get()):
             image_bg = Image.fromarray(buf, mode="RGB")
             draw_bg = ImageDraw.Draw(image_bg)
@@ -11807,6 +13313,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
             buf = np.asarray(image_bg, dtype=np.uint8).copy()
         else:
@@ -11816,22 +13323,28 @@ class PreviewApp:
         iy = np.rint(sy).astype(np.int32)
         valid &= (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
         if bool(self._ply_draw_points_var.get()) and np.any(valid):
+            ix_valid = ix[valid]
+            iy_valid = iy[valid]
+            depth_valid = depth[valid]
+            colors_valid = colors[valid]
+            point_size = self._get_ply_point_size()
             self._draw_projected_point_layer(
                 buf,
                 depth_buf,
                 width,
                 height,
-                ix[valid],
-                iy[valid],
-                depth[valid],
-                colors[valid],
-                monochrome=bool(self._ply_monochrome_var.get()),
-                point_size=self._get_ply_point_size(),
+                ix_valid,
+                iy_valid,
+                depth_valid,
+                colors_valid,
+                monochrome=depth_view,
+                point_size=point_size,
+                front_occlusion=front_occlusion,
             )
             self._ply_rendered_point_count = int(np.count_nonzero(valid))
         image = Image.fromarray(buf, mode="RGB")
         draw = ImageDraw.Draw(image)
-        if bool(self._ply_show_world_axes_var.get()):
+        if show_world_axes:
             self._draw_ply_world_axes(
                 draw,
                 width,
@@ -11842,7 +13355,20 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
+        self._draw_ply_exp_bbox(
+            draw,
+            width,
+            height,
+            rotation,
+            proj_scale,
+            ortho_scale,
+            is_orthographic,
+            pan_x,
+            pan_y,
+            display_matrix,
+        )
         self._draw_ply_info_overlay(draw, image)
         photo = ImageTk.PhotoImage(image=image)
         self._ply_canvas_photo = photo
@@ -11888,6 +13414,40 @@ class PreviewApp:
             self._ply_view_zoom * (min(width, height) * 0.45 / max_extent),
         )
 
+    @staticmethod
+    def _get_default_display_view_angles(mode: str) -> Tuple[float, float]:
+        if (mode or "").strip().lower().startswith("z"):
+            return math.radians(-35.0), math.radians(-25.0)
+        return math.radians(-145.0), math.radians(-25.0)
+
+    @staticmethod
+    def _get_display_up_axis_matrix(mode: str) -> np.ndarray:
+        if (mode or "").strip().lower().startswith("z"):
+            return np.array(
+                [
+                    [-1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [0.0, -1.0, 0.0],
+                ],
+                dtype=np.float32,
+            )
+        return np.array(
+            [
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+    def _get_ply_display_up_axis_matrix(self) -> np.ndarray:
+        return self._get_display_up_axis_matrix(self._ply_display_up_axis_var.get())
+
+    def _get_camera_scene_display_up_axis_matrix(self) -> np.ndarray:
+        return self._get_display_up_axis_matrix(
+            self._camera_scene_display_up_axis_var.get()
+        )
+
     def _draw_ply_ground_grid(
         self,
         draw: ImageDraw.ImageDraw,
@@ -11899,6 +13459,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         step = self._get_ply_grid_step()
         span = self._get_ply_grid_span()
@@ -11918,10 +13479,17 @@ class PreviewApp:
             line_color = major_color if index % 5 == 0 else minor_color
             if index == 0:
                 line_color = axis_color
-            for start, end in (
-                ((-grid_limit, 0.0, coord), (grid_limit, 0.0, coord)),
-                ((coord, 0.0, -grid_limit), (coord, 0.0, grid_limit)),
-            ):
+            if (self._ply_display_up_axis_var.get() or "").strip().lower().startswith("z"):
+                grid_lines = (
+                    ((-grid_limit, coord, 0.0), (grid_limit, coord, 0.0)),
+                    ((coord, -grid_limit, 0.0), (coord, grid_limit, 0.0)),
+                )
+            else:
+                grid_lines = (
+                    ((-grid_limit, 0.0, coord), (grid_limit, 0.0, coord)),
+                    ((coord, 0.0, -grid_limit), (coord, 0.0, grid_limit)),
+                )
+            for start, end in grid_lines:
                 start_pt = self._project_point_to_screen(
                     start,
                     width,
@@ -11933,6 +13501,7 @@ class PreviewApp:
                     is_orthographic,
                     pan_x,
                     pan_y,
+                    display_matrix=display_matrix,
                 )
                 end_pt = self._project_point_to_screen(
                     end,
@@ -11945,6 +13514,7 @@ class PreviewApp:
                     is_orthographic,
                     pan_x,
                     pan_y,
+                    display_matrix=display_matrix,
                 )
                 if start_pt is None or end_pt is None:
                     continue
@@ -11961,6 +13531,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         axis_len = self._get_ply_axis_length()
         origin = (0.0, 0.0, 0.0)
@@ -11975,6 +13546,7 @@ class PreviewApp:
             is_orthographic,
             pan_x,
             pan_y,
+            display_matrix=display_matrix,
         )
         if origin_pt is None:
             return
@@ -11994,10 +13566,12 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix=display_matrix,
             )
             if screen_pt is None:
                 continue
             draw.line([origin_pt, screen_pt], fill=color, width=2)
+            self._draw_axis_arrowhead(draw, origin_pt, screen_pt, color)
             draw.text((screen_pt[0] + 4, screen_pt[1] - 12), label, fill=color)
         radius = 4
         draw.ellipse(
@@ -12007,6 +13581,159 @@ class PreviewApp:
             ],
             fill=(255, 255, 255),
         )
+
+    @staticmethod
+    def _draw_axis_arrowhead(
+        draw: ImageDraw.ImageDraw,
+        start_pt: Tuple[float, float],
+        end_pt: Tuple[float, float],
+        color: Tuple[int, int, int],
+    ) -> None:
+        vec = np.array(
+            [float(end_pt[0] - start_pt[0]), float(end_pt[1] - start_pt[1])],
+            dtype=np.float32,
+        )
+        length = float(np.linalg.norm(vec))
+        if length <= 1e-6:
+            return
+        unit = vec / length
+        perp = np.array([-unit[1], unit[0]], dtype=np.float32)
+        arrow_len = 10.0
+        arrow_wing = 4.0
+        tip = np.array([float(end_pt[0]), float(end_pt[1])], dtype=np.float32)
+        base = tip - unit * arrow_len
+        wing_a = base + perp * arrow_wing
+        wing_b = base - perp * arrow_wing
+        draw.polygon(
+            [
+                (float(tip[0]), float(tip[1])),
+                (float(wing_a[0]), float(wing_a[1])),
+                (float(wing_b[0]), float(wing_b[1])),
+            ],
+            fill=color,
+            outline=(255, 255, 255),
+        )
+
+    def _draw_ply_exp_bbox(
+        self,
+        draw: ImageDraw.ImageDraw,
+        width: int,
+        height: int,
+        rotation: np.ndarray,
+        proj_scale: float,
+        ortho_scale: float,
+        is_orthographic: bool,
+        pan_x: float,
+        pan_y: float,
+        display_matrix: np.ndarray,
+    ) -> None:
+        if not bool(self._ply_exp_bbox_active_var.get()):
+            return
+        corners = self._get_ply_exp_bbox_corners()
+        if corners is None or corners.shape[0] != 8:
+            return
+        edge_pairs = (
+            (0, 1), (1, 2), (2, 3), (3, 0),
+            (4, 5), (5, 6), (6, 7), (7, 4),
+            (0, 4), (1, 5), (2, 6), (3, 7),
+        )
+        projected: List[Optional[Tuple[float, float]]] = []
+        for corner in corners:
+            projected.append(
+                self._project_point_to_screen(
+                    tuple(float(v) for v in corner),
+                    width,
+                    height,
+                    rotation,
+                    self._ply_view_depth_offset,
+                    proj_scale,
+                    ortho_scale,
+                    is_orthographic,
+                    pan_x,
+                    pan_y,
+                    display_matrix=display_matrix,
+                )
+            )
+        edge_color = (255, 196, 64)
+        for a_idx, b_idx in edge_pairs:
+            a_pt = projected[a_idx]
+            b_pt = projected[b_idx]
+            if a_pt is None or b_pt is None:
+                continue
+            draw.line([a_pt, b_pt], fill=edge_color, width=2)
+        handles = self._get_ply_exp_handle_positions()
+        center_pt = None if handles is None else handles.get("center")
+        move_mode = (self._ply_exp_edit_mode_var.get() or "").strip().lower().startswith(
+            "m"
+        )
+        scale_mode = (self._ply_exp_edit_mode_var.get() or "").strip().lower().startswith(
+            "s"
+        )
+        if center_pt is not None:
+            handle_radius = 6
+            if move_mode:
+                draw.ellipse(
+                    [
+                        (center_pt[0] - handle_radius, center_pt[1] - handle_radius),
+                        (center_pt[0] + handle_radius, center_pt[1] + handle_radius),
+                    ],
+                    fill=(255, 255, 255),
+                    outline=edge_color,
+                )
+            else:
+                draw.rectangle(
+                    [
+                        (center_pt[0] - handle_radius, center_pt[1] - handle_radius),
+                        (center_pt[0] + handle_radius, center_pt[1] + handle_radius),
+                    ],
+                    fill=(255, 255, 255),
+                    outline=edge_color,
+                )
+        if handles is None or center_pt is None:
+            return
+        axis_colors = (
+            (255, 96, 96),
+            (96, 224, 96),
+            (96, 160, 255),
+        )
+        for axis_idx, axis_pt in enumerate(handles["axes"]):
+            if axis_pt is None:
+                continue
+            color = axis_colors[axis_idx]
+            draw.line([center_pt, axis_pt], fill=color, width=2)
+            if move_mode:
+                vec = np.array(
+                    [axis_pt[0] - center_pt[0], axis_pt[1] - center_pt[1]],
+                    dtype=np.float32,
+                )
+                length = float(np.linalg.norm(vec))
+                if length > 1e-6:
+                    unit = vec / length
+                    perp = np.array([-unit[1], unit[0]], dtype=np.float32)
+                    arrow_len = 12.0
+                    arrow_wing = 4.5
+                    base = np.array(axis_pt, dtype=np.float32) - unit * arrow_len
+                    wing_a = base + perp * arrow_wing
+                    wing_b = base - perp * arrow_wing
+                    draw.polygon(
+                        [
+                            tuple(axis_pt),
+                            (float(wing_a[0]), float(wing_a[1])),
+                            (float(wing_b[0]), float(wing_b[1])),
+                        ],
+                        fill=color,
+                        outline=(255, 255, 255),
+                    )
+            elif scale_mode:
+                radius = 6
+                draw.rectangle(
+                    [
+                        (axis_pt[0] - radius, axis_pt[1] - radius),
+                        (axis_pt[0] + radius, axis_pt[1] + radius),
+                    ],
+                    fill=color,
+                    outline=(255, 255, 255),
+                )
 
     def _draw_ply_info_overlay(
         self,
@@ -12040,9 +13767,12 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: Optional[np.ndarray] = None,
     ) -> Optional[Tuple[float, float]]:
         px, py, pz = point
         p = np.array([px, py, pz], dtype=np.float32)
+        if display_matrix is not None:
+            p = display_matrix @ p
         transformed = rotation @ p
         x1 = float(transformed[0])
         y1 = float(transformed[1])
@@ -12483,8 +14213,9 @@ class PreviewApp:
         )
 
     def _reset_camera_scene_transform(self) -> None:
-        yaw = math.radians(35.0)
-        pitch = math.radians(25.0)
+        yaw, pitch = self._get_default_display_view_angles(
+            self._camera_scene_display_up_axis_var.get()
+        )
         q_yaw = self._quat_from_axis_angle((0.0, 1.0, 0.0), yaw)
         q_pitch = self._quat_from_axis_angle((1.0, 0.0, 0.0), pitch)
         self._camera_scene_quat = self._quat_normalize(
@@ -12552,6 +14283,7 @@ class PreviewApp:
                 dtype=np.float32,
             ).copy(),
             "projection_mode": self._camera_scene_projection_mode.get(),
+            "display_up_axis": self._camera_scene_display_up_axis_var.get(),
             "point_cap": self._camera_scene_point_cap_var.get(),
             "interactive_point_cap": self._camera_scene_interactive_point_cap_var.get(),
             "point_size": self._camera_scene_point_size_var.get(),
@@ -12563,6 +14295,9 @@ class PreviewApp:
             "draw_cameras": bool(self._camera_scene_draw_cameras_var.get()),
             "monochrome_points": bool(
                 self._camera_scene_monochrome_points_var.get()
+            ),
+            "front_occlusion": bool(
+                self._camera_scene_front_occlusion_var.get()
             ),
             "show_world_axes": bool(self._camera_scene_show_world_axes_var.get()),
             "show_camera_axes": bool(self._camera_scene_show_camera_axes_var.get()),
@@ -12594,6 +14329,9 @@ class PreviewApp:
         self._camera_scene_drag_last = None
         self._camera_scene_pan_last = None
         self._camera_scene_projection_mode.set(str(state["projection_mode"]))
+        self._camera_scene_display_up_axis_var.set(
+            str(state.get("display_up_axis", "Z-up"))
+        )
         self._camera_scene_point_cap_var.set(str(state["point_cap"]))
         self._camera_scene_interactive_point_cap_var.set(
             str(state["interactive_point_cap"])
@@ -12608,10 +14346,18 @@ class PreviewApp:
         self._camera_scene_monochrome_points_var.set(
             bool(state["monochrome_points"])
         )
+        self._camera_scene_front_occlusion_var.set(
+            bool(state.get("front_occlusion", True))
+        )
         self._camera_scene_show_world_axes_var.set(bool(state["show_world_axes"]))
         self._camera_scene_show_camera_axes_var.set(bool(state["show_camera_axes"]))
         self._camera_scene_show_labels_var.set(bool(state["show_labels"]))
         self._camera_scene_show_grid_var.set(bool(state["show_grid"]))
+        self._enforce_camera_scene_depth_view_constraints()
+        self._redraw_camera_scene_canvas(force=True)
+
+    def _on_reset_camera_scene_camera_view(self) -> None:
+        self._reset_camera_scene_transform()
         self._redraw_camera_scene_canvas(force=True)
 
     def _reset_camera_scene_load_defaults(self) -> None:
@@ -12627,6 +14373,7 @@ class PreviewApp:
             self.camera_converter_vars["pointcloud_scale"].set("1.0")
             self._sync_camera_scene_transform_link_state()
         self._camera_scene_projection_mode.set("Orthographic")
+        self._camera_scene_display_up_axis_var.set("Z-up")
         self._camera_scene_point_cap_var.set(str(PLY_VIEW_MAX_POINTS))
         self._camera_scene_interactive_point_cap_var.set(
             str(PLY_VIEW_INTERACTIVE_MAX_POINTS)
@@ -12639,10 +14386,34 @@ class PreviewApp:
         self._camera_scene_draw_points_var.set(True)
         self._camera_scene_draw_cameras_var.set(True)
         self._camera_scene_monochrome_points_var.set(False)
+        self._camera_scene_front_occlusion_var.set(True)
         self._camera_scene_show_world_axes_var.set(True)
         self._camera_scene_show_camera_axes_var.set(False)
         self._camera_scene_show_labels_var.set(False)
         self._camera_scene_show_grid_var.set(True)
+        self._enforce_camera_scene_depth_view_constraints()
+
+    def _enforce_camera_scene_depth_view_constraints(self) -> None:
+        if bool(self._camera_scene_monochrome_points_var.get()):
+            self._camera_scene_front_occlusion_var.set(True)
+        state = (
+            "disabled"
+            if bool(self._camera_scene_monochrome_points_var.get())
+            else "normal"
+        )
+        if self._camera_scene_front_occlusion_checkbutton is not None:
+            try:
+                self._camera_scene_front_occlusion_checkbutton.configure(state=state)
+            except Exception:
+                pass
+
+    def _on_camera_scene_depth_view_toggle(self) -> None:
+        self._enforce_camera_scene_depth_view_constraints()
+        self._redraw_camera_scene_canvas()
+
+    def _on_camera_scene_depth_occlusion_toggle(self) -> None:
+        self._enforce_camera_scene_depth_view_constraints()
+        self._redraw_camera_scene_canvas()
 
     def _get_camera_scene_axis_length(self) -> float:
         return max(self._camera_scene_max_extent * 0.2, 1e-3)
@@ -12777,8 +14548,8 @@ class PreviewApp:
         dx = event.x - last_x
         dy = event.y - last_y
         self._camera_scene_drag_last = (event.x, event.y)
-        angle_y = math.radians(dx * 0.35)
-        angle_x = math.radians(dy * 0.35)
+        angle_y = math.radians(-dx * 0.35)
+        angle_x = math.radians(-dy * 0.35)
         q_y = self._quat_from_axis_angle((0.0, 1.0, 0.0), angle_y)
         q_x = self._quat_from_axis_angle((1.0, 0.0, 0.0), angle_x)
         q_inc = self._quat_multiply(q_x, q_y)
@@ -12960,11 +14731,13 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         arr = np.asarray(xyz, dtype=np.float32)
         if arr.size == 0:
             empty = np.zeros((0,), dtype=np.float32)
             return empty, empty, empty, np.zeros((0,), dtype=bool)
+        arr = arr @ display_matrix.T
         rotated = arr @ rotation.T
         x1 = rotated[:, 0]
         y1 = rotated[:, 1]
@@ -12994,6 +14767,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         if (
             self._camera_scene_points_centered is None
@@ -13024,6 +14798,7 @@ class PreviewApp:
             is_orthographic,
             pan_x,
             pan_y,
+            display_matrix,
         )
         ix = np.rint(sx).astype(np.int32)
         iy = np.rint(sy).astype(np.int32)
@@ -13041,6 +14816,8 @@ class PreviewApp:
             colors[valid],
             monochrome=bool(self._camera_scene_monochrome_points_var.get()),
             point_size=self._get_camera_scene_point_size(),
+            front_occlusion=bool(self._camera_scene_front_occlusion_var.get())
+            or bool(self._camera_scene_monochrome_points_var.get()),
         )
 
     def _render_camera_scene(self, canvas: tk.Canvas) -> None:
@@ -13060,6 +14837,7 @@ class PreviewApp:
             width = PLY_VIEW_CANVAS_WIDTH
             height = PLY_VIEW_CANVAS_HEIGHT
         rotation = self._quat_to_matrix(self._camera_scene_quat)
+        display_matrix = self._get_camera_scene_display_up_axis_matrix()
         proj_scale = min(width, height) * 0.9 * self._camera_scene_zoom
         ortho_scale = self._compute_camera_scene_ortho_scale(width, height)
         projection_mode = (self._camera_scene_projection_mode.get() or "").lower()
@@ -13080,6 +14858,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
             buf = np.asarray(image_bg, dtype=np.uint8).copy()
         depth_buf = np.full((height, width), np.inf, dtype=np.float32)
@@ -13095,6 +14874,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
         image = Image.fromarray(buf, mode="RGB")
         draw = ImageDraw.Draw(image)
@@ -13109,6 +14889,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
         self._camera_scene_camera_sample_step = self._get_camera_scene_effective_camera_stride()
         self._camera_scene_rendered_camera_count = 0
@@ -13123,6 +14904,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix,
             )
         self._draw_camera_scene_info_overlay(draw, image)
         photo = ImageTk.PhotoImage(image=image)
@@ -13172,6 +14954,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         step = self._get_camera_scene_grid_step()
         span = self._get_camera_scene_grid_span()
@@ -13186,6 +14969,7 @@ class PreviewApp:
         y_value = float(self._camera_scene_origin_centered[1])
         origin_x = float(self._camera_scene_origin_centered[0])
         origin_z = float(self._camera_scene_origin_centered[2])
+        z_value = float(self._camera_scene_origin_centered[2])
         minor_color = (48, 56, 68)
         major_color = (74, 86, 102)
         axis_color = (105, 123, 146)
@@ -13194,15 +14978,27 @@ class PreviewApp:
             line_color = major_color if index % 5 == 0 else minor_color
             if index == 0:
                 line_color = axis_color
-            x_line = (
-                (origin_x - grid_limit, y_value, origin_z + coord),
-                (origin_x + grid_limit, y_value, origin_z + coord),
-            )
-            z_line = (
-                (origin_x + coord, y_value, origin_z - grid_limit),
-                (origin_x + coord, y_value, origin_z + grid_limit),
-            )
-            for start, end in (x_line, z_line):
+            if (self._camera_scene_display_up_axis_var.get() or "").strip().lower().startswith(
+                "z"
+            ):
+                axis_a_line = (
+                    (origin_x - grid_limit, y_value + coord, z_value),
+                    (origin_x + grid_limit, y_value + coord, z_value),
+                )
+                axis_b_line = (
+                    (origin_x + coord, y_value - grid_limit, z_value),
+                    (origin_x + coord, y_value + grid_limit, z_value),
+                )
+            else:
+                axis_a_line = (
+                    (origin_x - grid_limit, y_value, origin_z + coord),
+                    (origin_x + grid_limit, y_value, origin_z + coord),
+                )
+                axis_b_line = (
+                    (origin_x + coord, y_value, origin_z - grid_limit),
+                    (origin_x + coord, y_value, origin_z + grid_limit),
+                )
+            for start, end in (axis_a_line, axis_b_line):
                 start_pt = self._project_point_to_screen(
                     start,
                     width,
@@ -13214,6 +15010,7 @@ class PreviewApp:
                     is_orthographic,
                     pan_x,
                     pan_y,
+                    display_matrix=display_matrix,
                 )
                 end_pt = self._project_point_to_screen(
                     end,
@@ -13226,6 +15023,7 @@ class PreviewApp:
                     is_orthographic,
                     pan_x,
                     pan_y,
+                    display_matrix=display_matrix,
                 )
                 if start_pt is None or end_pt is None:
                     continue
@@ -13242,6 +15040,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         axis_len = self._get_camera_scene_axis_length()
         origin = tuple(float(v) for v in self._camera_scene_origin_centered)
@@ -13261,6 +15060,7 @@ class PreviewApp:
             is_orthographic,
             pan_x,
             pan_y,
+            display_matrix=display_matrix,
         )
         if origin_pt is None:
             return
@@ -13280,11 +15080,13 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix=display_matrix,
             )
             if screen_pt is None:
                 continue
             color = colors[label]
             draw.line([origin_pt, screen_pt], fill=color, width=2)
+            self._draw_axis_arrowhead(draw, origin_pt, screen_pt, color)
             draw.text((screen_pt[0] + 4, screen_pt[1] - 12), label, fill=color)
         radius = 4
         draw.ellipse(
@@ -13305,6 +15107,7 @@ class PreviewApp:
         is_orthographic: bool,
         pan_x: float,
         pan_y: float,
+        display_matrix: np.ndarray,
     ) -> None:
         camera_scale = self._get_camera_scene_camera_scale()
         camera_stride = self._get_camera_scene_effective_camera_stride()
@@ -13330,6 +15133,7 @@ class PreviewApp:
                 is_orthographic,
                 pan_x,
                 pan_y,
+                display_matrix=display_matrix,
             )
             if center_pt is None:
                 continue
@@ -13360,6 +15164,7 @@ class PreviewApp:
                     is_orthographic,
                     pan_x,
                     pan_y,
+                    display_matrix=display_matrix,
                 )
                 if screen_pt is not None:
                     corner_points.append(screen_pt)
@@ -13403,6 +15208,7 @@ class PreviewApp:
                         is_orthographic,
                         pan_x,
                         pan_y,
+                        display_matrix=display_matrix,
                     )
                     if axis_pt is not None:
                         draw.line([center_pt, axis_pt], fill=color, width=2)
@@ -13453,9 +15259,7 @@ class PreviewApp:
                 stride,
             ),
             "XYZ axis length: {:.3f}".format(axis_len),
-            "Grid step: {:.3f} units (recommended: 1 unit = 1 m)".format(
-                grid_step
-            ),
+            "Grid step: {:.3f} units".format(grid_step),
             "Grid span: {}".format(grid_span_text),
         ]
         self._draw_overlay_lines(draw, image, lines)
@@ -13494,6 +15298,7 @@ class PreviewApp:
         *,
         monochrome: bool,
         point_size: int,
+        front_occlusion: bool,
     ) -> None:
         if ix.size == 0 or iy.size == 0 or depth.size == 0 or colors.size == 0:
             return
@@ -13501,13 +15306,34 @@ class PreviewApp:
         depth_valid = depth.astype(np.float32, copy=False)
         colors_valid = colors.astype(np.uint8, copy=False)
         if monochrome:
-            colors_linear = colors_valid.astype(np.float32)
-            gray = np.rint(
-                colors_linear[:, 0] * 0.2126
-                + colors_linear[:, 1] * 0.7152
-                + colors_linear[:, 2] * 0.0722
+            depth_norm = self._compute_depth_norm(depth_valid)
+            gray = np.clip(
+                np.rint((1.0 - depth_norm) * 255.0),
+                0,
+                255,
             ).astype(np.uint8)
             colors_valid = np.stack((gray, gray, gray), axis=1)
+        if not front_occlusion:
+            flat_buf = buf.reshape(-1, 3)
+            if point_size <= 1:
+                flat_buf[pixel_index, :] = colors_valid
+                return
+            radius = max(0, point_size // 2)
+            for dy in range(-radius, radius + 1):
+                y_pix = iy + dy
+                y_ok = (y_pix >= 0) & (y_pix < height)
+                if not np.any(y_ok):
+                    continue
+                for dx in range(-radius, radius + 1):
+                    x_pix = ix + dx
+                    valid_pix = y_ok & (x_pix >= 0) & (x_pix < width)
+                    if not np.any(valid_pix):
+                        continue
+                    pixel_block = (
+                        y_pix[valid_pix] * width + x_pix[valid_pix]
+                    ).astype(np.int64, copy=False)
+                    flat_buf[pixel_block, :] = colors_valid[valid_pix]
+            return
         order = np.lexsort((depth_valid, pixel_index))
         pixel_sorted = pixel_index[order]
         depth_sorted = depth_valid[order]
@@ -13755,6 +15581,7 @@ class PreviewApp:
         self.selector_last_scores = []
         self.selector_score_entries = []
         self.selector_score_suspect_positions = set()
+        self.selector_motion_suspect_positions = set()
         self.selector_score_csv_path_loaded = None
         self.selector_score_csv_fieldnames = []
         self.selector_score_selected_key = None
@@ -13870,7 +15697,8 @@ class PreviewApp:
         x1 = x0 + bar_width
 
         color = "#4ecdc4" if selected_flag else "#d0d0d0"
-        is_suspect = idx in self.selector_score_suspect_positions
+        is_score_suspect = idx in self.selector_score_suspect_positions
+        is_motion_suspect = idx in self.selector_motion_suspect_positions
         is_preview_open = idx in self.selector_preview_items
         is_preview_current = idx == self.selector_preview_panel_active_idx
         is_manual_changed = False
@@ -13909,7 +15737,7 @@ class PreviewApp:
             width=0,
             tags=(tag,),
         )
-        if is_suspect:
+        if is_score_suspect:
             canvas.create_rectangle(
                 x0 + 0.5,
                 y0 + 0.5,
@@ -13918,6 +15746,17 @@ class PreviewApp:
                 fill="",
                 outline="#ff6b6b",
                 width=1,
+                tags=(tag,),
+            )
+        if is_motion_suspect:
+            canvas.create_rectangle(
+                x0 + 2.5,
+                y0 + 2.5,
+                x1 - 2.5,
+                bar_area_height - 2.5,
+                fill="",
+                outline="#f4d35e",
+                width=2,
                 tags=(tag,),
             )
         if is_preview_open:
@@ -15167,6 +17006,7 @@ class PreviewApp:
                     selected_key = field_map.get("selected(1=keep)") or field_map.get("selected")
                     score_key = field_map.get("score")
                     brightness_key = field_map.get("brightness_mean")
+                    flow_key = field_map.get("flow_motion")
                     filename_key = field_map.get("filename")
                     index_key = field_map.get("index")
                     input_mode_key = field_map.get("input_mode")
@@ -15201,6 +17041,15 @@ class PreviewApp:
                                 brightness_val = None
                             if brightness_val is not None and not math.isfinite(brightness_val):
                                 brightness_val = None
+                        flow_val: Optional[float] = None
+                        if flow_key:
+                            flow_raw = row.get(flow_key)
+                            try:
+                                flow_val = float(flow_raw)
+                            except (TypeError, ValueError):
+                                flow_val = None
+                            if flow_val is not None and not math.isfinite(flow_val):
+                                flow_val = None
                         if index_key:
                             idx_raw = row.get(index_key, "")
                         else:
@@ -15223,6 +17072,7 @@ class PreviewApp:
                                 "selected_current": selected_flag,
                                 "score": score_val,
                                 "brightness_mean": brightness_val,
+                                "flow_motion": flow_val,
                                 "filename": fname,
                                 "input_mode": input_mode,
                                 "pair_base": pair_base,
@@ -15354,10 +17204,31 @@ class PreviewApp:
             else:
                 max_lines = 0
                 suspects = []
-            suspect_positions = {int(item["pos"]) for item in suspects}
+            score_suspect_positions = {int(item["pos"]) for item in suspects}
+            motion_suspect_positions: Set[int] = set()
+            low_motion_spans: List[Dict[str, Any]] = []
+            compute_flow_var = self.selector_vars.get("compute_optical_flow")
+            compute_flow_highlight = (
+                bool(compute_flow_var.get()) if compute_flow_var is not None else False
+            )
+            if compute_flow_highlight:
+                flow_threshold = self._selector_optical_flow_threshold_value(
+                    show_error=True
+                )
+                if flow_threshold is None:
+                    return
+                low_motion_spans = self._selector_collect_low_motion_spans(
+                    parsed_entries,
+                    flow_threshold,
+                )
+                for span in low_motion_spans:
+                    motion_suspect_positions.update(
+                        range(int(span["start_pos"]), int(span["end_pos"]) + 1)
+                    )
 
             self.selector_score_entries = parsed_entries
-            self.selector_score_suspect_positions = suspect_positions
+            self.selector_score_suspect_positions = score_suspect_positions
+            self.selector_motion_suspect_positions = motion_suspect_positions
             self.selector_score_csv_path_loaded = csv_path
             self.selector_score_csv_fieldnames = list(headers)
             self.selector_score_selected_key = selected_key
@@ -15367,12 +17238,25 @@ class PreviewApp:
                 self.selector_log,
                 (
                     f"[score] {csv_path.name}: selected={selected_flag_total} "
-                    f"showing {len(suspects)} suspects ({limit_percent:.1f}% of selected, limit={max_lines}, brightness-banded)"
+                    f"showing {len(suspects)} score suspects ({limit_percent:.1f}% of selected, limit={max_lines}, brightness-banded)"
                 ),
             )
+            if low_motion_spans:
+                flow_threshold = self._selector_optical_flow_threshold_value()
+                self._append_text_widget(
+                    self.selector_log,
+                    (
+                        f"[flow] low-motion spans={len(low_motion_spans)} "
+                        f"(threshold <= {float(flow_threshold):.4f}); highlighted in gold and excluded from suspect count."
+                    ),
+                )
             if not suspects:
-                self._append_text_widget(self.selector_log, "[score] No low-score selections detected.")
-                return
+                self._append_text_widget(
+                    self.selector_log,
+                    "[score] No low-score selections detected.",
+                )
+                if not low_motion_spans:
+                    return
 
             for item in suspects:
                 score = float(item["score"])
@@ -15387,6 +17271,23 @@ class PreviewApp:
                 self._append_text_widget(
                     self.selector_log,
                     f"  - {label} (score={score:.4f}{extra})",
+                )
+            for span in low_motion_spans:
+                start_pos = int(span["start_pos"])
+                end_pos = int(span["end_pos"])
+                start_entry = parsed_entries[start_pos]
+                end_entry = parsed_entries[end_pos]
+                start_label = self._selector_entry_label_text(start_entry)
+                end_label = self._selector_entry_label_text(end_entry)
+                flow_value = float(span.get("max_flow", 0.0))
+                self._append_text_widget(
+                    self.selector_log,
+                    (
+                        f"  - {start_label} -> {end_label} "
+                        f"(selected={int(span.get('selected_count', 0))}, "
+                        f"frames={int(span.get('frame_count', 0))}, "
+                        f"max_flow={flow_value:.4f})"
+                    ),
                 )
         finally:
             if duration_message:
