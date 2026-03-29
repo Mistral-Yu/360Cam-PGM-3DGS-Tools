@@ -56,7 +56,9 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
 - `CameraOptimization` tab: Experimental tool. Preview and convert camera poses and point clouds between supported formats. TODO: Reduce camera count to lower VRAM/RAM usage.
 
 ### Workflows (GUI)
-#### Rapid
+https://mistral-yu.github.io/360Cam-3DGS-Samples/
+
+#### Rapid Workflow
 1. Create a 360 video using DJI Studio or similar software (This GitHub repository has been tested with the Osmo 360. Recommended settings: apply D-Log only, keep all other settings at their default value of 0 if correct color values are required under a linear workflow. And turn RockSteady off.)
 2. Launch `gs360_360GUI.py`.
 3. In the `360PerspCut` tab, click **Browse Video** and select a video file.
@@ -73,7 +75,7 @@ GUI Explanation: `gs360_360GUI.py` (Tabs: `Video2Frames`, `FrameSelector`, `360P
    Next, click the **Fixed parameters** Select button and **Check all** or check distortion parameters except f.
 9. Bring the RealityScan or Metashape alignment results into a 3DGS tool such as PostShot.
 
-#### Faster but low quality
+#### Faster Workflow but low quality
 1. Create a 360 video using DJI Studio or similar software.
 2. Launch `gs360_360GUI.py`.
 3. In the `Video2Frames` tab, extract 360 frames by setting the FPS and running the export.
