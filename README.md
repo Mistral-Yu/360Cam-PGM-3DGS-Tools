@@ -86,12 +86,9 @@ https://mistral-yu.github.io/360Cam-3DGS-Samples/
 8. Set **Format = transforms**, enable **PerspCut**, set **PerspCut input** to the 360 image folder, and set **Points PLY** to the exported PLY. Run the tool.
 9. Use **PerspCut out**, `transforms.json`, and the rotated PLY in PostShot (or similar 3DGS tools).
 
-
 ### Recommended Workflow 
-**TODO**
 - Metashape Pro, Multi-Cameras-System.  (**Known bug**: If you import perspective_cams_Multi-Camera-System.xml with MS360xmlToPerspCams and no tie points appear after alignment(sometimes), re-importing the XML file fixes the issue.).
 - RealityCapture or Metashape Standard with spherical Metashape Alignment.xml.
-- Hybrid scan combining mirrorless camera and 360-degree camera.
 
 **NOTES**
 - After converting to the RealityScan format (XMP) using **MS360xmlToPersCams**, be careful with the **Position Accuracy** setting in the alignment settings when running alignment in RealityScan.
@@ -111,6 +108,3 @@ This project is released under the [MIT License](LICENSE). Copyright (c) 2025 Yu
 
 ## TODO / Ideas
 - Flesh out a full GUI walkthrough (tab descriptions, launch parameters, screenshot gallery).
-- Redesign the GUI using PySide or a similar framework
-- Create the workflow using Mermaid notation
-- Fisheye lens calibration and color correction, and extract perspective images directly from fisheye images
