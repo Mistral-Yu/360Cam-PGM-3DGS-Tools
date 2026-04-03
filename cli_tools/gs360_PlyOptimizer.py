@@ -14,6 +14,7 @@ import heapq
 import math
 import os
 import pathlib
+import shutil
 from dataclasses import dataclass
 from itertools import count
 from typing import Dict, List, Optional, Set, Tuple
@@ -589,6 +590,7 @@ def save_colmap_text_model(
     cameras_path = out_dir / "cameras.txt"
     images_path = out_dir / "images.txt"
     points_path = out_dir / "points3D.txt"
+    source_images_path = model.source_dir / "images.txt"
 
     cameras_path.write_text(model.cameras_text, encoding="utf-8")
 
@@ -612,60 +614,63 @@ def save_colmap_text_model(
         )
         next_point_id += 1
 
-    filtered_images: List[Dict[str, object]] = []
-    total_observations = 0
-    for image in model.images:
-        observations = [
-            obs
-            for obs in image["observations"]
-            if int(obs[2]) < 0 or int(obs[2]) in kept_original_ids
-        ]
-        filtered_images.append(
-            {
-                "image_id": int(image["image_id"]),
-                "pose_fields": list(image["pose_fields"]),
-                "name": str(image["name"]),
-                "observations": observations,
-            }
-        )
-        total_observations += len(observations)
-
-    with images_path.open("w", encoding="utf-8") as handle:
-        handle.write("# Image list with two lines of data per image:\n")
-        handle.write(
-            "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n"
-        )
-        handle.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
-        mean_obs = (
-            float(total_observations) / float(len(filtered_images))
-            if filtered_images
-            else 0.0
-        )
-        handle.write(
-            (
-                "# Number of images: {}, mean observations per image: "
-                "{:.6f}\n"
-            ).format(
-                len(filtered_images),
-                mean_obs,
+    if source_images_path.is_file():
+        shutil.copyfile(str(source_images_path), str(images_path))
+    else:
+        filtered_images: List[Dict[str, object]] = []
+        total_observations = 0
+        for image in model.images:
+            observations = [
+                obs
+                for obs in image["observations"]
+                if int(obs[2]) < 0 or int(obs[2]) in kept_original_ids
+            ]
+            filtered_images.append(
+                {
+                    "image_id": int(image["image_id"]),
+                    "pose_fields": list(image["pose_fields"]),
+                    "name": str(image["name"]),
+                    "observations": observations,
+                }
             )
-        )
-        for image in filtered_images:
-            pose_fields = " ".join(
-                str(field) for field in image["pose_fields"]
+            total_observations += len(observations)
+
+        with images_path.open("w", encoding="utf-8") as handle:
+            handle.write("# Image list with two lines of data per image:\n")
+            handle.write(
+                "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n"
+            )
+            handle.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+            mean_obs = (
+                float(total_observations) / float(len(filtered_images))
+                if filtered_images
+                else 0.0
             )
             handle.write(
-                "{} {} {}\n".format(
-                    image["image_id"],
-                    pose_fields,
-                    image["name"],
+                (
+                    "# Number of images: {}, mean observations per image: "
+                    "{:.6f}\n"
+                ).format(
+                    len(filtered_images),
+                    mean_obs,
                 )
             )
-            obs_text = " ".join(
-                "{:.12g} {:.12g} {}".format(obs[0], obs[1], int(obs[2]))
-                for obs in image["observations"]
-            )
-            handle.write(obs_text + "\n")
+            for image in filtered_images:
+                pose_fields = " ".join(
+                    str(field) for field in image["pose_fields"]
+                )
+                handle.write(
+                    "{} {} {}\n".format(
+                        image["image_id"],
+                        pose_fields,
+                        image["name"],
+                    )
+                )
+                obs_text = " ".join(
+                    "{:.12g} {:.12g} {}".format(obs[0], obs[1], int(obs[2]))
+                    for obs in image["observations"]
+                )
+                handle.write(obs_text + "\n")
 
     kept_points: List[Dict[str, object]] = [
         model.points[point_id]
