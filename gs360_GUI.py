@@ -6425,7 +6425,7 @@ class PreviewApp:
         row += 1
         tk.Label(
             params,
-            text="Stage 2: Go to FrameSelector and select images. (Not implemented yet)",
+            text="Stage 2: Go to FrameSelector and select images.",
             anchor="w",
             justify="left",
         ).grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 6))
@@ -7063,7 +7063,7 @@ class PreviewApp:
         ply_display_up_combo = ttk.Combobox(
             viewer_actions,
             textvariable=self._ply_display_up_axis_var,
-            values=("Z-up", "Y-up"),
+            values=("Z-up", "Y-down"),
             state="readonly",
             width=8,
         )
@@ -8283,7 +8283,7 @@ class PreviewApp:
         camera_display_up_combo = ttk.Combobox(
             viewer_controls_top,
             textvariable=self._camera_scene_display_up_axis_var,
-            values=("Z-up", "Y-up"),
+            values=("Z-up", "Y-down"),
             state="readonly",
             width=8,
         )
@@ -11427,7 +11427,11 @@ class PreviewApp:
         self._ply_drag_last = None
         self._ply_pan_last = None
         self._ply_projection_mode.set(str(state["projection_mode"]))
-        self._ply_display_up_axis_var.set(str(state.get("display_up_axis", "Z-up")))
+        self._ply_display_up_axis_var.set(
+            self._normalize_display_up_axis(
+                str(state.get("display_up_axis", "Z-up"))
+            )
+        )
         self._ply_view_interactive_max_points_var.set(
             str(state["interactive_point_cap"])
         )
@@ -13415,26 +13419,32 @@ class PreviewApp:
         )
 
     @staticmethod
-    def _get_default_display_view_angles(mode: str) -> Tuple[float, float]:
+    def _normalize_display_up_axis(mode: str) -> str:
         if (mode or "").strip().lower().startswith("z"):
-            return math.radians(-35.0), math.radians(-25.0)
-        return math.radians(-145.0), math.radians(-25.0)
+            return "Z-up"
+        return "Y-down"
+
+    @staticmethod
+    def _get_default_display_view_angles(mode: str) -> Tuple[float, float]:
+        _ = PreviewApp._normalize_display_up_axis(mode)
+        return math.radians(145.0), math.radians(-25.0)
 
     @staticmethod
     def _get_display_up_axis_matrix(mode: str) -> np.ndarray:
-        if (mode or "").strip().lower().startswith("z"):
+        mode_name = PreviewApp._normalize_display_up_axis(mode)
+        if mode_name == "Z-up":
             return np.array(
                 [
-                    [-1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
                     [0.0, 0.0, 1.0],
-                    [0.0, -1.0, 0.0],
+                    [0.0, 1.0, 0.0],
                 ],
                 dtype=np.float32,
             )
         return np.array(
             [
-                [-1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
                 [0.0, 0.0, 1.0],
             ],
             dtype=np.float32,
@@ -13535,6 +13545,9 @@ class PreviewApp:
     ) -> None:
         axis_len = self._get_ply_axis_length()
         origin = (0.0, 0.0, 0.0)
+        display_mode = self._normalize_display_up_axis(
+            self._ply_display_up_axis_var.get()
+        )
         origin_pt = self._project_point_to_screen(
             origin,
             width,
@@ -13550,9 +13563,10 @@ class PreviewApp:
         )
         if origin_pt is None:
             return
+        y_axis_value = -axis_len if display_mode == "Y-down" else axis_len
         for label, endpoint, color in (
             ("X", (axis_len, 0.0, 0.0), (255, 80, 80)),
-            ("Y", (0.0, axis_len, 0.0), (80, 255, 120)),
+            ("Y", (0.0, y_axis_value, 0.0), (80, 255, 120)),
             ("Z", (0.0, 0.0, axis_len), (80, 160, 255)),
         ):
             screen_pt = self._project_point_to_screen(
@@ -14330,7 +14344,9 @@ class PreviewApp:
         self._camera_scene_pan_last = None
         self._camera_scene_projection_mode.set(str(state["projection_mode"]))
         self._camera_scene_display_up_axis_var.set(
-            str(state.get("display_up_axis", "Z-up"))
+            self._normalize_display_up_axis(
+                str(state.get("display_up_axis", "Z-up"))
+            )
         )
         self._camera_scene_point_cap_var.set(str(state["point_cap"]))
         self._camera_scene_interactive_point_cap_var.set(
@@ -15044,6 +15060,9 @@ class PreviewApp:
     ) -> None:
         axis_len = self._get_camera_scene_axis_length()
         origin = tuple(float(v) for v in self._camera_scene_origin_centered)
+        display_mode = self._normalize_display_up_axis(
+            self._camera_scene_display_up_axis_var.get()
+        )
         colors = {
             "X": (255, 80, 80),
             "Y": (80, 255, 120),
@@ -15064,9 +15083,10 @@ class PreviewApp:
         )
         if origin_pt is None:
             return
+        y_axis_value = -axis_len if display_mode == "Y-down" else axis_len
         for label, endpoint in (
             ("X", (origin[0] + axis_len, origin[1], origin[2])),
-            ("Y", (origin[0], origin[1] + axis_len, origin[2])),
+            ("Y", (origin[0], origin[1] + y_axis_value, origin[2])),
             ("Z", (origin[0], origin[1], origin[2] + axis_len)),
         ):
             screen_pt = self._project_point_to_screen(
