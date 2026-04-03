@@ -463,6 +463,7 @@ def parse_colmap_points3d_txt(path):
                 "g": int(parts[5]),
                 "b": int(parts[6]),
                 "err": float(parts[7]),
+                "track_tokens": parts[8:],
             })
     return points
 
@@ -473,6 +474,20 @@ def write_colmap_text_model(out_dir, cameras, images, points):
     cam_path = out_dir / "cameras.txt"
     img_path = out_dir / "images.txt"
     pts_path = out_dir / "points3D.txt"
+    mean_observations = 0.0
+    if images:
+        total_observations = 0
+        for img in images:
+            points2d_line = (img.get("points2d_line", "") or "").strip()
+            if points2d_line:
+                total_observations += len(points2d_line.split()) // 3
+        mean_observations = total_observations / float(len(images))
+    mean_track_length = 0.0
+    if points:
+        total_track_pairs = sum(
+            len(pt.get("track_tokens", []) or []) // 2 for pt in points
+        )
+        mean_track_length = total_track_pairs / float(len(points))
 
     with cam_path.open("w", encoding="utf-8") as f:
         f.write("# Camera list with one line of data per camera:\n")
@@ -496,9 +511,8 @@ def write_colmap_text_model(out_dir, cameras, images, points):
         f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
         f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
         f.write(
-            "# Number of images: {}, mean observations per image: 0\n".format(
-                len(images)
-            )
+            "# Number of images: {}, mean observations per image: {:.3f}\n"
+            .format(len(images), mean_observations)
         )
         for img in sorted(images, key=lambda x: x["image_id"]):
             f.write(
@@ -516,15 +530,18 @@ def write_colmap_text_model(out_dir, cameras, images, points):
             "(IMAGE_ID, POINT2D_IDX)\n"
         )
         f.write(
-            "# Number of points: {}, mean track length: 0\n".format(
-                len(points)
+            "# Number of points: {}, mean track length: {:.6f}\n".format(
+                len(points), mean_track_length
             )
         )
         for pt in points:
-            f.write(
-                "{id} {x:.12g} {y:.12g} {z:.12g} {r} {g} {b} {err:.6g}\n"
-                .format(**pt)
+            line = "{id} {x:.12g} {y:.12g} {z:.12g} {r} {g} {b} {err:.6g}".format(
+                **pt
             )
+            track_tokens = pt.get("track_tokens", []) or []
+            if track_tokens:
+                line += " " + " ".join(str(token) for token in track_tokens)
+            f.write(line + "\n")
 
 
 def get_export_colmap_dir(out_root):
