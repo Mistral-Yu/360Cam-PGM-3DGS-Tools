@@ -22,6 +22,9 @@ import pathlib
 import sys
 import xml.etree.ElementTree as ET
 
+import gs360_CameraFormatConverter as camera_converter
+import gs360_MS360xmlToPersCams as msxml_converter
+
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple
@@ -51,6 +54,7 @@ DEFAULT_CAMERA_XML = (
 DEFAULT_DLOGM_LUT = SCRIPT_DIR / "templates" / \
     "DJI Osmo 360 D-Log M to Rec.709 V1.cube"
 DEFAULT_WORKERS = max(1, os.cpu_count() or 1)
+DEFAULT_PERSPECTIVE_METASHAPE_XML_NAME = "perspective_cams.xml"
 
 INTERPOLATION_MAP = {
     "nearest": cv2.INTER_NEAREST,
@@ -144,7 +148,9 @@ def parse_arguments() -> argparse.Namespace:
         default=str(DEFAULT_CAMERA_XML),
         help=(
             "Metashape camera XML path (contains sensor calibration). "
-            "Default: cli_tools/templates/Osmo360-Fisheye-Distortion.xml"
+            "Optional when --camera-extrinsics-xml provides adjusted "
+            "calibration. Default: "
+            "cli_tools/templates/Osmo360-Fisheye-Distortion.xml"
         ),
     )
     parser.add_argument(
@@ -320,7 +326,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--perspective-output-dir",
         default=None,
-        help="Perspective output dir (default: <undistorted>_perspective).",
+        help=(
+            "Perspective / COLMAP root dir "
+            "(default: <fisheye_dir>_perspective_colmap)."
+        ),
     )
     parser.add_argument(
         "--perspective-ext",
@@ -382,6 +391,41 @@ def parse_arguments() -> argparse.Namespace:
         type=float,
         default=180.0,
         help="Rig yaw offset for Y lens.",
+    )
+    parser.add_argument(
+        "--camera-extrinsics-xml",
+        default=None,
+        help=(
+            "Optional Metashape alignment XML for the input dual-fisheye "
+            "pairs. When provided, the tool also exports perspective "
+            "Metashape XML and COLMAP text using the current perspective "
+            "layout."
+        ),
+    )
+    parser.add_argument(
+        "--pointcloud-ply",
+        default=None,
+        help=(
+            "Optional Metashape point cloud PLY used when exporting "
+            "perspective COLMAP text."
+        ),
+    )
+    parser.add_argument(
+        "--mask-input-dir",
+        default=None,
+        help=(
+            "Optional mask folder matching the pair images by file name. "
+            "When provided, perspective masks are cut with the same remap "
+            "and written under the COLMAP Masks folder."
+        ),
+    )
+    parser.add_argument(
+        "--perspective-metashape-xml-name",
+        default=DEFAULT_PERSPECTIVE_METASHAPE_XML_NAME,
+        help=(
+            "Perspective Metashape XML file name written under the "
+            "perspective output directory."
+        ),
     )
     return parser.parse_args()
 
@@ -850,6 +894,15 @@ def build_pair_records(
     return pairs
 
 
+def build_camera_transform_map(
+    xml_path: pathlib.Path,
+) -> Dict[str, List[List[float]]]:
+    """Load Metashape camera transforms keyed by label."""
+
+    records = msxml_converter.load_metashape_cameras(xml_path)
+    return {str(label): mat for _cam_id, label, mat in records}
+
+
 def _apply_brown_distortion(
     x: np.ndarray,
     y: np.ndarray,
@@ -1223,6 +1276,343 @@ def wrap_angle_deg(angle_deg: float) -> float:
     return ((float(angle_deg) + 180.0) % 360.0) - 180.0
 
 
+def build_perspective_pose_frames(
+    extrinsics_xml_path: pathlib.Path,
+    resolved_pairs: Sequence[
+        Tuple[int, str, pathlib.Path, pathlib.Path, str, str]
+    ],
+    successful_bases: Optional[Set[str]],
+    perspective_specs: Sequence[Dict[str, object]],
+    perspective_map_cache: Dict[Tuple[str, str], Dict[str, Dict[str, object]]],
+    perspective_out_ext: str,
+    lens_x_yaw_deg: float,
+    lens_y_yaw_deg: float,
+) -> List[Dict[str, object]]:
+    """Build perspective frame poses from aligned dual-fisheye cameras."""
+
+    camera_transform_map = build_camera_transform_map(extrinsics_xml_path)
+    frames: List[Dict[str, object]] = []
+    missing_labels: List[str] = []
+
+    for _pair_idx, base_stem, x_path, y_path, sensor_id_x, sensor_id_y in resolved_pairs:
+        if successful_bases is not None and base_stem not in successful_bases:
+            continue
+        x_label = x_path.stem
+        y_label = y_path.stem
+        x_c2w_cv = camera_transform_map.get(x_label)
+        y_c2w_cv = camera_transform_map.get(y_label)
+        if x_c2w_cv is None:
+            missing_labels.append(x_label)
+            continue
+        if y_c2w_cv is None:
+            missing_labels.append(y_label)
+            continue
+
+        spec_maps = perspective_map_cache.get((sensor_id_x, sensor_id_y))
+        if not spec_maps:
+            raise ValueError(
+                "Perspective remap cache missing for sensor pair {} / {}".format(
+                    sensor_id_x,
+                    sensor_id_y,
+                )
+            )
+
+        for spec in perspective_specs:
+            view_id = str(spec["view_id"])
+            mapping = spec_maps.get(view_id)
+            if mapping is None:
+                raise ValueError(
+                    "Perspective view '{}' missing from remap cache.".format(
+                        view_id
+                    )
+                )
+            lens_key = str(mapping["lens_key"]).upper()
+            if lens_key == "X":
+                base_c2w_cv = x_c2w_cv
+                source_label = x_label
+                lens_yaw_deg = float(lens_x_yaw_deg)
+            elif lens_key == "Y":
+                base_c2w_cv = y_c2w_cv
+                source_label = y_label
+                lens_yaw_deg = float(lens_y_yaw_deg)
+            else:
+                raise ValueError(
+                    "Unsupported lens key '{}' for view '{}'.".format(
+                        lens_key,
+                        view_id,
+                    )
+                )
+
+            yaw_rel = wrap_angle_deg(float(spec["yaw_deg"]) - lens_yaw_deg)
+            pitch_deg = float(spec["pitch_deg"])
+            base_gl = msxml_converter.mat4_mul(
+                base_c2w_cv,
+                msxml_converter.CV_TO_GL,
+            )
+            rel_rot = msxml_converter.yaw_pitch_to_rot_gl(
+                yaw_rel,
+                pitch_deg,
+            )
+            c2w_gl = msxml_converter.mat4_mul(
+                base_gl,
+                msxml_converter.mat3_to_mat4(rel_rot),
+            )
+            c2w_cv = msxml_converter.mat4_mul(
+                c2w_gl,
+                msxml_converter.CV_TO_GL,
+            )
+            frames.append(
+                {
+                    "file_path": "{}_{}{}".format(
+                        base_stem,
+                        view_id,
+                        perspective_out_ext,
+                    ),
+                    "c2w_gl": c2w_gl,
+                    "c2w_cv": c2w_cv,
+                    "source_name": base_stem,
+                    "source_label": source_label,
+                    "view_id": view_id,
+                    "lens_key": lens_key,
+                    "yaw_rel_deg": yaw_rel,
+                    "pitch_deg": pitch_deg,
+                }
+            )
+
+    if missing_labels:
+        missing_sorted = sorted(set(missing_labels))
+        preview = ", ".join(missing_sorted[:8])
+        if len(missing_sorted) > 8:
+            preview += ", ..."
+        raise ValueError(
+            "Missing camera transforms in extrinsics XML: {}".format(preview)
+        )
+    if not frames:
+        raise ValueError("No perspective pose frames could be generated.")
+    return frames
+
+
+def build_colmap_model_from_pose_frames(
+    frames: Sequence[Dict[str, object]],
+    perspective_size: int,
+    perspective_focal_mm: float,
+    perspective_sensor_mm: str,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """Build a single-camera COLMAP model from perspective pose frames."""
+
+    width = int(perspective_size)
+    height = int(perspective_size)
+    sensor_w_mm, sensor_h_mm = parse_sensor_dimensions(perspective_sensor_mm)
+    fx, fy = camera_converter.focal_mm_to_pixels(
+        perspective_focal_mm,
+        width,
+        height,
+        sensor_w_mm,
+        sensor_h_mm,
+    )
+    cx = width * 0.5
+    cy = height * 0.5
+    cameras = [
+        {
+            "camera_id": 1,
+            "model": "PINHOLE",
+            "width": width,
+            "height": height,
+            "params": [fx, fy, cx, cy],
+        }
+    ]
+    images: List[Dict[str, object]] = []
+    for image_id, frame in enumerate(frames, start=1):
+        r_wc, t_wc = msxml_converter.compute_colmap_pose(frame, 0.0)
+        qw, qx, qy, qz = camera_converter.rotmat_to_quat_wxyz(r_wc)
+        images.append(
+            {
+                "image_id": image_id,
+                "qw": qw,
+                "qx": qx,
+                "qy": qy,
+                "qz": qz,
+                "tx": t_wc[0],
+                "ty": t_wc[1],
+                "tz": t_wc[2],
+                "camera_id": 1,
+                "name": str(frame["file_path"]),
+                "points2d_line": "",
+            }
+        )
+    return cameras, images
+
+
+def build_colmap_points_from_metashape_ply(
+    ply_path: pathlib.Path,
+) -> List[Dict[str, object]]:
+    """Convert Metashape PLY points into the COLMAP-like export space."""
+
+    identity_world = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    return msxml_converter.build_points_outputs(
+        pathlib.Path(ply_path),
+        pathlib.Path(ply_path).parent,
+        identity_world,
+        msxml_converter.POINTCLOUD_PLY_X_DEG,
+        1.0,
+        write_transforms_ply=False,
+    )
+
+
+def get_perspective_images_dir(root_dir: pathlib.Path) -> pathlib.Path:
+    """Return perspective image directory under the COLMAP-style root."""
+
+    return pathlib.Path(root_dir) / "Images"
+
+
+def get_perspective_masks_dir(root_dir: pathlib.Path) -> pathlib.Path:
+    """Return perspective mask directory under the COLMAP-style root."""
+
+    return pathlib.Path(root_dir) / "Masks"
+
+
+def get_perspective_sparse_dir(root_dir: pathlib.Path) -> pathlib.Path:
+    """Return COLMAP sparse text directory under the COLMAP-style root."""
+
+    return pathlib.Path(root_dir) / "Sparse" / "0"
+
+
+def load_mask_image(mask_path: pathlib.Path) -> np.ndarray:
+    """Load one mask image without color transforms."""
+
+    image = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise RuntimeError("Failed to read mask image: {}".format(mask_path))
+    return image
+
+
+def collect_mask_pair_paths(
+    mask_dir: pathlib.Path,
+    resolved_pairs: Sequence[
+        Tuple[int, str, pathlib.Path, pathlib.Path, str, str]
+    ],
+) -> Dict[str, Tuple[pathlib.Path, pathlib.Path]]:
+    """Match X/Y mask files to each resolved pair by exact file name."""
+
+    name_map: Dict[str, pathlib.Path] = {}
+    for path in sorted(mask_dir.iterdir()):
+        if path.is_file():
+            name_map[path.name] = path
+
+    matched: Dict[str, Tuple[pathlib.Path, pathlib.Path]] = {}
+    missing: List[str] = []
+    for _pair_idx, base_stem, x_path, y_path, _sx, _sy in resolved_pairs:
+        x_mask = name_map.get(x_path.name)
+        y_mask = name_map.get(y_path.name)
+        if x_mask is None:
+            missing.append(x_path.name)
+        if y_mask is None:
+            missing.append(y_path.name)
+        if x_mask is None or y_mask is None:
+            continue
+        matched[base_stem] = (x_mask, y_mask)
+
+    if missing:
+        preview = ", ".join(sorted(set(missing))[:8])
+        if len(set(missing)) > 8:
+            preview += ", ..."
+        raise ValueError(
+            "Missing mask images in {}: {}".format(mask_dir, preview)
+        )
+    return matched
+
+
+def export_perspective_camera_metadata(
+    args: argparse.Namespace,
+    resolved_pairs: Sequence[
+        Tuple[int, str, pathlib.Path, pathlib.Path, str, str]
+    ],
+    successful_bases: Set[str],
+    perspective_specs: Sequence[Dict[str, object]],
+    perspective_map_cache: Dict[Tuple[str, str], Dict[str, Dict[str, object]]],
+    perspective_out_dir: pathlib.Path,
+    perspective_out_ext: str,
+    dry_run: bool,
+) -> None:
+    """Export perspective camera XML / COLMAP from dual-fisheye alignment."""
+
+    extrinsics_xml_value = str(getattr(args, "camera_extrinsics_xml", "")).strip()
+    if not extrinsics_xml_value:
+        return
+    if bool(args.no_perspective):
+        raise ValueError(
+            "--camera-extrinsics-xml requires perspective output to be enabled."
+        )
+    extrinsics_xml_path = pathlib.Path(extrinsics_xml_value).expanduser().resolve()
+    if not extrinsics_xml_path.exists() or not extrinsics_xml_path.is_file():
+        raise ValueError(
+            "Camera extrinsics XML not found: {}".format(extrinsics_xml_path)
+        )
+
+    frames = build_perspective_pose_frames(
+        extrinsics_xml_path=extrinsics_xml_path,
+        resolved_pairs=resolved_pairs,
+        successful_bases=successful_bases,
+        perspective_specs=perspective_specs,
+        perspective_map_cache=perspective_map_cache,
+        perspective_out_ext=perspective_out_ext,
+        lens_x_yaw_deg=float(args.lens_x_yaw_deg),
+        lens_y_yaw_deg=float(args.lens_y_yaw_deg),
+    )
+    cameras, images = build_colmap_model_from_pose_frames(
+        frames=frames,
+        perspective_size=int(args.perspective_size),
+        perspective_focal_mm=float(args.perspective_focal_mm),
+        perspective_sensor_mm=str(args.perspective_sensor_mm),
+    )
+
+    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "")).strip()
+    points: List[Dict[str, object]] = []
+    if pointcloud_ply_value:
+        pointcloud_ply_path = pathlib.Path(pointcloud_ply_value).expanduser().resolve()
+        if not pointcloud_ply_path.exists() or not pointcloud_ply_path.is_file():
+            raise ValueError(
+                "Point cloud PLY not found: {}".format(pointcloud_ply_path)
+            )
+        points = build_colmap_points_from_metashape_ply(pointcloud_ply_path)
+
+    out_images = get_perspective_images_dir(perspective_out_dir)
+    out_masks = get_perspective_masks_dir(perspective_out_dir)
+    out_xml = perspective_out_dir / str(args.perspective_metashape_xml_name)
+    out_colmap = get_perspective_sparse_dir(perspective_out_dir)
+
+    if dry_run:
+        print(
+            "[DRY][META] frames={} images={} xml={} colmap={} masks={} points={}".format(
+                len(frames),
+                out_images,
+                out_xml,
+                out_colmap,
+                out_masks,
+                len(points),
+            )
+        )
+        return
+
+    camera_converter.export_metashape_perspective_xml(out_xml, cameras, images)
+    camera_converter.write_colmap_text_model(out_colmap, cameras, images, points)
+    print("[OK] Perspective images root: {}".format(out_images))
+    print("[OK] Perspective Metashape XML: {}".format(out_xml))
+    print(
+        "[OK] Perspective COLMAP text: {} (images={}, points={})".format(
+            out_colmap,
+            len(images),
+            len(points),
+        )
+    )
+    print("[OK] Perspective masks root: {}".format(out_masks))
+
+
 def build_perspective_map_for_lens(
     calib: SensorCalibration,
     yaw_deg: float,
@@ -1450,6 +1840,8 @@ def process_pair_task(
     y_path: pathlib.Path,
     sensor_id_x: str,
     sensor_id_y: str,
+    x_mask_path: Optional[pathlib.Path],
+    y_mask_path: Optional[pathlib.Path],
     input_lut: Optional[CubeLUT],
     lut_output_color_space: str,
     save_color_corrected_output: bool,
@@ -1464,6 +1856,7 @@ def process_pair_task(
     perspective_specs: Sequence[Dict[str, object]],
     perspective_out_ext: str,
     perspective_jpeg_quality: int,
+    write_perspective_masks: bool,
     interpolation: int,
     mask_outside_model: bool,
     mask_value: int,
@@ -1480,6 +1873,8 @@ def process_pair_task(
         input_lut=input_lut,
         lut_output_color_space=lut_output_color_space,
     )
+    mask_x = load_mask_image(x_mask_path) if x_mask_path is not None else None
+    mask_y = load_mask_image(y_mask_path) if y_mask_path is not None else None
 
     color_outputs: List[str] = []
     if save_color_corrected_output:
@@ -1518,13 +1913,17 @@ def process_pair_task(
         fisheye_outputs.extend([out_x.name, out_y.name])
 
     perspective_outputs: List[str] = []
+    mask_outputs: List[str] = []
     if write_perspective_output:
         if perspective_maps is None:
             raise RuntimeError("Missing perspective remap cache.")
+        perspective_images_dir = get_perspective_images_dir(perspective_out_dir)
+        perspective_masks_dir = get_perspective_masks_dir(perspective_out_dir)
         for spec in perspective_specs:
             view_id = str(spec["view_id"])
             m = perspective_maps[view_id]
-            src = image_x if str(m["lens_key"]) == "X" else image_y
+            use_x_lens = str(m["lens_key"]) == "X"
+            src = image_x if use_x_lens else image_y
             rendered = cv2.remap(
                 src,
                 m["map_x"],  # type: ignore[arg-type]
@@ -1541,7 +1940,7 @@ def process_pair_task(
                     rendered[~valid_mask, :] = mask_value
 
             out_name = "{}_{}{}".format(base_stem, view_id, perspective_out_ext)
-            out_path = perspective_out_dir / out_name
+            out_path = perspective_images_dir / out_name
             write_perspective_image(
                 path=out_path,
                 image=rendered,
@@ -1549,12 +1948,40 @@ def process_pair_task(
             )
             perspective_outputs.append(out_name)
 
+            if write_perspective_masks:
+                src_mask = mask_x if use_x_lens else mask_y
+                if src_mask is None:
+                    raise RuntimeError(
+                        "Mask source missing for pair '{}'.".format(base_stem)
+                    )
+                rendered_mask = cv2.remap(
+                    src_mask,
+                    m["map_x"],  # type: ignore[arg-type]
+                    m["map_y"],  # type: ignore[arg-type]
+                    cv2.INTER_NEAREST,
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=0,
+                )
+                if mask_outside_model:
+                    if rendered_mask.ndim == 2:
+                        rendered_mask[~valid_mask] = 0
+                    else:
+                        rendered_mask[~valid_mask, :] = 0
+                mask_path = perspective_masks_dir / out_name
+                write_perspective_image(
+                    path=mask_path,
+                    image=rendered_mask,
+                    jpeg_quality=perspective_jpeg_quality,
+                )
+                mask_outputs.append(out_name)
+
     return {
         "base_stem": base_stem,
         "files_processed": 2,
         "color_outputs": color_outputs,
         "fisheye_outputs": fisheye_outputs,
         "perspective_outputs": perspective_outputs,
+        "mask_outputs": mask_outputs,
     }
 
 
@@ -1610,11 +2037,10 @@ def main() -> None:
         print("[ERR] {}".format(exc), file=sys.stderr)
         sys.exit(1)
 
-    xml_path = pathlib.Path(args.camera_xml).expanduser().resolve()
-    if not xml_path.exists() or not xml_path.is_file():
-        print("[ERR] Camera XML not found: {}".format(
-            xml_path), file=sys.stderr)
-        sys.exit(1)
+    camera_xml_path: Optional[pathlib.Path] = None
+    camera_xml_value = str(getattr(args, "camera_xml", "")).strip()
+    if camera_xml_value:
+        camera_xml_path = pathlib.Path(camera_xml_value).expanduser().resolve()
 
     suffix_filter = [token.strip()
                      for token in args.suffixes.split(",") if token.strip()]
@@ -1666,8 +2092,9 @@ def main() -> None:
         perspective_out_dir = pathlib.Path(
             args.perspective_output_dir).expanduser().resolve()
     else:
-        perspective_out_dir = output_dir.with_name(
-            output_dir.name + "_perspective")
+        perspective_out_dir = fisheye_dir.with_name(
+            fisheye_dir.name + "_perspective_colmap"
+        )
 
     if args.color_corrected_output_dir:
         color_corrected_out_dir = pathlib.Path(
@@ -1678,12 +2105,89 @@ def main() -> None:
             fisheye_dir.name + "_colorcorrected"
         )
 
+    extrinsics_xml_path: Optional[pathlib.Path] = None
+    extrinsics_xml_value = str(
+        getattr(args, "camera_extrinsics_xml", "")
+    ).strip()
+    if extrinsics_xml_value:
+        extrinsics_xml_path = pathlib.Path(
+            extrinsics_xml_value
+        ).expanduser().resolve()
+        if not extrinsics_xml_path.exists() or not extrinsics_xml_path.is_file():
+            print(
+                "[ERR] Camera extrinsics XML not found: {}".format(
+                    extrinsics_xml_path
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not write_perspective_output:
+            print(
+                "[ERR] --camera-extrinsics-xml requires perspective output.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    pointcloud_ply_path: Optional[pathlib.Path] = None
+    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "")).strip()
+    if pointcloud_ply_value:
+        pointcloud_ply_path = pathlib.Path(
+            pointcloud_ply_value
+        ).expanduser().resolve()
+        if not pointcloud_ply_path.exists() or not pointcloud_ply_path.is_file():
+            print(
+                "[ERR] Point cloud PLY not found: {}".format(
+                    pointcloud_ply_path
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    calibration_xml_path: Optional[pathlib.Path] = None
+    if extrinsics_xml_path is not None:
+        calibration_xml_path = extrinsics_xml_path
+    elif camera_xml_path is not None:
+        calibration_xml_path = camera_xml_path
+    if calibration_xml_path is None:
+        print(
+            "[ERR] Specify --camera-extrinsics-xml or --camera-xml.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not calibration_xml_path.exists() or not calibration_xml_path.is_file():
+        print(
+            "[ERR] Calibration XML not found: {}".format(calibration_xml_path),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    mask_input_dir_path: Optional[pathlib.Path] = None
+    mask_input_dir_value = str(getattr(args, "mask_input_dir", "")).strip()
+    if mask_input_dir_value:
+        mask_input_dir_path = pathlib.Path(mask_input_dir_value).expanduser().resolve()
+        if not mask_input_dir_path.exists() or not mask_input_dir_path.is_dir():
+            print(
+                "[ERR] Mask input directory not found: {}".format(
+                    mask_input_dir_path
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not write_perspective_output:
+            print(
+                "[ERR] --mask-input-dir requires perspective output.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     ext_filter = [token.strip().lower().lstrip(".")
                   for token in args.ext.split(",") if token.strip()]
     if not ext_filter:
         ext_filter = [ext.lstrip(".") for ext in SUPPORTED_EXTS]
 
-    sensor_map, camera_to_sensor = load_metashape_calibration(xml_path)
+    sensor_map, camera_to_sensor = load_metashape_calibration(
+        calibration_xml_path
+    )
     if not sensor_map:
         print("[ERR] No usable calibration found in XML.", file=sys.stderr)
         sys.exit(1)
@@ -1741,6 +2245,8 @@ def main() -> None:
     errors: List[str] = []
     color_output_count = 0
     perspective_output_count = 0
+    perspective_mask_count = 0
+    successful_pair_bases: Set[str] = set()
 
     print("[INFO] input:  {}".format(fisheye_dir))
     if write_fisheye_output:
@@ -1749,6 +2255,26 @@ def main() -> None:
         print("[INFO] fisheye output: disabled")
     if write_perspective_output:
         print("[INFO] perspective output: {}".format(perspective_out_dir))
+        print(
+            "[INFO] perspective xml: {}".format(
+                perspective_out_dir / args.perspective_metashape_xml_name
+            )
+        )
+        print(
+            "[INFO] perspective images dir: {}".format(
+                get_perspective_images_dir(perspective_out_dir)
+            )
+        )
+        print(
+            "[INFO] perspective sparse dir: {}".format(
+                get_perspective_sparse_dir(perspective_out_dir)
+            )
+        )
+        print(
+            "[INFO] perspective masks dir: {}".format(
+                get_perspective_masks_dir(perspective_out_dir)
+            )
+        )
     else:
         print("[INFO] perspective output: disabled")
     if save_color_corrected_output:
@@ -1759,9 +2285,21 @@ def main() -> None:
         )
     else:
         print("[INFO] color-corrected output: disabled")
-    print("[INFO] xml:    {}".format(xml_path))
+    print("[INFO] calibration xml: {}".format(calibration_xml_path))
     print("[INFO] pairs:  {}".format(len(pairs)))
     print("[INFO] files:  {}".format(len(pair_images)))
+    if extrinsics_xml_path is not None:
+        print("[INFO] camera extrinsics xml: {}".format(extrinsics_xml_path))
+    else:
+        print("[INFO] camera extrinsics xml: disabled")
+    if pointcloud_ply_path is not None:
+        print("[INFO] pointcloud ply: {}".format(pointcloud_ply_path))
+    else:
+        print("[INFO] pointcloud ply: disabled")
+    if mask_input_dir_path is not None:
+        print("[INFO] mask input dir: {}".format(mask_input_dir_path))
+    else:
+        print("[INFO] mask input dir: disabled")
     print(
         "[INFO] workers: {} (memory auto-throttle > {}%)".format(
             workers,
@@ -1822,6 +2360,17 @@ def main() -> None:
         )
         used_sensor_ids.update([sensor_id_x, sensor_id_y])
         used_sensor_pairs.add((sensor_id_x, sensor_id_y))
+
+    pair_mask_paths: Dict[str, Tuple[pathlib.Path, pathlib.Path]] = {}
+    if mask_input_dir_path is not None:
+        try:
+            pair_mask_paths = collect_mask_pair_paths(
+                mask_input_dir_path,
+                resolved_pairs,
+            )
+        except Exception as exc:
+            print("[ERR] {}".format(exc), file=sys.stderr)
+            sys.exit(1)
 
     if need_undistorted_stage:
         for sensor_id in sorted(used_sensor_ids):
@@ -1934,8 +2483,19 @@ def main() -> None:
                             out_name,
                         )
                     )
+                    if mask_input_dir_path is not None:
+                        print(
+                            "[DRY][MASK ] {:4d}/{:4d} {}".format(
+                                pair_idx,
+                                len(pairs),
+                                out_name,
+                            )
+                        )
                 perspective_output_count += len(perspective_specs)
+                if mask_input_dir_path is not None:
+                    perspective_mask_count += len(perspective_specs)
             processed += 2
+            successful_pair_bases.add(base_stem)
     else:
         adaptive_limit = workers
         pending = set()
@@ -1947,6 +2507,7 @@ def main() -> None:
         ) -> int:
             nonlocal processed, skipped
             nonlocal color_output_count, perspective_output_count
+            nonlocal perspective_mask_count
 
             next_limit = active_limit
             mem_ratio = get_system_memory_usage_ratio()
@@ -1977,6 +2538,7 @@ def main() -> None:
                 color_names = list(result["color_outputs"])
                 fisheye_names = list(result["fisheye_outputs"])
                 perspective_names = list(result["perspective_outputs"])
+                mask_names = list(result["mask_outputs"])
                 for name in color_names:
                     print(
                         "[OK ][COLOR] {:4d}/{:4d} {} -> {}".format(
@@ -2004,13 +2566,27 @@ def main() -> None:
                             len(perspective_names),
                         )
                     )
+                if mask_names:
+                    print(
+                        "[OK ][MASK ] {:4d}/{:4d} {} -> {} masks".format(
+                            pair_idx,
+                            len(pairs),
+                            base_stem,
+                            len(mask_names),
+                        )
+                    )
                 processed += int(result["files_processed"])
                 color_output_count += len(color_names)
                 perspective_output_count += len(perspective_names)
+                perspective_mask_count += len(mask_names)
+                successful_pair_bases.add(base_stem)
             return next_limit
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             for pair_idx, base_stem, x_path, y_path, sensor_id_x, sensor_id_y in resolved_pairs:
+                x_mask_path, y_mask_path = pair_mask_paths.get(
+                    base_stem, (None, None)
+                )
                 while pending and len(pending) >= adaptive_limit:
                     done, pending = wait(
                         pending,
@@ -2028,6 +2604,8 @@ def main() -> None:
                     y_path,
                     sensor_id_x,
                     sensor_id_y,
+                    x_mask_path,
+                    y_mask_path,
                     input_lut,
                     lut_output_color_space,
                     save_color_corrected_output,
@@ -2042,6 +2620,7 @@ def main() -> None:
                     perspective_specs,
                     perspective_out_ext,
                     perspective_jpeg_quality,
+                    bool(mask_input_dir_path is not None),
                     interpolation,
                     bool(args.mask_outside_model),
                     mask_value,
@@ -2053,13 +2632,32 @@ def main() -> None:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 adaptive_limit = consume_completed(list(done), adaptive_limit)
 
+    try:
+        export_perspective_camera_metadata(
+            args=args,
+            resolved_pairs=resolved_pairs,
+            successful_bases=successful_pair_bases,
+            perspective_specs=perspective_specs,
+            perspective_map_cache=perspective_map_cache,
+            perspective_out_dir=perspective_out_dir,
+            perspective_out_ext=perspective_out_ext,
+            dry_run=bool(args.dry_run),
+        )
+    except Exception as exc:
+        err = "[ERR] perspective camera metadata export failed ({})".format(
+            exc
+        )
+        print(err, file=sys.stderr)
+        errors.append(err)
+
     print(
         "[DONE] processed={} skipped={} total={} persp_outputs={} "
-        "color_outputs={} errors={}".format(
+        "mask_outputs={} color_outputs={} errors={}".format(
             processed,
             skipped,
             len(pair_images),
             perspective_output_count,
+            perspective_mask_count,
             color_output_count,
             len(errors),
         )

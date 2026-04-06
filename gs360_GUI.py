@@ -2180,9 +2180,89 @@ class PreviewApp:
         self._dualfisheye_output_auto[key] = False
         if key == "pairs_output":
             self._sync_dualfisheye_pair_input_from_extract()
+            return
+        if key == "perspective_output":
+            self._update_dualfisheye_derived_output_paths()
 
     def _on_dualfisheye_output_toggle_changed(self, *_args) -> None:
         self._update_dualfisheye_output_controls_state()
+
+    def _compute_dualfisheye_metashape_f_text(self) -> str:
+        if not self.dualfisheye_vars:
+            return "Metashape f: -"
+        try:
+            output_size = int(
+                self.dualfisheye_vars["perspective_size"].get().strip()
+            )
+            focal_mm = float(
+                self.dualfisheye_vars["perspective_focal_mm"].get().strip()
+            )
+        except (KeyError, ValueError):
+            return "Metashape f: -"
+        if output_size <= 0 or focal_mm <= 0.0:
+            return "Metashape f: -"
+        pixel_size_mm = 36.0 / float(output_size)
+        if pixel_size_mm <= 0.0:
+            return "Metashape f: -"
+        focal_px = focal_mm / pixel_size_mm
+        return "Metashape f: {:.5f}px".format(focal_px)
+
+    def _compute_dualfisheye_xml_output_path(self) -> str:
+        if not self.dualfisheye_vars:
+            return ""
+        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
+        if not root_text:
+            return ""
+        return str(Path(root_text).expanduser() / "perspective_cams.xml")
+
+    def _compute_dualfisheye_colmap_images_path(self) -> str:
+        if not self.dualfisheye_vars:
+            return ""
+        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
+        if not root_text:
+            return ""
+        return str(Path(root_text).expanduser() / "Images")
+
+    def _compute_dualfisheye_colmap_masks_path(self) -> str:
+        if not self.dualfisheye_vars:
+            return ""
+        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
+        if not root_text:
+            return ""
+        return str(Path(root_text).expanduser() / "Masks")
+
+    def _compute_dualfisheye_colmap_sparse_path(self) -> str:
+        if not self.dualfisheye_vars:
+            return ""
+        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
+        if not root_text:
+            return ""
+        return str(Path(root_text).expanduser() / "Sparse" / "0")
+
+    def _update_dualfisheye_metashape_f_display(self, *_args) -> None:
+        if hasattr(self, "dualfisheye_metashape_f_var"):
+            self.dualfisheye_metashape_f_var.set(
+                self._compute_dualfisheye_metashape_f_text()
+            )
+        self._update_dualfisheye_derived_output_paths()
+
+    def _update_dualfisheye_derived_output_paths(self) -> None:
+        if hasattr(self, "dualfisheye_xml_output_var"):
+            self.dualfisheye_xml_output_var.set(
+                self._compute_dualfisheye_xml_output_path()
+            )
+        if hasattr(self, "dualfisheye_colmap_images_var"):
+            self.dualfisheye_colmap_images_var.set(
+                self._compute_dualfisheye_colmap_images_path()
+            )
+        if hasattr(self, "dualfisheye_colmap_masks_var"):
+            self.dualfisheye_colmap_masks_var.set(
+                self._compute_dualfisheye_colmap_masks_path()
+            )
+        if hasattr(self, "dualfisheye_colmap_sparse_var"):
+            self.dualfisheye_colmap_sparse_var.set(
+                self._compute_dualfisheye_colmap_sparse_path()
+            )
 
     def _set_dualfisheye_path_auto(self, key: str, value: str) -> None:
         var = self.dualfisheye_vars.get(key)
@@ -2240,7 +2320,7 @@ class PreviewApp:
 
         pairs_output = str(parent / f"{base_name}_dualfisheye_pairs")
         fisheye_output = f"{pairs_output}_undistorted"
-        perspective_output = f"{fisheye_output}_perspective"
+        perspective_output = str(parent / f"{base_name}_perspective_colmap")
         color_output = f"{fisheye_output}_colorcorrected"
         defaults = {
             "pairs_output": pairs_output,
@@ -2264,6 +2344,7 @@ class PreviewApp:
             if should_update:
                 self._set_dualfisheye_path_auto(key, default_value)
         self._sync_dualfisheye_pair_input_from_extract(force=force)
+        self._update_dualfisheye_derived_output_paths()
 
     def _sync_dualfisheye_pair_input_from_extract(
         self, force: bool = False
@@ -2314,9 +2395,7 @@ class PreviewApp:
         base_name = pair_path.name
         defaults = {
             "fisheye_output": str(base_dir / f"{base_name}_undistorted"),
-            "perspective_output": str(
-                base_dir / f"{base_name}_undistorted_perspective"
-            ),
+            "perspective_output": str(base_dir / f"{base_name}_perspective_colmap"),
             "color_output": str(base_dir / f"{base_name}_colorcorrected"),
         }
         for key, default_value in defaults.items():
@@ -2334,6 +2413,7 @@ class PreviewApp:
             )
             if should_update:
                 self._set_dualfisheye_path_auto(key, default_value)
+        self._update_dualfisheye_derived_output_paths()
         self._update_dualfisheye_output_controls_state()
 
     def _update_dualfisheye_output_controls_state(self) -> None:
@@ -6204,8 +6284,11 @@ class PreviewApp:
             "video": tk.StringVar(),
             "pairs_output": tk.StringVar(),
             "pair_input": tk.StringVar(),
+            "mask_input": tk.StringVar(),
             "prefix": tk.StringVar(value="out"),
             "camera_xml": tk.StringVar(value=str(default_xml)),
+            "camera_extrinsics_xml": tk.StringVar(),
+            "pointcloud_ply": tk.StringVar(),
             "fps": tk.StringVar(value="1"),
             "ext": tk.StringVar(value="jpg"),
             "start": tk.StringVar(),
@@ -6228,6 +6311,13 @@ class PreviewApp:
             "memory_throttle_percent": tk.StringVar(value="80"),
             "dry_run": tk.BooleanVar(value=False),
         }
+        self.dualfisheye_metashape_f_var = tk.StringVar(
+            value="Metashape f: -"
+        )
+        self.dualfisheye_xml_output_var = tk.StringVar(value="")
+        self.dualfisheye_colmap_images_var = tk.StringVar(value="")
+        self.dualfisheye_colmap_masks_var = tk.StringVar(value="")
+        self.dualfisheye_colmap_sparse_var = tk.StringVar(value="")
 
         self.dualfisheye_vars["video"].trace_add(
             "write", self._on_dualfisheye_video_changed
@@ -6246,6 +6336,12 @@ class PreviewApp:
         )
         self.dualfisheye_vars["no_perspective"].trace_add(
             "write", self._on_dualfisheye_output_toggle_changed
+        )
+        self.dualfisheye_vars["perspective_size"].trace_add(
+            "write", self._update_dualfisheye_metashape_f_display
+        )
+        self.dualfisheye_vars["perspective_focal_mm"].trace_add(
+            "write", self._update_dualfisheye_metashape_f_display
         )
         for key in (
             "pairs_output",
@@ -6464,6 +6560,24 @@ class PreviewApp:
         ).grid(row=c_row, column=2, padx=4, pady=4)
 
         c_row += 1
+        tk.Label(calibration_frame, text="Mask Folder").grid(
+            row=c_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_frame,
+            textvariable=self.dualfisheye_vars["mask_input"],
+            width=52,
+        ).grid(row=c_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_frame,
+            text="Browse...",
+            command=lambda: self._select_directory(
+                self.dualfisheye_vars["mask_input"],
+                title="Select pair mask folder",
+            ),
+        ).grid(row=c_row, column=2, padx=4, pady=4)
+
+        c_row += 1
         calibration_input_frame = tk.LabelFrame(
             calibration_frame,
             text="Calibration",
@@ -6479,7 +6593,7 @@ class PreviewApp:
         calibration_input_frame.grid_columnconfigure(1, weight=1)
         tk.Label(
             calibration_input_frame,
-            text="Fisheye Distortion XML",
+            text="Fisheye Distortion XML (optional if Extrinsics XML)",
         ).grid(
             row=0, column=0, sticky="e", padx=4, pady=4
         )
@@ -6516,16 +6630,56 @@ class PreviewApp:
         ).grid(row=1, column=2, padx=4, pady=4)
         tk.Label(
             calibration_input_frame,
+            text="Perspective Camera Extrinsics XML",
+        ).grid(
+            row=2, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_input_frame,
+            textvariable=self.dualfisheye_vars["camera_extrinsics_xml"],
+            width=52,
+        ).grid(row=2, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_input_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.dualfisheye_vars["camera_extrinsics_xml"],
+                title="Select perspective camera extrinsics XML",
+                filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
+            ),
+        ).grid(row=2, column=2, padx=4, pady=4)
+        tk.Label(
+            calibration_input_frame,
+            text="Metashape PointCloud PLY (optional)",
+        ).grid(
+            row=3, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            calibration_input_frame,
+            textvariable=self.dualfisheye_vars["pointcloud_ply"],
+            width=52,
+        ).grid(row=3, column=1, sticky="we", padx=4, pady=4)
+        tk.Button(
+            calibration_input_frame,
+            text="Browse...",
+            command=lambda: self._select_file(
+                self.dualfisheye_vars["pointcloud_ply"],
+                title="Select Metashape point cloud PLY",
+                filetypes=[("PLY files", "*.ply"), ("All files", "*.*")],
+            ),
+        ).grid(row=3, column=2, padx=4, pady=4)
+        tk.Label(
+            calibration_input_frame,
+            text="Extrinsics XML is xxxxxxxxx.",
+            anchor="w",
+            justify="left",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        tk.Label(
+            calibration_input_frame,
             text="TODO: add Chromatic Aberration Correction here later.",
             anchor="w",
             justify="left",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
-        tk.Label(
-            calibration_input_frame,
-            text="TODO: add camera extrinsics matrix (XML) support later.",
-            anchor="w",
-            justify="left",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
 
         c_row += 1
         options_frame = tk.LabelFrame(calibration_frame, text="Options")
@@ -6604,6 +6758,10 @@ class PreviewApp:
             textvariable=self.dualfisheye_vars["perspective_focal_mm"],
             width=8,
         ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(
+            perspective_row,
+            textvariable=self.dualfisheye_metashape_f_var,
+        ).pack(side=tk.LEFT, padx=(0, 10))
 
         worker_row = tk.Frame(options_frame)
         worker_row.grid(row=2, column=0, sticky="w", padx=4, pady=(0, 4))
@@ -6645,7 +6803,7 @@ class PreviewApp:
         output_frame.grid_columnconfigure(1, weight=1)
 
         o_row = 0
-        tk.Label(output_frame, text="Perspective").grid(
+        tk.Label(output_frame, text="Perspective / COLMAP Root").grid(
             row=o_row, column=0, sticky="e", padx=4, pady=4
         )
         self.dualfisheye_perspective_output_entry = tk.Entry(
@@ -6666,6 +6824,62 @@ class PreviewApp:
         )
         self.dualfisheye_perspective_output_button.grid(
             row=o_row, column=2, padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="Perspective XML").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_xml_output_var,
+            width=52,
+            state="readonly",
+        ).grid(row=o_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(output_frame, text="auto").grid(
+            row=o_row, column=2, sticky="w", padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="COLMAP Images").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_colmap_images_var,
+            width=52,
+            state="readonly",
+        ).grid(row=o_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(output_frame, text="auto").grid(
+            row=o_row, column=2, sticky="w", padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="COLMAP Masks").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_colmap_masks_var,
+            width=52,
+            state="readonly",
+        ).grid(row=o_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(output_frame, text="auto").grid(
+            row=o_row, column=2, sticky="w", padx=4, pady=4
+        )
+
+        o_row += 1
+        tk.Label(output_frame, text="COLMAP Sparse\\0").grid(
+            row=o_row, column=0, sticky="e", padx=4, pady=4
+        )
+        tk.Entry(
+            output_frame,
+            textvariable=self.dualfisheye_colmap_sparse_var,
+            width=52,
+            state="readonly",
+        ).grid(row=o_row, column=1, sticky="we", padx=4, pady=4)
+        tk.Label(output_frame, text="auto").grid(
+            row=o_row, column=2, sticky="w", padx=4, pady=4
         )
 
         o_row += 1
@@ -6755,6 +6969,8 @@ class PreviewApp:
         self._set_text_widget(self.dualfisheye_log, "")
         self._update_dualfisheye_default_paths(force=False)
         self._update_dualfisheye_output_controls_state()
+        self._update_dualfisheye_metashape_f_display()
+        self._update_dualfisheye_derived_output_paths()
 
     def _build_ply_tab(self, parent: tk.Widget) -> None:
         container = tk.Frame(parent, bg=self.APP_BG)
@@ -9657,18 +9873,19 @@ class PreviewApp:
 
         dry_run = bool(self.dualfisheye_vars["dry_run"].get())
         camera_xml = self.dualfisheye_vars["camera_xml"].get().strip()
-        if not camera_xml:
-            messagebox.showerror(
-                "DualFisheyePipeline", "Calibration XML is required."
-            )
-            return
-        camera_xml_path = Path(camera_xml).expanduser()
-        if not camera_xml_path.exists():
-            messagebox.showerror(
-                "DualFisheyePipeline",
-                f"Calibration XML not found:\n{camera_xml}",
-            )
-            return
+        camera_xml_path: Optional[Path] = None
+        if camera_xml:
+            camera_xml_path = Path(camera_xml).expanduser()
+            if not camera_xml_path.is_absolute():
+                camera_xml_path = (
+                    self.cli_tools_dir.parent / camera_xml
+                ).resolve()
+            if not camera_xml_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    f"Calibration XML not found:\n{camera_xml}",
+                )
+                return
 
         pairs_output = self.dualfisheye_vars["pair_input"].get().strip()
         if not pairs_output:
@@ -9700,6 +9917,80 @@ class PreviewApp:
             )
             return
 
+        camera_extrinsics_xml = self.dualfisheye_vars[
+            "camera_extrinsics_xml"
+        ].get().strip()
+        camera_extrinsics_xml_path: Optional[Path] = None
+        if camera_extrinsics_xml:
+            camera_extrinsics_xml_path = Path(camera_extrinsics_xml).expanduser()
+            if not camera_extrinsics_xml_path.is_absolute():
+                camera_extrinsics_xml_path = (
+                    self.cli_tools_dir.parent / camera_extrinsics_xml
+                ).resolve()
+            if not camera_extrinsics_xml_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    (
+                        "Perspective camera extrinsics XML not found:\n"
+                        f"{camera_extrinsics_xml}"
+                    ),
+                )
+                return
+            if no_perspective:
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    (
+                        "Perspective camera extrinsics XML requires "
+                        "perspective output to be enabled."
+                    ),
+                )
+                return
+
+        if camera_extrinsics_xml_path is None and camera_xml_path is None:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                (
+                    "Extrinsics XML or Fisheye Distortion XML is required."
+                ),
+            )
+            return
+
+        pointcloud_ply = self.dualfisheye_vars["pointcloud_ply"].get().strip()
+        pointcloud_ply_path: Optional[Path] = None
+        if pointcloud_ply:
+            pointcloud_ply_path = Path(pointcloud_ply).expanduser()
+            if not pointcloud_ply_path.is_absolute():
+                pointcloud_ply_path = (
+                    self.cli_tools_dir.parent / pointcloud_ply
+                ).resolve()
+            if not pointcloud_ply_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    f"Metashape point cloud PLY not found:\n{pointcloud_ply}",
+                )
+                return
+
+        mask_input = self.dualfisheye_vars["mask_input"].get().strip()
+        mask_input_path: Optional[Path] = None
+        if mask_input:
+            mask_input_path = Path(mask_input).expanduser()
+            if not mask_input_path.is_absolute():
+                mask_input_path = (
+                    self.cli_tools_dir.parent / mask_input
+                ).resolve()
+            if not mask_input_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    f"Mask folder not found:\n{mask_input}",
+                )
+                return
+            if no_perspective:
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    "Mask folder requires perspective output to be enabled.",
+                )
+                return
+
         calibration_cmd: List[str] = [
             sys.executable,
             str(
@@ -9708,9 +9999,9 @@ class PreviewApp:
             ),
             "-i",
             pairs_output,
-            "-x",
-            camera_xml,
         ]
+        if camera_xml_path is not None:
+            calibration_cmd.extend(["-x", str(camera_xml_path)])
 
         fisheye_output = self.dualfisheye_vars["fisheye_output"].get().strip()
         if save_fisheye and fisheye_output:
@@ -9785,6 +10076,22 @@ class PreviewApp:
                     ["--perspective-focal-mm", perspective_focal_mm]
                 )
 
+            if camera_extrinsics_xml:
+                calibration_cmd.extend(
+                    [
+                        "--camera-extrinsics-xml",
+                        str(camera_extrinsics_xml_path),
+                    ]
+                )
+            if pointcloud_ply:
+                calibration_cmd.extend(
+                    ["--pointcloud-ply", str(pointcloud_ply_path)]
+                )
+            if mask_input_path is not None:
+                calibration_cmd.extend(
+                    ["--mask-input-dir", str(mask_input_path)]
+                )
+
         workers_value = self.dualfisheye_vars["workers"].get().strip()
         if not workers_value:
             messagebox.showerror(
@@ -9857,6 +10164,19 @@ class PreviewApp:
             self.dualfisheye_log,
             "[INFO] Stage 3 calibration started: pair folder -> outputs",
         )
+        if camera_extrinsics_xml_path is not None:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                (
+                    "[INFO] Distortion source: Extrinsics XML "
+                    "(adjusted calibration preferred)"
+                ),
+            )
+        elif camera_xml_path is not None:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Distortion source: Fisheye Distortion XML",
+            )
         self._append_text_widget(
             self.dualfisheye_log,
             "[INFO] Pair-worker mode: {} workers, memory throttle {}%".format(
@@ -9864,6 +10184,55 @@ class PreviewApp:
                 memory_throttle_float,
             ),
         )
+        if not no_perspective:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Perspective / COLMAP root: {}".format(
+                    self.dualfisheye_vars["perspective_output"].get().strip()
+                ),
+            )
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Perspective XML: {}".format(
+                    self.dualfisheye_xml_output_var.get().strip()
+                ),
+            )
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] COLMAP Images: {}".format(
+                    self.dualfisheye_colmap_images_var.get().strip()
+                ),
+            )
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] COLMAP Masks: {}".format(
+                    self.dualfisheye_colmap_masks_var.get().strip()
+                ),
+            )
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] COLMAP Sparse\\0: {}".format(
+                    self.dualfisheye_colmap_sparse_var.get().strip()
+                ),
+            )
+        if camera_extrinsics_xml:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                (
+                    "[INFO] Perspective metadata export enabled: XML + "
+                    "COLMAP from current dual-fisheye alignment"
+                ),
+            )
+        if pointcloud_ply:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Metashape point cloud PLY: {}".format(pointcloud_ply),
+            )
+        if mask_input_path is not None:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Pair mask folder: {}".format(str(mask_input_path)),
+            )
         self._queued_cli_commands.pop("dualfisheye_calibration", None)
         self._run_cli_command(
             calibration_cmd,
