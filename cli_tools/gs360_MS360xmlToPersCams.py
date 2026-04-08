@@ -418,6 +418,128 @@ def parse_camera_transform(text):
     ]
 
 
+def _parse_transform_rotation_text(text):
+    values = [float(x) for x in str(text or "").strip().split()]
+    if len(values) != 9:
+        raise ValueError("rotation must have 9 floats")
+    return [
+        values[0:3],
+        values[3:6],
+        values[6:9],
+    ]
+
+
+def _parse_transform_translation_text(text):
+    values = [float(x) for x in str(text or "").strip().split()]
+    if len(values) != 3:
+        raise ValueError("translation must have 3 floats")
+    return values
+
+
+def _parse_transform_scale_text(text):
+    values = [float(x) for x in str(text or "").strip().split()]
+    if not values:
+        raise ValueError("scale is empty")
+    if len(values) == 1:
+        return values[0]
+    if len(values) == 3:
+        first = values[0]
+        if max(abs(v - first) for v in values[1:]) > 1e-9:
+            raise ValueError("non-uniform scale is not supported")
+        return first
+    raise ValueError("scale must have 1 or 3 floats")
+
+
+def _extract_uniform_scale_and_rotation(mat):
+    rot_scaled = [
+        [float(mat[0][0]), float(mat[0][1]), float(mat[0][2])],
+        [float(mat[1][0]), float(mat[1][1]), float(mat[1][2])],
+        [float(mat[2][0]), float(mat[2][1]), float(mat[2][2])],
+    ]
+    row_norms = [
+        math.sqrt(sum(value * value for value in row))
+        for row in rot_scaled
+    ]
+    positive_norms = [value for value in row_norms if value > 1e-12]
+    if not positive_norms:
+        scale = 1.0
+    else:
+        scale = sum(positive_norms) / float(len(positive_norms))
+    if scale <= 1e-12:
+        scale = 1.0
+    rotation = []
+    for row in rot_scaled:
+        rotation.append([value / scale for value in row])
+    return scale, rotation
+
+
+def parse_metashape_similarity_node(transform_node):
+    """Parse Metashape transform node as rotation/translation/scale."""
+
+    if transform_node is None:
+        return None
+    raw_text = (transform_node.text or "").strip()
+    if raw_text:
+        mat = parse_camera_transform(raw_text)
+        scale, rotation = _extract_uniform_scale_and_rotation(mat)
+        return {
+            "rotation": rotation,
+            "translation": [mat[0][3], mat[1][3], mat[2][3]],
+            "scale": scale,
+        }
+
+    rotation_node = transform_node.find("rotation")
+    translation_node = transform_node.find("translation")
+    scale_node = transform_node.find("scale")
+    if rotation_node is None and translation_node is None and scale_node is None:
+        return None
+
+    if rotation_node is not None and (rotation_node.text or "").strip():
+        rot = _parse_transform_rotation_text(rotation_node.text)
+    else:
+        rot = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    if translation_node is not None and (translation_node.text or "").strip():
+        tvec = _parse_transform_translation_text(translation_node.text)
+    else:
+        tvec = [0.0, 0.0, 0.0]
+
+    scale = 1.0
+    if scale_node is not None and (scale_node.text or "").strip():
+        scale = _parse_transform_scale_text(scale_node.text)
+    return {
+        "rotation": rot,
+        "translation": tvec,
+        "scale": float(scale),
+    }
+
+
+def apply_similarity_to_camera_transform(similarity, cam_mat):
+    """Apply one Metashape similarity transform to one camera c2w matrix."""
+
+    rot_world = similarity["rotation"]
+    trans_world = similarity["translation"]
+    scale_world = float(similarity["scale"])
+    cam_rot = [
+        [cam_mat[0][0], cam_mat[0][1], cam_mat[0][2]],
+        [cam_mat[1][0], cam_mat[1][1], cam_mat[1][2]],
+        [cam_mat[2][0], cam_mat[2][1], cam_mat[2][2]],
+    ]
+    cam_center = [cam_mat[0][3], cam_mat[1][3], cam_mat[2][3]]
+
+    center_rotated = mat3_vec_mul(rot_world, cam_center)
+    center_world = [
+        (scale_world * center_rotated[0]) + trans_world[0],
+        (scale_world * center_rotated[1]) + trans_world[1],
+        (scale_world * center_rotated[2]) + trans_world[2],
+    ]
+    cam_rot_world = mat3_mul(rot_world, cam_rot)
+    return mat3_to_mat4_with_translation(cam_rot_world, center_world)
+
+
 def load_metashape_cameras(xml_path):
     tree = ET.parse(str(xml_path))
     root = tree.getroot()
@@ -427,6 +549,19 @@ def load_metashape_cameras(xml_path):
     cameras_node = chunk.find("cameras")
     if cameras_node is None:
         raise ValueError("missing <cameras> in XML")
+    chunk_transform = parse_metashape_similarity_node(chunk.find("transform"))
+    component_transforms = {}
+    components_node = chunk.find("components")
+    if components_node is not None:
+        for component in components_node.findall("component"):
+            component_id = (component.get("id") or "").strip()
+            if not component_id:
+                continue
+            component_mat = parse_metashape_similarity_node(
+                component.find("transform")
+            )
+            if component_mat is not None:
+                component_transforms[component_id] = component_mat
 
     cameras = []
     for cam in cameras_node.findall("camera"):
@@ -439,6 +574,12 @@ def load_metashape_cameras(xml_path):
         label = cam.get("label") or f"camera_{cam.get('id', '0')}"
         cam_id = int(cam.get("id", "0"))
         mat = parse_camera_transform(transform_node.text)
+        component_id = (cam.get("component_id") or "").strip()
+        world_transform = chunk_transform
+        if world_transform is None and component_id in component_transforms:
+            world_transform = component_transforms[component_id]
+        if world_transform is not None:
+            mat = apply_similarity_to_camera_transform(world_transform, mat)
         cameras.append((cam_id, label, mat))
     cameras.sort(key=lambda x: x[0])
     return cameras
@@ -999,16 +1140,16 @@ def export_metashape_xml(
     preset_name,
 ):
     fl_x, fl_y, _, _, width, height = intrinsics
-    tree = ET.parse(str(xml_in_path))
-    root = tree.getroot()
-    chunk = root.find("chunk")
-    if chunk is None:
-        raise ValueError("missing <chunk> in XML")
-
     data_type = "uint8"
     black_level = "0 0 0"
     sensitivity = "1 1 1"
-    sensors_node = chunk.find("sensors")
+    tree = ET.parse(str(xml_in_path))
+    root = tree.getroot()
+    chunk = root.find("chunk")
+    if chunk is not None:
+        sensors_node = chunk.find("sensors")
+    else:
+        sensors_node = None
     if sensors_node is not None:
         first_sensor = sensors_node.find("sensor")
         if first_sensor is not None:
@@ -1022,31 +1163,39 @@ def export_metashape_xml(
                 first_sensor.findtext("sensitivity") or sensitivity
             ).strip()
 
-    if sensors_node is None:
-        sensors_node = ET.SubElement(chunk, "sensors")
-    sensors_node.clear()
-    sensors_node.set("next_id", "1")
-
+    doc = ET.Element("document", {"version": "1.2.0"})
+    chunk = ET.SubElement(
+        doc, "chunk", {"label": "unknown", "enabled": "true"}
+    )
+    sensors_node = ET.SubElement(chunk, "sensors", {"next_id": "1"})
     sensor = ET.SubElement(
         sensors_node,
         "sensor",
-        id="0",
-        label="virtual_" + preset_name,
-        type="frame",
+        {
+            "id": "0",
+            "label": "virtual_" + preset_name,
+            "type": "frame",
+        },
     )
     ET.SubElement(
         sensor,
         "resolution",
-        width=str(int(width)),
-        height=str(int(height)),
+        {"width": str(int(width)), "height": str(int(height))},
     )
-    ET.SubElement(sensor, "property", name="layer_index", value="0")
-    calib = ET.SubElement(sensor, "calibration", type="frame")
+    ET.SubElement(
+        sensor,
+        "property",
+        {"name": "layer_index", "value": "0"},
+    )
+    calib = ET.SubElement(
+        sensor,
+        "calibration",
+        {"type": "frame", "class": "initial"},
+    )
     ET.SubElement(
         calib,
         "resolution",
-        width=str(int(width)),
-        height=str(int(height)),
+        {"width": str(int(width)), "height": str(int(height))},
     )
     ET.SubElement(calib, "f").text = f"{fl_x:.6f}"
     ET.SubElement(calib, "cx").text = "0"
@@ -1059,18 +1208,22 @@ def export_metashape_xml(
     ET.SubElement(sensor, "black_level").text = black_level
     ET.SubElement(sensor, "sensitivity").text = sensitivity
 
+    components_node = ET.SubElement(
+        chunk, "components", {"next_id": "1", "active_id": "0"}
+    )
+    component = ET.SubElement(
+        components_node,
+        "component",
+        {"id": "0", "label": "Component 1"},
+    )
+    ET.SubElement(component, "partition")
+
+    cameras_node = ET.SubElement(
+        chunk,
+        "cameras",
+        {"next_id": str(len(frames)), "next_group_id": "0"},
+    )
     component_id = "0"
-    src_cameras_node = chunk.find("cameras")
-    if src_cameras_node is not None:
-        first_camera = src_cameras_node.find("camera")
-        if first_camera is not None:
-            component_id = first_camera.get("component_id", component_id)
-    cameras_node = src_cameras_node
-    if cameras_node is None:
-        cameras_node = ET.SubElement(chunk, "cameras")
-    cameras_node.clear()
-    cameras_node.set("next_id", str(len(frames)))
-    cameras_node.set("next_group_id", "0")
 
     for idx, frame in enumerate(frames):
         label = pathlib.Path(frame["file_path"]).stem
@@ -1087,7 +1240,11 @@ def export_metashape_xml(
         cam_transform = " ".join("{:.15g}".format(v) for v in flat)
         ET.SubElement(cam, "transform").text = cam_transform
 
-    tree.write(str(out_path), encoding="UTF-8", xml_declaration=True)
+    ET.ElementTree(doc).write(
+        str(out_path),
+        encoding="UTF-8",
+        xml_declaration=True,
+    )
 
 
 def _flatten_mat4(mat4):

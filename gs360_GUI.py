@@ -1825,12 +1825,16 @@ class PreviewApp:
             "end": tk.StringVar(),
             "keep_rec709": tk.BooleanVar(value=True),
             "overwrite": tk.BooleanVar(value=False),
+            "experimental_dualfisheye": tk.BooleanVar(value=False),
         }
 
         self.video_vars["video"].trace_add("write", self._on_video_input_changed)
         self.video_vars["output"].trace_add("write", self._on_video_output_changed)
         self.video_vars["fps"].trace_add("write", self._on_video_fps_changed)
         self.video_vars["prefix"].trace_add("write", self._on_video_prefix_changed)
+        self.video_vars["experimental_dualfisheye"].trace_add(
+            "write", self._on_video_experimental_dualfisheye_changed
+        )
         self.video_set_fps_var = tk.BooleanVar(value=True)
 
         row = 0
@@ -1902,6 +1906,17 @@ class PreviewApp:
             variable=self.video_vars["overwrite"],
         ).pack(side=tk.LEFT, padx=(0, 12))
 
+        row += 1
+        dualfisheye_frame = tk.Frame(params)
+        dualfisheye_frame.grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        )
+        tk.Checkbutton(
+            dualfisheye_frame,
+            text="Expermental DualFisheye",
+            variable=self.video_vars["experimental_dualfisheye"],
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
         for col in range(3):
             params.grid_columnconfigure(col, weight=1 if col == 1 else 0)
 
@@ -1964,6 +1979,12 @@ class PreviewApp:
         if self._video_prefix_updating:
             return
         self._video_prefix_auto = False
+
+    def _on_video_experimental_dualfisheye_changed(self, *_args) -> None:
+        if not self.video_vars:
+            return
+        if bool(self.video_vars["experimental_dualfisheye"].get()):
+            self.video_vars["keep_rec709"].set(False)
 
     def _format_fps_for_output(self, fps_value: str) -> Optional[str]:
         if not fps_value:
@@ -2186,6 +2207,7 @@ class PreviewApp:
 
     def _on_dualfisheye_output_toggle_changed(self, *_args) -> None:
         self._update_dualfisheye_output_controls_state()
+        self._update_dualfisheye_derived_output_paths()
 
     def _compute_dualfisheye_metashape_f_text(self) -> str:
         if not self.dualfisheye_vars:
@@ -2208,36 +2230,50 @@ class PreviewApp:
         return "Metashape f: {:.5f}px".format(focal_px)
 
     def _compute_dualfisheye_xml_output_path(self) -> str:
+        root_path = self._compute_dualfisheye_perspective_root_path()
+        if root_path is None:
+            return ""
+        return str(root_path / "perspective_cams.xml")
+
+    def _compute_dualfisheye_perspective_root_path(self) -> Optional[Path]:
         if not self.dualfisheye_vars:
-            return ""
+            return None
         root_text = self.dualfisheye_vars["perspective_output"].get().strip()
-        if not root_text:
-            return ""
-        return str(Path(root_text).expanduser() / "perspective_cams.xml")
+        if root_text:
+            return Path(root_text).expanduser()
+        if not bool(self.dualfisheye_vars["metadata_only"].get()):
+            return None
+        extrinsics_text = self.dualfisheye_vars[
+            "camera_extrinsics_xml"
+        ].get().strip()
+        if not extrinsics_text:
+            return None
+        extrinsics_path = Path(extrinsics_text).expanduser()
+        if not extrinsics_path.is_absolute():
+            extrinsics_path = (self.cli_tools_dir.parent / extrinsics_text).resolve()
+        else:
+            extrinsics_path = extrinsics_path.resolve()
+        return extrinsics_path.with_name(
+            extrinsics_path.stem + "_perspective_colmap"
+        )
 
     def _compute_dualfisheye_colmap_images_path(self) -> str:
-        if not self.dualfisheye_vars:
+        root_path = self._compute_dualfisheye_perspective_root_path()
+        if root_path is None:
             return ""
-        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
-        if not root_text:
-            return ""
-        return str(Path(root_text).expanduser() / "Images")
+        return str(root_path / "Images")
 
     def _compute_dualfisheye_colmap_masks_path(self) -> str:
-        if not self.dualfisheye_vars:
+        root_path = self._compute_dualfisheye_perspective_root_path()
+        if root_path is None:
             return ""
-        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
-        if not root_text:
-            return ""
-        return str(Path(root_text).expanduser() / "Masks")
+        return str(root_path / "Masks")
 
     def _compute_dualfisheye_colmap_sparse_path(self) -> str:
-        if not self.dualfisheye_vars:
+        root_path = self._compute_dualfisheye_perspective_root_path()
+        if root_path is None:
             return ""
-        root_text = self.dualfisheye_vars["perspective_output"].get().strip()
-        if not root_text:
-            return ""
-        return str(Path(root_text).expanduser() / "Sparse" / "0")
+        return str(root_path / "Sparse" / "0")
 
     def _update_dualfisheye_metashape_f_display(self, *_args) -> None:
         if hasattr(self, "dualfisheye_metashape_f_var"):
@@ -2246,7 +2282,7 @@ class PreviewApp:
             )
         self._update_dualfisheye_derived_output_paths()
 
-    def _update_dualfisheye_derived_output_paths(self) -> None:
+    def _update_dualfisheye_derived_output_paths(self, *_args) -> None:
         if hasattr(self, "dualfisheye_xml_output_var"):
             self.dualfisheye_xml_output_var.set(
                 self._compute_dualfisheye_xml_output_path()
@@ -2424,17 +2460,26 @@ class PreviewApp:
             (
                 self.dualfisheye_color_output_entry,
                 self.dualfisheye_color_output_button,
-                bool(self.dualfisheye_vars["save_color_corrected_output"].get()),
+                (
+                    bool(self.dualfisheye_vars["save_color_corrected_output"].get())
+                    and not bool(self.dualfisheye_vars["metadata_only"].get())
+                ),
             ),
             (
                 self.dualfisheye_fisheye_output_entry,
                 self.dualfisheye_fisheye_output_button,
-                bool(self.dualfisheye_vars["save_fisheye_output"].get()),
+                (
+                    bool(self.dualfisheye_vars["save_fisheye_output"].get())
+                    and not bool(self.dualfisheye_vars["metadata_only"].get())
+                ),
             ),
             (
                 self.dualfisheye_perspective_output_entry,
                 self.dualfisheye_perspective_output_button,
-                not bool(self.dualfisheye_vars["no_perspective"].get()),
+                (
+                    bool(self.dualfisheye_vars["metadata_only"].get())
+                    or not bool(self.dualfisheye_vars["no_perspective"].get())
+                ),
             ),
         ]
         for entry, button, enabled in control_specs:
@@ -6301,8 +6346,10 @@ class PreviewApp:
             "save_fisheye_output": tk.BooleanVar(value=False),
             "fisheye_output": tk.StringVar(),
             "no_perspective": tk.BooleanVar(value=False),
+            "metadata_only": tk.BooleanVar(value=False),
             "perspective_output": tk.StringVar(),
             "perspective_ext": tk.StringVar(value="jpg"),
+            "perspective_mask_ext": tk.StringVar(value="png"),
             "perspective_size": tk.StringVar(value="1750"),
             "perspective_focal_mm": tk.StringVar(value="14.0"),
             "save_color_corrected_output": tk.BooleanVar(value=False),
@@ -6337,6 +6384,12 @@ class PreviewApp:
         self.dualfisheye_vars["no_perspective"].trace_add(
             "write", self._on_dualfisheye_output_toggle_changed
         )
+        self.dualfisheye_vars["metadata_only"].trace_add(
+            "write", self._on_dualfisheye_output_toggle_changed
+        )
+        self.dualfisheye_vars["camera_extrinsics_xml"].trace_add(
+            "write", self._update_dualfisheye_derived_output_paths
+        )
         self.dualfisheye_vars["perspective_size"].trace_add(
             "write", self._update_dualfisheye_metashape_f_display
         )
@@ -6357,171 +6410,17 @@ class PreviewApp:
             )
 
         row = 0
-        extraction_frame = tk.LabelFrame(params, text="Stage 1: Pair Extraction")
-        extraction_frame.grid(
-            row=row,
-            column=0,
-            columnspan=3,
-            sticky="we",
-            padx=4,
-            pady=(4, 6),
-        )
-        extraction_frame.grid_columnconfigure(1, weight=1)
-
-        e_row = 0
         tk.Label(
-            extraction_frame,
-            text="Experimental: Fisheye extraction (raw video input)",
+            params,
+            text="Step 1: Extract dual-fisheye X/Y image pairs from raw video with Video2Frames.",
             anchor="w",
             justify="left",
-        ).grid(
-            row=e_row,
-            column=0,
-            columnspan=3,
-            sticky="w",
-            padx=4,
-            pady=(4, 2),
-        )
-
-        e_row += 1
-        tk.Label(extraction_frame, text="Input Raw Video").grid(
-            row=e_row, column=0, sticky="e", padx=4, pady=4
-        )
-        tk.Entry(
-            extraction_frame,
-            textvariable=self.dualfisheye_vars["video"],
-            width=52,
-        ).grid(row=e_row, column=1, sticky="we", padx=4, pady=4)
-        tk.Button(
-            extraction_frame,
-            text="Browse...",
-            command=lambda: self._select_file(
-                self.dualfisheye_vars["video"],
-                title="Select raw dual-fisheye video",
-            ),
-        ).grid(row=e_row, column=2, padx=4, pady=4)
-
-        e_row += 1
-        tk.Label(extraction_frame, text="Output Pair Folder").grid(
-            row=e_row, column=0, sticky="e", padx=4, pady=4
-        )
-        tk.Entry(
-            extraction_frame,
-            textvariable=self.dualfisheye_vars["pairs_output"],
-            width=52,
-        ).grid(row=e_row, column=1, sticky="we", padx=4, pady=4)
-        tk.Button(
-            extraction_frame,
-            text="Browse...",
-            command=lambda: self._select_directory(
-                self.dualfisheye_vars["pairs_output"],
-                title="Select extracted pair folder",
-            ),
-        ).grid(row=e_row, column=2, padx=4, pady=4)
-
-        e_row += 1
-        fps_ext_frame = tk.Frame(extraction_frame)
-        fps_ext_frame.grid(
-            row=e_row,
-            column=0,
-            columnspan=3,
-            sticky="we",
-            padx=4,
-            pady=4,
-        )
-        tk.Label(fps_ext_frame, text="FPS").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(
-            fps_ext_frame,
-            textvariable=self.dualfisheye_vars["fps"],
-            width=10,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(fps_ext_frame, text="Extension").pack(
-            side=tk.LEFT, padx=(0, 4)
-        )
-        ttk.Combobox(
-            fps_ext_frame,
-            textvariable=self.dualfisheye_vars["ext"],
-            values=("jpg", "png", "tif"),
-            state="readonly",
-            width=8,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(fps_ext_frame, text="Prefix").pack(side=tk.LEFT, padx=(0, 4))
-        tk.Entry(
-            fps_ext_frame,
-            textvariable=self.dualfisheye_vars["prefix"],
-            width=14,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(fps_ext_frame, text="Start (s)").pack(
-            side=tk.LEFT, padx=(0, 4)
-        )
-        tk.Entry(
-            fps_ext_frame,
-            textvariable=self.dualfisheye_vars["start"],
-            width=10,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Label(fps_ext_frame, text="End (s)").pack(
-            side=tk.LEFT, padx=(0, 4)
-        )
-        tk.Entry(
-            fps_ext_frame,
-            textvariable=self.dualfisheye_vars["end"],
-            width=10,
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Checkbutton(
-            fps_ext_frame,
-            text="Convert Rec.709 to sRGB in extracted pairs",
-            variable=self.dualfisheye_vars["keep_rec709"],
-        ).pack(side=tk.LEFT, padx=(0, 12))
-        tk.Checkbutton(
-            fps_ext_frame,
-            text="Overwrite extracted pairs",
-            variable=self.dualfisheye_vars["overwrite"],
-        ).pack(side=tk.LEFT, padx=(0, 12))
-
-        e_row += 1
-        extraction_actions = tk.Frame(extraction_frame)
-        extraction_actions.grid(
-            row=e_row,
-            column=0,
-            columnspan=3,
-            sticky="we",
-            padx=4,
-            pady=(0, 4),
-        )
-        self.dualfisheye_inspect_button = tk.Button(
-            extraction_actions,
-            text="Inspect video",
-            command=self._inspect_dualfisheye_video_metadata,
-            state="disabled",
-        )
-        self.dualfisheye_inspect_button.pack(side=tk.LEFT, padx=4, pady=4)
-        tk.Checkbutton(
-            extraction_actions,
-            text="Set FPS",
-            variable=self.dualfisheye_set_fps_var,
-        ).pack(side=tk.LEFT, padx=4, pady=4)
-        self.dualfisheye_extract_stop_button = tk.Button(
-            extraction_actions,
-            text="Stop Pair Extraction",
-            command=lambda: self._stop_cli_process("dualfisheye_extract"),
-        )
-        self.dualfisheye_extract_stop_button.pack(
-            side=tk.RIGHT, padx=4, pady=4
-        )
-        self.dualfisheye_extract_stop_button.configure(state="disabled")
-        self.dualfisheye_extract_run_button = tk.Button(
-            extraction_actions,
-            text="Run Fisheye Pair Extraction",
-            command=self._run_dualfisheye_extract_tool,
-        )
-        self.dualfisheye_extract_run_button.pack(
-            side=tk.RIGHT, padx=4, pady=4
-        )
+        ).grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(6, 6))
 
         row += 1
         tk.Label(
             params,
-            text="Stage 2: Go to FrameSelector and select images.",
+            text="Stage 2: Use FrameSelector to review the extracted pairs and choose the frames to calibrate.",
             anchor="w",
             justify="left",
         ).grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 6))
@@ -6593,7 +6492,7 @@ class PreviewApp:
         calibration_input_frame.grid_columnconfigure(1, weight=1)
         tk.Label(
             calibration_input_frame,
-            text="Fisheye Distortion XML (optional if Extrinsics XML)",
+            text="Fisheye Distortion XML (used only when Extrinsics XML is empty)",
         ).grid(
             row=0, column=0, sticky="e", padx=4, pady=4
         )
@@ -6670,16 +6569,10 @@ class PreviewApp:
         ).grid(row=3, column=2, padx=4, pady=4)
         tk.Label(
             calibration_input_frame,
-            text="Extrinsics XML is xxxxxxxxx.",
-            anchor="w",
-            justify="left",
-        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
-        tk.Label(
-            calibration_input_frame,
             text="TODO: add Chromatic Aberration Correction here later.",
             anchor="w",
             justify="left",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=4, pady=(0, 4))
 
         c_row += 1
         options_frame = tk.LabelFrame(calibration_frame, text="Options")
@@ -6716,6 +6609,11 @@ class PreviewApp:
         ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
         tk.Checkbutton(
             flags_row,
+            text="COLMAP + XML only",
+            variable=self.dualfisheye_vars["metadata_only"],
+        ).pack(side=tk.LEFT, padx=(0, 12), pady=0)
+        tk.Checkbutton(
+            flags_row,
             text="Calibration dry run",
             variable=self.dualfisheye_vars["dry_run"],
         ).pack(side=tk.LEFT, padx=(0, 6), pady=0)
@@ -6740,6 +6638,15 @@ class PreviewApp:
             textvariable=self.dualfisheye_vars["perspective_ext"],
             values=("jpg", "png", "tif"),
             state="readonly",
+            width=8,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(perspective_row, text="Mask Ext").pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Combobox(
+            perspective_row,
+            textvariable=self.dualfisheye_vars["perspective_mask_ext"],
+            values=("png", "jpg", "tif"),
             width=8,
         ).pack(side=tk.LEFT, padx=(0, 10))
         tk.Label(perspective_row, text="Size").pack(
@@ -9671,6 +9578,13 @@ class PreviewApp:
         if not video_path:
             messagebox.showerror("gs360_Video2Frames", "Input video is required.")
             return
+        video_file = Path(video_path).expanduser()
+        if not video_file.exists():
+            messagebox.showerror(
+                "gs360_Video2Frames",
+                f"Input video not found:\n{video_path}",
+            )
+            return
 
         fps_value = self.video_vars["fps"].get().strip()
         try:
@@ -9703,8 +9617,11 @@ class PreviewApp:
         prefix_value = self.video_vars.get("prefix")
         if prefix_value is not None:
             prefix_text = prefix_value.get().strip()
-            if prefix_text:
-                base_cmd.extend(["--prefix", prefix_text])
+        else:
+            prefix_text = ""
+        if not prefix_text:
+            prefix_text = re.sub(r"\s+", "_", video_file.stem) or "dualfisheye"
+        base_cmd.extend(["--prefix", prefix_text])
 
         start_value = self.video_vars["start"].get().strip()
         if start_value:
@@ -9733,6 +9650,40 @@ class PreviewApp:
         ffmpeg_path = self.ffmpeg_path_var.get().strip()
         if ffmpeg_path:
             base_cmd.extend(["--ffmpeg", ffmpeg_path])
+
+        if bool(self.video_vars["experimental_dualfisheye"].get()):
+            extract_y_cmd = list(base_cmd)
+            extract_y_cmd.extend(["--map-stream", "0:v:0", "--name-suffix", "_Y"])
+            extract_x_cmd = list(base_cmd)
+            extract_x_cmd.extend(["--map-stream", "0:v:1", "--name-suffix", "_X"])
+            self._set_text_widget(self.video_log, "")
+            self._append_text_widget(
+                self.video_log,
+                "[INFO] Experimental DualFisheye extraction started: raw 360 video -> fisheye pair folder",
+            )
+            self._append_text_widget(
+                self.video_log,
+                "[INFO] Queue order: lens Y (0:v:0) then lens X (0:v:1)",
+            )
+            self._queued_cli_commands.pop("video", None)
+            self._queued_cli_commands["video"] = [
+                (
+                    extract_x_cmd,
+                    self.cli_tools_dir,
+                    False,
+                    "[INFO] Starting lens X extraction...",
+                )
+            ]
+            self._run_cli_command(
+                extract_y_cmd,
+                self.video_log,
+                self.video_run_button,
+                process_key="video",
+                stop_button=self.video_stop_button,
+                cwd=self.cli_tools_dir,
+                clear_log=False,
+            )
+            return
 
         self._run_cli_command(
             base_cmd,
@@ -9872,30 +9823,19 @@ class PreviewApp:
             return
 
         dry_run = bool(self.dualfisheye_vars["dry_run"].get())
-        camera_xml = self.dualfisheye_vars["camera_xml"].get().strip()
-        camera_xml_path: Optional[Path] = None
-        if camera_xml:
-            camera_xml_path = Path(camera_xml).expanduser()
-            if not camera_xml_path.is_absolute():
-                camera_xml_path = (
-                    self.cli_tools_dir.parent / camera_xml
-                ).resolve()
-            if not camera_xml_path.exists():
-                messagebox.showerror(
-                    "DualFisheyePipeline",
-                    f"Calibration XML not found:\n{camera_xml}",
-                )
-                return
+        metadata_only = bool(self.dualfisheye_vars["metadata_only"].get())
 
         pairs_output = self.dualfisheye_vars["pair_input"].get().strip()
-        if not pairs_output:
+        if not pairs_output and not metadata_only:
             messagebox.showerror(
                 "DualFisheyePipeline",
                 "Pair folder is required.",
             )
             return
-        pairs_dir = Path(pairs_output).expanduser()
-        if not pairs_dir.exists():
+        pairs_dir: Optional[Path] = None
+        if pairs_output:
+            pairs_dir = Path(pairs_output).expanduser()
+        if pairs_dir is not None and not pairs_dir.exists():
             messagebox.showerror(
                 "DualFisheyePipeline",
                 f"Pair folder not found:\n{pairs_output}",
@@ -9907,7 +9847,12 @@ class PreviewApp:
         save_color = bool(
             self.dualfisheye_vars["save_color_corrected_output"].get()
         )
-        if no_perspective and not save_fisheye and not save_color:
+        if (
+            (not metadata_only)
+            and no_perspective
+            and not save_fisheye
+            and not save_color
+        ):
             messagebox.showerror(
                 "DualFisheyePipeline",
                 (
@@ -9936,7 +9881,7 @@ class PreviewApp:
                     ),
                 )
                 return
-            if no_perspective:
+            if no_perspective and not metadata_only:
                 messagebox.showerror(
                     "DualFisheyePipeline",
                     (
@@ -9946,7 +9891,33 @@ class PreviewApp:
                 )
                 return
 
-        if camera_extrinsics_xml_path is None and camera_xml_path is None:
+        if metadata_only and camera_extrinsics_xml_path is None:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "COLMAP + XML only requires Perspective Camera Extrinsics XML.",
+            )
+            return
+
+        camera_xml = self.dualfisheye_vars["camera_xml"].get().strip()
+        camera_xml_path: Optional[Path] = None
+        if camera_extrinsics_xml_path is None and camera_xml:
+            camera_xml_path = Path(camera_xml).expanduser()
+            if not camera_xml_path.is_absolute():
+                camera_xml_path = (
+                    self.cli_tools_dir.parent / camera_xml
+                ).resolve()
+            if not camera_xml_path.exists():
+                messagebox.showerror(
+                    "DualFisheyePipeline",
+                    f"Calibration XML not found:\n{camera_xml}",
+                )
+                return
+
+        if (
+            (not metadata_only)
+            and camera_extrinsics_xml_path is None
+            and camera_xml_path is None
+        ):
             messagebox.showerror(
                 "DualFisheyePipeline",
                 (
@@ -9969,10 +9940,16 @@ class PreviewApp:
                     f"Metashape point cloud PLY not found:\n{pointcloud_ply}",
                 )
                 return
+        if metadata_only and pointcloud_ply_path is None:
+            messagebox.showerror(
+                "DualFisheyePipeline",
+                "COLMAP + XML only requires Metashape PointCloud PLY.",
+            )
+            return
 
         mask_input = self.dualfisheye_vars["mask_input"].get().strip()
         mask_input_path: Optional[Path] = None
-        if mask_input:
+        if mask_input and not metadata_only:
             mask_input_path = Path(mask_input).expanduser()
             if not mask_input_path.is_absolute():
                 mask_input_path = (
@@ -9997,19 +9974,21 @@ class PreviewApp:
                 self.cli_tools_dir
                 / "gs360_DualFisheyeDistortionCalibration.py"
             ),
-            "-i",
-            pairs_output,
         ]
-        if camera_xml_path is not None:
+        if pairs_dir is not None:
+            calibration_cmd.extend(["-i", pairs_output])
+        if metadata_only:
+            calibration_cmd.append("--metadata-only")
+        if camera_xml_path is not None and not metadata_only:
             calibration_cmd.extend(["-x", str(camera_xml_path)])
 
         fisheye_output = self.dualfisheye_vars["fisheye_output"].get().strip()
-        if save_fisheye and fisheye_output:
+        if save_fisheye and fisheye_output and not metadata_only:
             calibration_cmd.extend(["-o", fisheye_output])
 
         use_input_lut = bool(self.dualfisheye_vars["use_input_lut"].get())
         input_lut = self.dualfisheye_vars["input_lut"].get().strip()
-        if use_input_lut and input_lut:
+        if use_input_lut and input_lut and not metadata_only:
             input_lut_path = Path(input_lut).expanduser()
             if not input_lut_path.is_absolute():
                 input_lut_path = (self.cli_tools_dir.parent / input_lut).resolve()
@@ -10029,9 +10008,10 @@ class PreviewApp:
             ["--lut-output-color-space", lut_output_color_space.lower()]
         )
 
-        if no_perspective:
+        perspective_enabled = metadata_only or (not no_perspective)
+        if no_perspective and not metadata_only:
             calibration_cmd.append("--no-perspective")
-        else:
+        if perspective_enabled:
             perspective_output = self.dualfisheye_vars[
                 "perspective_output"
             ].get().strip()
@@ -10043,6 +10023,13 @@ class PreviewApp:
                 self.dualfisheye_vars["perspective_ext"].get().strip() or "jpg"
             )
             calibration_cmd.extend(["--perspective-ext", perspective_ext])
+            perspective_mask_ext = (
+                self.dualfisheye_vars["perspective_mask_ext"].get().strip()
+                or "png"
+            )
+            calibration_cmd.extend(
+                ["--perspective-mask-ext", perspective_mask_ext]
+            )
 
             perspective_size = self.dualfisheye_vars[
                 "perspective_size"
@@ -10087,7 +10074,7 @@ class PreviewApp:
                 calibration_cmd.extend(
                     ["--pointcloud-ply", str(pointcloud_ply_path)]
                 )
-            if mask_input_path is not None:
+            if mask_input_path is not None and not metadata_only:
                 calibration_cmd.extend(
                     ["--mask-input-dir", str(mask_input_path)]
                 )
@@ -10145,10 +10132,10 @@ class PreviewApp:
             ]
         )
 
-        if save_fisheye:
+        if save_fisheye and not metadata_only:
             calibration_cmd.append("--save-fisheye-output")
 
-        if save_color:
+        if save_color and not metadata_only:
             calibration_cmd.append("--save-color-corrected-output")
             color_output = self.dualfisheye_vars["color_output"].get().strip()
             if color_output:
@@ -10162,7 +10149,11 @@ class PreviewApp:
         self._set_text_widget(self.dualfisheye_log, "")
         self._append_text_widget(
             self.dualfisheye_log,
-            "[INFO] Stage 3 calibration started: pair folder -> outputs",
+            (
+                "[INFO] Stage 3 calibration started: XML/PLY -> metadata only"
+                if metadata_only else
+                "[INFO] Stage 3 calibration started: pair folder -> outputs"
+            ),
         )
         if camera_extrinsics_xml_path is not None:
             self._append_text_widget(
@@ -10172,6 +10163,11 @@ class PreviewApp:
                     "(adjusted calibration preferred)"
                 ),
             )
+            if camera_xml:
+                self._append_text_widget(
+                    self.dualfisheye_log,
+                    "[INFO] Fisheye Distortion XML ignored because Extrinsics XML is set.",
+                )
         elif camera_xml_path is not None:
             self._append_text_widget(
                 self.dualfisheye_log,
@@ -10184,11 +10180,12 @@ class PreviewApp:
                 memory_throttle_float,
             ),
         )
-        if not no_perspective:
+        if perspective_enabled:
             self._append_text_widget(
                 self.dualfisheye_log,
                 "[INFO] Perspective / COLMAP root: {}".format(
-                    self.dualfisheye_vars["perspective_output"].get().strip()
+                    self._compute_dualfisheye_perspective_root_path()
+                    or self.dualfisheye_vars["perspective_output"].get().strip()
                 ),
             )
             self._append_text_widget(
@@ -10221,6 +10218,19 @@ class PreviewApp:
                 (
                     "[INFO] Perspective metadata export enabled: XML + "
                     "COLMAP from current dual-fisheye alignment"
+                ),
+            )
+        if perspective_enabled:
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Perspective image ext: {}".format(
+                    self.dualfisheye_vars["perspective_ext"].get().strip() or "jpg"
+                ),
+            )
+            self._append_text_widget(
+                self.dualfisheye_log,
+                "[INFO] Perspective mask ext: {}".format(
+                    self.dualfisheye_vars["perspective_mask_ext"].get().strip() or "png"
                 ),
             )
         if pointcloud_ply:

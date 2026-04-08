@@ -136,11 +136,23 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "-i",
         "--input-dir",
-        required=True,
+        required=False,
         help=(
             "Input directory containing fisheye frame pairs "
             "(e.g. *_X.jpg, *_Y.jpg). "
-            "Video files are not accepted in this tool."),
+            "Video files are not accepted in this tool. "
+            "Optional when --metadata-only is used."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help=(
+            "Export COLMAP text + perspective Metashape XML only. "
+            "Skips fisheye/perspective image rendering and allows running "
+            "from --camera-extrinsics-xml + --pointcloud-ply without "
+            "--input-dir."
+        ),
     )
     parser.add_argument(
         "-x",
@@ -335,6 +347,14 @@ def parse_arguments() -> argparse.Namespace:
         "--perspective-ext",
         default="jpg",
         help="Perspective output extension (default: jpg).",
+    )
+    parser.add_argument(
+        "--perspective-mask-ext",
+        default="png",
+        help=(
+            "Perspective mask output extension (default: png). "
+            "Used only when --mask-input-dir is provided."
+        ),
     )
     parser.add_argument(
         "--perspective-size",
@@ -892,6 +912,55 @@ def build_pair_records(
             continue
         pairs.append((base, x_path, y_path))
     return pairs
+
+
+def build_metadata_only_resolved_pairs(
+    camera_to_sensor: Dict[str, str],
+    sensor_map: Dict[str, SensorCalibration],
+    x_suffix: str,
+    y_suffix: str,
+    available_labels: Optional[Set[str]] = None,
+) -> List[Tuple[int, str, pathlib.Path, pathlib.Path, str, str]]:
+    """Build synthetic X/Y pair records from XML camera labels only."""
+
+    table: Dict[str, Dict[str, Tuple[str, str]]] = {}
+    for label, sensor_id in sorted(camera_to_sensor.items()):
+        if sensor_id not in sensor_map:
+            continue
+        if available_labels is not None and label not in available_labels:
+            continue
+        base, key = split_stem_suffix(
+            label,
+            x_suffix=x_suffix,
+            y_suffix=y_suffix,
+        )
+        if key not in {"X", "Y"}:
+            continue
+        entry = table.setdefault(base, {})
+        entry[key] = (label, sensor_id)
+
+    resolved_pairs: List[
+        Tuple[int, str, pathlib.Path, pathlib.Path, str, str]
+    ] = []
+    for pair_idx, base in enumerate(sorted(table.keys()), start=1):
+        item = table[base]
+        x_item = item.get("X")
+        y_item = item.get("Y")
+        if x_item is None or y_item is None:
+            continue
+        x_label, sensor_id_x = x_item
+        y_label, sensor_id_y = y_item
+        resolved_pairs.append(
+            (
+                pair_idx,
+                base,
+                pathlib.Path(x_label + ".jpg"),
+                pathlib.Path(y_label + ".jpg"),
+                sensor_id_x,
+                sensor_id_y,
+            )
+        )
+    return resolved_pairs
 
 
 def build_camera_transform_map(
@@ -1541,10 +1610,14 @@ def export_perspective_camera_metadata(
 ) -> None:
     """Export perspective camera XML / COLMAP from dual-fisheye alignment."""
 
-    extrinsics_xml_value = str(getattr(args, "camera_extrinsics_xml", "")).strip()
+    extrinsics_xml_value = str(
+        getattr(args, "camera_extrinsics_xml", "") or ""
+    ).strip()
     if not extrinsics_xml_value:
         return
-    if bool(args.no_perspective):
+    if bool(args.no_perspective) and not bool(
+        getattr(args, "metadata_only", False)
+    ):
         raise ValueError(
             "--camera-extrinsics-xml requires perspective output to be enabled."
         )
@@ -1571,7 +1644,7 @@ def export_perspective_camera_metadata(
         perspective_sensor_mm=str(args.perspective_sensor_mm),
     )
 
-    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "")).strip()
+    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "") or "").strip()
     points: List[Dict[str, object]] = []
     if pointcloud_ply_value:
         pointcloud_ply_path = pathlib.Path(pointcloud_ply_value).expanduser().resolve()
@@ -1855,6 +1928,7 @@ def process_pair_task(
     perspective_maps: Optional[Dict[str, Dict[str, object]]],
     perspective_specs: Sequence[Dict[str, object]],
     perspective_out_ext: str,
+    perspective_mask_ext: str,
     perspective_jpeg_quality: int,
     write_perspective_masks: bool,
     interpolation: int,
@@ -1967,13 +2041,18 @@ def process_pair_task(
                         rendered_mask[~valid_mask] = 0
                     else:
                         rendered_mask[~valid_mask, :] = 0
-                mask_path = perspective_masks_dir / out_name
+                mask_name = "{}_{}{}".format(
+                    base_stem,
+                    view_id,
+                    perspective_mask_ext,
+                )
+                mask_path = perspective_masks_dir / mask_name
                 write_perspective_image(
                     path=mask_path,
                     image=rendered_mask,
                     jpeg_quality=perspective_jpeg_quality,
                 )
-                mask_outputs.append(out_name)
+                mask_outputs.append(mask_name)
 
     return {
         "base_stem": base_stem,
@@ -1995,7 +2074,17 @@ def main() -> None:
         print("[ERR] --undistort-zoom: {}".format(exc), file=sys.stderr)
         sys.exit(1)
 
-    input_path = pathlib.Path(args.input_dir).expanduser().resolve()
+    metadata_only = bool(getattr(args, "metadata_only", False))
+    input_dir_value = str(getattr(args, "input_dir", "") or "").strip()
+    input_path: Optional[pathlib.Path] = None
+    if input_dir_value:
+        input_path = pathlib.Path(input_dir_value).expanduser().resolve()
+    elif not metadata_only:
+        print(
+            "[ERR] --input-dir is required unless --metadata-only is used.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     legacy_input_color_profile = str(
         args.input_color_profile
@@ -2038,7 +2127,7 @@ def main() -> None:
         sys.exit(1)
 
     camera_xml_path: Optional[pathlib.Path] = None
-    camera_xml_value = str(getattr(args, "camera_xml", "")).strip()
+    camera_xml_value = str(getattr(args, "camera_xml", "") or "").strip()
     if camera_xml_value:
         camera_xml_path = pathlib.Path(camera_xml_value).expanduser().resolve()
 
@@ -2052,25 +2141,35 @@ def main() -> None:
     x_suffix = suffix_filter[0]
     y_suffix = suffix_filter[1]
 
-    if input_path.is_file():
-        print(
-            "[ERR] Input must be a directory of fisheye frames, "
-            "not a video file.\n"
-            "Use gs360_Video2Frames.py to extract *_X/*_Y images first.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if not input_path.is_dir():
-        print("[ERR] Input path not found: {}".format(
-            input_path), file=sys.stderr)
-        sys.exit(1)
-    fisheye_dir = input_path
+    fisheye_dir: Optional[pathlib.Path] = None
+    if input_path is not None:
+        if input_path.is_file():
+            print(
+                "[ERR] Input must be a directory of fisheye frames, "
+                "not a video file.\n"
+                "Use gs360_Video2Frames.py to extract *_X/*_Y images first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not input_path.is_dir():
+            print(
+                "[ERR] Input path not found: {}".format(input_path),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        fisheye_dir = input_path
 
-    write_fisheye_output = bool(args.save_fisheye_output)
-    save_color_corrected_output = bool(args.save_color_corrected_output)
-    write_perspective_output = not bool(args.no_perspective)
+    write_fisheye_output = bool(args.save_fisheye_output) and not metadata_only
+    save_color_corrected_output = (
+        bool(args.save_color_corrected_output) and not metadata_only
+    )
+    write_perspective_output = (
+        (not bool(args.no_perspective)) and not metadata_only
+    )
     need_undistorted_stage = write_fisheye_output
     if (
+        (not metadata_only)
+        and
         (not write_fisheye_output)
         and (not write_perspective_output)
         and (not save_color_corrected_output)
@@ -2082,32 +2181,9 @@ def main() -> None:
         )
         sys.exit(1)
 
-    fisheye_output_arg = args.output_dir or args.fisheye_output_dir
-    if fisheye_output_arg:
-        output_dir = pathlib.Path(fisheye_output_arg).expanduser().resolve()
-    else:
-        output_dir = fisheye_dir.with_name(fisheye_dir.name + "_undistorted")
-
-    if args.perspective_output_dir:
-        perspective_out_dir = pathlib.Path(
-            args.perspective_output_dir).expanduser().resolve()
-    else:
-        perspective_out_dir = fisheye_dir.with_name(
-            fisheye_dir.name + "_perspective_colmap"
-        )
-
-    if args.color_corrected_output_dir:
-        color_corrected_out_dir = pathlib.Path(
-            args.color_corrected_output_dir
-        ).expanduser().resolve()
-    else:
-        color_corrected_out_dir = fisheye_dir.with_name(
-            fisheye_dir.name + "_colorcorrected"
-        )
-
     extrinsics_xml_path: Optional[pathlib.Path] = None
     extrinsics_xml_value = str(
-        getattr(args, "camera_extrinsics_xml", "")
+        getattr(args, "camera_extrinsics_xml", "") or ""
     ).strip()
     if extrinsics_xml_value:
         extrinsics_xml_path = pathlib.Path(
@@ -2121,15 +2197,49 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not write_perspective_output:
+        if not write_perspective_output and not metadata_only:
             print(
                 "[ERR] --camera-extrinsics-xml requires perspective output.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
+    fisheye_output_arg = args.output_dir or args.fisheye_output_dir
+    if fisheye_output_arg:
+        output_dir = pathlib.Path(fisheye_output_arg).expanduser().resolve()
+    elif fisheye_dir is not None:
+        output_dir = fisheye_dir.with_name(fisheye_dir.name + "_undistorted")
+    else:
+        output_dir = pathlib.Path.cwd() / "_unused_dualfisheye_undistorted"
+
+    if args.perspective_output_dir:
+        perspective_out_dir = pathlib.Path(
+            args.perspective_output_dir
+        ).expanduser().resolve()
+    elif fisheye_dir is not None:
+        perspective_out_dir = fisheye_dir.with_name(
+            fisheye_dir.name + "_perspective_colmap"
+        )
+    elif extrinsics_xml_path is not None:
+        perspective_out_dir = extrinsics_xml_path.with_name(
+            extrinsics_xml_path.stem + "_perspective_colmap"
+        )
+    else:
+        perspective_out_dir = pathlib.Path.cwd() / "perspective_colmap"
+
+    if args.color_corrected_output_dir:
+        color_corrected_out_dir = pathlib.Path(
+            args.color_corrected_output_dir
+        ).expanduser().resolve()
+    elif fisheye_dir is not None:
+        color_corrected_out_dir = fisheye_dir.with_name(
+            fisheye_dir.name + "_colorcorrected"
+        )
+    else:
+        color_corrected_out_dir = pathlib.Path.cwd() / "_unused_colorcorrected"
+
     pointcloud_ply_path: Optional[pathlib.Path] = None
-    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "")).strip()
+    pointcloud_ply_value = str(getattr(args, "pointcloud_ply", "") or "").strip()
     if pointcloud_ply_value:
         pointcloud_ply_path = pathlib.Path(
             pointcloud_ply_value
@@ -2139,6 +2249,19 @@ def main() -> None:
                 "[ERR] Point cloud PLY not found: {}".format(
                     pointcloud_ply_path
                 ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if metadata_only:
+        if extrinsics_xml_path is None:
+            print(
+                "[ERR] --metadata-only requires --camera-extrinsics-xml.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if pointcloud_ply_path is None:
+            print(
+                "[ERR] --metadata-only requires --pointcloud-ply.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2162,7 +2285,7 @@ def main() -> None:
         sys.exit(1)
 
     mask_input_dir_path: Optional[pathlib.Path] = None
-    mask_input_dir_value = str(getattr(args, "mask_input_dir", "")).strip()
+    mask_input_dir_value = str(getattr(args, "mask_input_dir", "") or "").strip()
     if mask_input_dir_value:
         mask_input_dir_path = pathlib.Path(mask_input_dir_value).expanduser().resolve()
         if not mask_input_dir_path.exists() or not mask_input_dir_path.is_dir():
@@ -2173,7 +2296,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not write_perspective_output:
+        if not write_perspective_output and not metadata_only:
             print(
                 "[ERR] --mask-input-dir requires perspective output.",
                 file=sys.stderr,
@@ -2203,18 +2326,30 @@ def main() -> None:
         )
         sys.exit(1)
 
-    images = gather_input_images(fisheye_dir, ext_filter, suffix_filter)
-    if not images:
-        print("[ERR] No target images found in {}".format(
-            fisheye_dir), file=sys.stderr)
-        sys.exit(1)
+    images: List[pathlib.Path] = []
+    pairs: List[Tuple[str, pathlib.Path, pathlib.Path]] = []
+    if fisheye_dir is not None:
+        images = gather_input_images(fisheye_dir, ext_filter, suffix_filter)
+        if not images:
+            print(
+                "[ERR] No target images found in {}".format(fisheye_dir),
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
-    pairs = build_pair_records(images, x_suffix=x_suffix, y_suffix=y_suffix)
-    if not pairs:
-        print(
-            "[ERR] No valid X/Y fisheye pairs found in {}".format(fisheye_dir),
-            file=sys.stderr)
-        sys.exit(1)
+        pairs = build_pair_records(
+            images,
+            x_suffix=x_suffix,
+            y_suffix=y_suffix,
+        )
+        if not pairs:
+            print(
+                "[ERR] No valid X/Y fisheye pairs found in {}".format(
+                    fisheye_dir
+                ),
+                file=sys.stderr,
+            )
+            sys.exit(1)
     if args.limit:
         print(
             "[WARN] --limit is deprecated and ignored. Processing all pairs."
@@ -2248,12 +2383,15 @@ def main() -> None:
     perspective_mask_count = 0
     successful_pair_bases: Set[str] = set()
 
-    print("[INFO] input:  {}".format(fisheye_dir))
+    if fisheye_dir is not None:
+        print("[INFO] input:  {}".format(fisheye_dir))
+    else:
+        print("[INFO] input:  disabled (--metadata-only)")
     if write_fisheye_output:
         print("[INFO] fisheye output: {}".format(output_dir))
     else:
         print("[INFO] fisheye output: disabled")
-    if write_perspective_output:
+    if write_perspective_output or metadata_only:
         print("[INFO] perspective output: {}".format(perspective_out_dir))
         print(
             "[INFO] perspective xml: {}".format(
@@ -2296,8 +2434,10 @@ def main() -> None:
         print("[INFO] pointcloud ply: {}".format(pointcloud_ply_path))
     else:
         print("[INFO] pointcloud ply: disabled")
-    if mask_input_dir_path is not None:
+    if mask_input_dir_path is not None and not metadata_only:
         print("[INFO] mask input dir: {}".format(mask_input_dir_path))
+    elif mask_input_dir_path is not None:
+        print("[INFO] mask input dir: ignored (--metadata-only)")
     else:
         print("[INFO] mask input dir: disabled")
     print(
@@ -2306,7 +2446,10 @@ def main() -> None:
             "{:.1f}".format(memory_reduce_threshold * 100.0),
         )
     )
-    print("[INFO] pair worker mode: enabled")
+    if metadata_only:
+        print("[INFO] pair worker mode: disabled (--metadata-only)")
+    else:
+        print("[INFO] pair worker mode: enabled")
     if input_lut_path is not None:
         print("[INFO] input LUT: {}".format(input_lut_path))
         print("[INFO] LUT output color space: {}".format(
@@ -2331,38 +2474,61 @@ def main() -> None:
     ] = []
     used_sensor_ids: Set[str] = set()
     used_sensor_pairs: Set[Tuple[str, str]] = set()
-    for pair_idx, (base_stem, x_path, y_path) in enumerate(pairs, start=1):
-        sensor_id_x = resolve_sensor_id_for_file(
-            image_path=x_path,
+    if metadata_only:
+        available_labels = None
+        if extrinsics_xml_path is not None:
+            available_labels = set(
+                build_camera_transform_map(extrinsics_xml_path).keys()
+            )
+        resolved_pairs = build_metadata_only_resolved_pairs(
             camera_to_sensor=camera_to_sensor,
             sensor_map=sensor_map,
-            sensor_id_x=args.sensor_id_x,
-            sensor_id_y=args.sensor_id_y,
             x_suffix=x_suffix,
             y_suffix=y_suffix,
+            available_labels=available_labels,
         )
-        sensor_id_y = resolve_sensor_id_for_file(
-            image_path=y_path,
-            camera_to_sensor=camera_to_sensor,
-            sensor_map=sensor_map,
-            sensor_id_x=args.sensor_id_x,
-            sensor_id_y=args.sensor_id_y,
-            x_suffix=x_suffix,
-            y_suffix=y_suffix,
-        )
-        if sensor_id_x is None or sensor_id_y is None:
-            skipped += 2
-            message = "[SKIP] {}: sensor_id unresolved".format(base_stem)
-            print(message)
-            continue
-        resolved_pairs.append(
-            (pair_idx, base_stem, x_path, y_path, sensor_id_x, sensor_id_y)
-        )
-        used_sensor_ids.update([sensor_id_x, sensor_id_y])
-        used_sensor_pairs.add((sensor_id_x, sensor_id_y))
+        if not resolved_pairs:
+            print(
+                "[ERR] No valid X/Y camera label pairs found in extrinsics XML.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        for _pair_idx, _base_stem, _x_path, _y_path, sensor_id_x, sensor_id_y in resolved_pairs:
+            used_sensor_ids.update([sensor_id_x, sensor_id_y])
+            used_sensor_pairs.add((sensor_id_x, sensor_id_y))
+    else:
+        for pair_idx, (base_stem, x_path, y_path) in enumerate(pairs, start=1):
+            sensor_id_x = resolve_sensor_id_for_file(
+                image_path=x_path,
+                camera_to_sensor=camera_to_sensor,
+                sensor_map=sensor_map,
+                sensor_id_x=args.sensor_id_x,
+                sensor_id_y=args.sensor_id_y,
+                x_suffix=x_suffix,
+                y_suffix=y_suffix,
+            )
+            sensor_id_y = resolve_sensor_id_for_file(
+                image_path=y_path,
+                camera_to_sensor=camera_to_sensor,
+                sensor_map=sensor_map,
+                sensor_id_x=args.sensor_id_x,
+                sensor_id_y=args.sensor_id_y,
+                x_suffix=x_suffix,
+                y_suffix=y_suffix,
+            )
+            if sensor_id_x is None or sensor_id_y is None:
+                skipped += 2
+                message = "[SKIP] {}: sensor_id unresolved".format(base_stem)
+                print(message)
+                continue
+            resolved_pairs.append(
+                (pair_idx, base_stem, x_path, y_path, sensor_id_x, sensor_id_y)
+            )
+            used_sensor_ids.update([sensor_id_x, sensor_id_y])
+            used_sensor_pairs.add((sensor_id_x, sensor_id_y))
 
     pair_mask_paths: Dict[str, Tuple[pathlib.Path, pathlib.Path]] = {}
-    if mask_input_dir_path is not None:
+    if mask_input_dir_path is not None and not metadata_only:
         try:
             pair_mask_paths = collect_mask_pair_paths(
                 mask_input_dir_path,
@@ -2399,7 +2565,7 @@ def main() -> None:
 
     perspective_specs: List[Dict[str, object]] = []
     perspective_map_cache: Dict[Tuple[str, str], Dict[str, Dict[str, object]]] = {}
-    if write_perspective_output:
+    if write_perspective_output or metadata_only:
         perspective_specs = build_sfm10_specs(
             output_size=int(args.perspective_size),
             focal_mm=float(args.perspective_focal_mm),
@@ -2435,9 +2601,13 @@ def main() -> None:
             sys.exit(2)
 
     perspective_out_ext = "." + args.perspective_ext.strip().lstrip(".").lower()
+    perspective_mask_ext = (
+        "." + args.perspective_mask_ext.strip().lstrip(".").lower()
+    )
     perspective_jpeg_quality = int(args.perspective_jpeg_quality)
 
     if args.dry_run:
+        dry_pair_total = max(1, len(resolved_pairs))
         for pair_idx, base_stem, x_path, y_path, sensor_id_x, sensor_id_y in resolved_pairs:
             if save_color_corrected_output:
                 for image_path in (x_path, y_path):
@@ -2445,7 +2615,7 @@ def main() -> None:
                     print(
                         "[DRY][COLOR] {:4d}/{:4d} {} -> {}".format(
                             pair_idx,
-                            len(pairs),
+                            dry_pair_total,
                             image_path.name,
                             color_corrected_path.name,
                         )
@@ -2455,7 +2625,7 @@ def main() -> None:
                 print(
                     "[DRY] {:4d}/{:4d} {} -> {} (sensor_id={})".format(
                         pair_idx,
-                        len(pairs),
+                        dry_pair_total,
                         x_path.name,
                         x_path.name,
                         sensor_id_x,
@@ -2464,7 +2634,7 @@ def main() -> None:
                 print(
                     "[DRY] {:4d}/{:4d} {} -> {} (sensor_id={})".format(
                         pair_idx,
-                        len(pairs),
+                        dry_pair_total,
                         y_path.name,
                         y_path.name,
                         sensor_id_y,
@@ -2479,24 +2649,30 @@ def main() -> None:
                     print(
                         "[DRY][PERSP] {:4d}/{:4d} {}".format(
                             pair_idx,
-                            len(pairs),
+                            dry_pair_total,
                             out_name,
                         )
                     )
                     if mask_input_dir_path is not None:
+                        mask_name = "{}_{}{}".format(
+                            base_stem,
+                            view_id,
+                            perspective_mask_ext,
+                        )
                         print(
                             "[DRY][MASK ] {:4d}/{:4d} {}".format(
                                 pair_idx,
-                                len(pairs),
-                                out_name,
+                                dry_pair_total,
+                                mask_name,
                             )
                         )
                 perspective_output_count += len(perspective_specs)
                 if mask_input_dir_path is not None:
                     perspective_mask_count += len(perspective_specs)
-            processed += 2
+            if not metadata_only:
+                processed += 2
             successful_pair_bases.add(base_stem)
-    else:
+    elif not metadata_only:
         adaptive_limit = workers
         pending = set()
         future_meta: Dict[object, Tuple[int, str]] = {}
@@ -2619,6 +2795,7 @@ def main() -> None:
                     perspective_map_cache.get((sensor_id_x, sensor_id_y)),
                     perspective_specs,
                     perspective_out_ext,
+                    perspective_mask_ext,
                     perspective_jpeg_quality,
                     bool(mask_input_dir_path is not None),
                     interpolation,
@@ -2631,6 +2808,11 @@ def main() -> None:
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 adaptive_limit = consume_completed(list(done), adaptive_limit)
+
+    if metadata_only:
+        successful_pair_bases = {
+            base_stem for _pair_idx, base_stem, _x, _y, _sx, _sy in resolved_pairs
+        }
 
     try:
         export_perspective_camera_metadata(
